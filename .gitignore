@@ -1,0 +1,7 @@
+.coverage
+.venv
+.venv/**/*
+.pytest_cache
+.pytest_cache/**/*
+Chat
+ChatGPT-Human Memory Process.md

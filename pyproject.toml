@@ -1,0 +1,56 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["smritikosh"]
+
+[project]
+name = "smritikosh"
+version = "0.1.0"
+description = "Universal memory layer for LLM applications"
+requires-python = ">=3.11"
+dependencies = [
+    # API
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.6.0",
+
+    # LLM (unified interface for Claude, Gemini, OpenAI, Ollama, vLLM)
+    "litellm>=1.55.0",
+
+    # Database
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30.0",          # async postgres driver
+    "pgvector>=0.3.5",          # vector column support
+    "alembic>=1.14.0",
+    "neo4j>=5.27.0",            # Neo4j async driver
+
+    # Background jobs
+    "apscheduler>=3.10.4",
+
+    # Utilities
+    "tenacity>=9.0.0",          # retries for LLM calls
+    "structlog>=24.4.0",        # structured logging
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "httpx>=0.28.0",            # async test client for FastAPI
+    "respx>=0.21.0",            # mock httpx calls
+    "ruff>=0.8.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "--cov=smritikosh --cov-report=term-missing"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
