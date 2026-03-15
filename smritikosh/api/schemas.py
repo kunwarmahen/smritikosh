@@ -44,6 +44,7 @@ class ContextResponse(BaseModel):
     messages: list[dict]        # OpenAI-style [{role: system, content: ...}]
     total_memories: int
     embedding_failed: bool
+    intent: str                 # detected query intent (e.g. "career", "technical")
 
 
 # ── GET /memory/{user_id} ─────────────────────────────────────────────────────
@@ -63,6 +64,53 @@ class RecentEventsResponse(BaseModel):
     user_id: str
     app_id: str
     events: list[RecentEventItem]
+
+
+# ── POST /feedback ────────────────────────────────────────────────────────────
+
+
+class FeedbackRequest(BaseModel):
+    event_id: str = Field(..., description="UUID of the recalled event being rated")
+    user_id: str = Field(..., description="User submitting the feedback")
+    feedback_type: str = Field(
+        ..., description="Signal quality: 'positive', 'negative', or 'neutral'"
+    )
+    app_id: str = Field("default", description="Application namespace")
+    comment: str | None = Field(None, description="Optional free-text note")
+
+
+class FeedbackResponse(BaseModel):
+    feedback_id: str
+    event_id: str
+    new_importance_score: float
+
+
+# ── GET /identity/{user_id} ───────────────────────────────────────────────────
+
+
+class IdentityDimensionItem(BaseModel):
+    category: str
+    dominant_value: str
+    confidence: float
+    fact_count: int
+
+
+class BeliefItem(BaseModel):
+    statement: str
+    category: str
+    confidence: float
+    evidence_count: int
+
+
+class IdentityResponse(BaseModel):
+    user_id: str
+    app_id: str
+    summary: str
+    dimensions: list[IdentityDimensionItem]
+    beliefs: list[BeliefItem]
+    total_facts: int
+    computed_at: str
+    is_empty: bool
 
 
 # ── GET /health ───────────────────────────────────────────────────────────────

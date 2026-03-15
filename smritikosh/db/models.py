@@ -71,6 +71,21 @@ class RelationType(StrEnum):
     CONTRADICTS = "contradicts"  # event B updates/contradicts event A
 
 
+class BeliefCategory(StrEnum):
+    """Broad categories for inferred user beliefs."""
+    WORLDVIEW = "worldview"    # broad beliefs about how the world works
+    VALUE = "value"            # things the user prioritises or cares about
+    ATTITUDE = "attitude"      # emotional or evaluative stance toward topics
+    ASSUMPTION = "assumption"  # things the user takes for granted
+
+
+class FeedbackType(StrEnum):
+    """User signal on whether a recalled memory was useful."""
+    POSITIVE = "positive"   # memory was helpful / relevant
+    NEGATIVE = "negative"   # memory was irrelevant / distracting
+    NEUTRAL = "neutral"     # acknowledged, no strong signal
+
+
 # ── Tables ────────────────────────────────────────────────────────────────────
 
 
@@ -111,7 +126,10 @@ class Event(Base):
         Vector(settings.embedding_dimensions), nullable=True, default=None
     )
     importance_score: Mapped[float] = mapped_column(Float, default=1.0)
+    recall_count: Mapped[int] = mapped_column(Integer, default=0)
     consolidated: Mapped[bool] = mapped_column(Boolean, default=False)
+    cluster_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
+    cluster_label: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
     event_metadata: Mapped[dict] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now
@@ -227,3 +245,83 @@ class MemoryLink(Base):
             f"<MemoryLink {self.from_event_id} "
             f"--[{self.relation_type}]--> {self.to_event_id}>"
         )
+
+
+class MemoryFeedback(Base):
+    """
+    ReinforcementLoop — user signal on the quality of a recalled memory.
+
+    Each record stores one piece of feedback (positive / negative / neutral)
+    for a specific event and immediately adjusts that event's importance_score:
+        POSITIVE  →  min(1.0, score + 0.10)
+        NEGATIVE  →  max(0.0, score - 0.10)
+        NEUTRAL   →  no score change
+
+    Multiple feedback records per event are allowed (history is preserved).
+    The latest feedback's delta is applied every time.
+    """
+
+    __tablename__ = "memory_feedback"
+    __table_args__ = (
+        Index("ix_memory_feedback_event", "event_id"),
+        Index("ix_memory_feedback_user_app", "user_id", "app_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    event_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("events.id", ondelete="CASCADE")
+    )
+    user_id: Mapped[str] = mapped_column(String(255))
+    app_id: Mapped[str] = mapped_column(String(255), default="default")
+    feedback_type: Mapped[str] = mapped_column(String(50))   # FeedbackType value
+    comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now
+    )
+
+    def __repr__(self) -> str:
+        return f"<MemoryFeedback event={self.event_id} type={self.feedback_type}>"
+
+
+class UserBelief(Base):
+    """
+    BeliefMiner — a durable, inferred belief about the user's worldview or values.
+
+    Unlike SemanticMemory facts (which are directly extracted from statements),
+    beliefs are inferred by the LLM from patterns across multiple events and facts.
+
+    Examples:
+        statement="believes iterative development beats big-bang launches"  category=value
+        statement="sees AI as foundational infrastructure, not just tooling"  category=worldview
+
+    Upserted on (user_id, app_id, statement): re-inferring the same belief
+    increments evidence_count and updates confidence rather than creating a duplicate.
+    """
+
+    __tablename__ = "user_beliefs"
+    __table_args__ = (
+        UniqueConstraint("user_id", "app_id", "statement", name="uq_user_belief"),
+        Index("ix_user_beliefs_user_app", "user_id", "app_id"),
+        Index("ix_user_beliefs_confidence", "confidence"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    user_id: Mapped[str] = mapped_column(String(255))
+    app_id: Mapped[str] = mapped_column(String(255), default="default")
+    statement: Mapped[str] = mapped_column(Text)
+    category: Mapped[str] = mapped_column(String(50))   # BeliefCategory value
+    confidence: Mapped[float] = mapped_column(Float, default=0.8)
+    evidence_count: Mapped[int] = mapped_column(Integer, default=1)
+    first_inferred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now
+    )
+    last_updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now
+    )
+
+    def __repr__(self) -> str:
+        return f"<UserBelief {self.category}: {self.statement[:60]!r}>"

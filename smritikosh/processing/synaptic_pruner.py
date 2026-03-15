@@ -5,24 +5,23 @@ Mirrors the brain's synaptic pruning: neural connections that are rarely
 used and carry little signal are weakened and eventually eliminated,
 keeping the memory system efficient.
 
-Score formula (per event):
-    prune_score = importance_score × exp(-age_days / decay_days)
-
-Events below the prune_threshold AND older than min_age_days are deleted.
+Prune condition (all three must be true):
+    importance_score < importance_threshold   (low signal value)
+    recall_count     < min_recall_count       (never or rarely retrieved)
+    age              > min_age_days           (old enough to safely drop)
 
 Design decisions:
   - Only consolidated events are pruned — raw unconsolidated events are
     preserved until the Consolidator has processed them.
-  - Events younger than min_age_days are always kept, regardless of score,
-    to prevent deleting recent context that hasn't been consolidated yet.
+  - The conjunction of all three conditions is conservative: a memory that
+    has been recalled even once is kept regardless of age or importance.
   - Returns a PruningResult so the Scheduler can log what was removed.
 
 Run: after each Consolidation cycle via the Scheduler.
 """
 
 import logging
-import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from sqlalchemy import select, text
@@ -35,9 +34,9 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-DEFAULT_PRUNE_THRESHOLD = 0.15    # events scoring below this are deleted
-DEFAULT_MIN_AGE_DAYS = 7          # never prune events younger than this
-DEFAULT_DECAY_DAYS = 30.0         # recency decay half-life
+DEFAULT_IMPORTANCE_THRESHOLD = 0.2   # prune only if importance is below this
+DEFAULT_MIN_RECALL_COUNT = 2         # prune only if recalled fewer times than this
+DEFAULT_MIN_AGE_DAYS = 90            # never prune events younger than this
 
 
 # ── Result type ───────────────────────────────────────────────────────────────
@@ -55,7 +54,8 @@ class PruningResult:
 
 class SynapticPruner:
     """
-    Deletes consolidated events whose prune_score falls below the threshold.
+    Deletes consolidated events that meet all three prune conditions:
+    low importance, low recall frequency, and sufficient age.
 
     Usage:
         pruner = SynapticPruner(episodic=episodic)
@@ -67,14 +67,14 @@ class SynapticPruner:
     def __init__(
         self,
         episodic: EpisodicMemory,
-        prune_threshold: float = DEFAULT_PRUNE_THRESHOLD,
+        importance_threshold: float = DEFAULT_IMPORTANCE_THRESHOLD,
+        min_recall_count: int = DEFAULT_MIN_RECALL_COUNT,
         min_age_days: int = DEFAULT_MIN_AGE_DAYS,
-        decay_days: float = DEFAULT_DECAY_DAYS,
     ) -> None:
         self.episodic = episodic
-        self.prune_threshold = prune_threshold
+        self.importance_threshold = importance_threshold
+        self.min_recall_count = min_recall_count
         self.min_age_days = min_age_days
-        self.decay_days = decay_days
 
     async def prune(
         self,
@@ -84,10 +84,10 @@ class SynapticPruner:
         app_id: str = "default",
     ) -> PruningResult:
         """
-        Evaluate and delete low-scoring consolidated events for a user.
+        Evaluate and delete consolidated events that meet all prune conditions.
 
-        Only consolidated events older than min_age_days are eligible.
-        Each is scored and deleted if below prune_threshold.
+        Pre-filters in SQL (importance + recall_count + age) so that only
+        true candidates are loaded into Python.
         """
         result = PruningResult(user_id=user_id, app_id=app_id)
 
@@ -102,17 +102,17 @@ class SynapticPruner:
         pruned = 0
 
         for event in candidates:
-            score = self._prune_score(event, now)
-            if score < self.prune_threshold:
+            if self._should_prune(event, now):
                 deleted = await self.episodic.delete(session, event.id)
                 if deleted:
                     pruned += 1
                     logger.debug(
-                        "Pruned low-score event",
+                        "Pruned low-value event",
                         extra={
                             "event_id": str(event.id),
                             "user_id": user_id,
-                            "score": round(score, 3),
+                            "importance": round(event.importance_score or 0.0, 3),
+                            "recall_count": event.recall_count or 0,
                         },
                     )
 
@@ -133,12 +133,10 @@ class SynapticPruner:
         self, session: AsyncSession, user_id: str, app_id: str
     ) -> list[Event]:
         """
-        Fetch consolidated events older than min_age_days.
-        These are the only candidates for pruning.
+        Fetch consolidated events that pass all three pre-filter conditions.
+        SQL-level filtering keeps the Python loop small.
         """
-        cutoff_sql = text(
-            f"NOW() - INTERVAL '{self.min_age_days} days'"
-        )
+        cutoff_sql = text(f"NOW() - INTERVAL '{self.min_age_days} days'")
         result = await session.execute(
             select(Event)
             .where(
@@ -146,34 +144,46 @@ class SynapticPruner:
                 Event.app_id == app_id,
                 Event.consolidated.is_(True),
                 Event.created_at < cutoff_sql,
+                Event.importance_score < self.importance_threshold,
+                Event.recall_count < self.min_recall_count,
             )
-            .order_by(Event.importance_score.asc())   # lowest importance first
+            .order_by(Event.importance_score.asc())  # lowest importance first
         )
         return list(result.scalars().all())
 
-    def _prune_score(self, event: Event, now: datetime) -> float:
+    def _should_prune(self, event: Event, now: datetime) -> bool:
         """
-        Compute the prune score for one event.
-        Score = importance_score × recency_factor
+        Return True only if ALL three conditions are met:
+          - importance_score below threshold
+          - recall_count below minimum
+          - age exceeds minimum days
         """
-        importance = event.importance_score or 0.0
         created = event.created_at
         if created is None:
-            return 0.0
+            return False
         if created.tzinfo is None:
             created = created.replace(tzinfo=timezone.utc)
-
         age_days = (now - created).total_seconds() / 86400.0
-        recency = math.exp(-age_days / self.decay_days)
-        return importance * recency
+        return (
+            (event.importance_score or 0.0) < self.importance_threshold
+            and (event.recall_count or 0) < self.min_recall_count
+            and age_days > self.min_age_days
+        )
 
 
-# ── Module-level scoring helper (for tests and CLI) ──────────────────────────
+# ── Module-level decision helper (for tests and CLI) ─────────────────────────
 
-def compute_prune_score(
+def compute_prune_decision(
     importance: float,
+    recall_count: int,
     age_days: float,
-    decay_days: float = DEFAULT_DECAY_DAYS,
-) -> float:
-    """Stateless scoring function — useful for previewing what would be pruned."""
-    return importance * math.exp(-age_days / decay_days)
+    importance_threshold: float = DEFAULT_IMPORTANCE_THRESHOLD,
+    min_recall_count: int = DEFAULT_MIN_RECALL_COUNT,
+    min_age_days: int = DEFAULT_MIN_AGE_DAYS,
+) -> bool:
+    """Stateless prune decision — useful for previewing what would be pruned."""
+    return (
+        importance < importance_threshold
+        and recall_count < min_recall_count
+        and age_days > min_age_days
+    )

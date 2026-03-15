@@ -26,12 +26,15 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from neo4j import AsyncSession as NeoSession
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from smritikosh.db.models import Event
 from smritikosh.llm.adapter import LLMAdapter
 from smritikosh.memory.episodic import EpisodicMemory, SearchResult
+from smritikosh.memory.narrative import NarrativeMemory
 from smritikosh.memory.semantic import SemanticMemory, UserProfile
+from smritikosh.retrieval.intent_classifier import IntentClassifier, QueryIntent
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +63,10 @@ class MemoryContext:
     recent_events: list[Event] = field(default_factory=list)
     # True if query embedding failed — context assembled without vector recall
     embedding_failed: bool = False
+    # Detected query intent — used to tune retrieval weights
+    intent: str = QueryIntent.GENERAL
+    # Narrative chains originating from the top similar event (Phase 3)
+    narrative_chains: list[list[Event]] = field(default_factory=list)
 
     # ── Rendering ─────────────────────────────────────────────────────────
 
@@ -108,6 +115,17 @@ class MemoryContext:
                 sections.append(
                     f"- {_truncate(text, 120)}  [score: {sr.hybrid_score:.2f}]"
                 )
+            sections.append("")
+
+        # ── Narrative chains ───────────────────────────────────────────────
+        if self.narrative_chains:
+            sections.append("### Memory chains (how events unfolded):")
+            for chain in self.narrative_chains:
+                parts = [
+                    f"[{_format_date(e.created_at)}] {_truncate(e.summary or e.raw_text, 80)}"
+                    for e in chain
+                ]
+                sections.append(" → ".join(parts))
             sections.append("")
 
         if len(sections) == 1:
@@ -166,6 +184,9 @@ class ContextBuilder:
         top_k_similar: int = 5,
         recent_limit: int = 5,
         min_profile_confidence: float = 0.5,
+        intent_classifier: IntentClassifier | None = None,
+        narrative: NarrativeMemory | None = None,
+        include_chains: bool = False,
     ) -> None:
         self.llm = llm
         self.episodic = episodic
@@ -173,6 +194,9 @@ class ContextBuilder:
         self.top_k_similar = top_k_similar
         self.recent_limit = recent_limit
         self.min_profile_confidence = min_profile_confidence
+        self.intent_classifier = intent_classifier
+        self.narrative = narrative
+        self.include_chains = include_chains
 
     # ── Primary entry point ────────────────────────────────────────────────
 
@@ -196,10 +220,18 @@ class ContextBuilder:
         If embedding fails, similar_events will be empty but profile and
         recent events are still included (partial context is better than none).
         """
-        # ── 1. Embed query ────────────────────────────────────────────────
+        # ── 1. Classify intent (sync, no I/O) ────────────────────────────
+        intent_result = (
+            self.intent_classifier.classify(query)
+            if self.intent_classifier is not None
+            else None
+        )
+        detected_intent = intent_result.intent if intent_result else QueryIntent.GENERAL
+
+        # ── 2. Embed query ────────────────────────────────────────────────
         embedding, embedding_failed = await self._embed_query(query, user_id)
 
-        # ── 2. Concurrent retrieval ───────────────────────────────────────
+        # ── 3. Concurrent retrieval ───────────────────────────────────────
         similar_task = (
             self.episodic.hybrid_search(
                 pg_session,
@@ -207,6 +239,7 @@ class ContextBuilder:
                 embedding,
                 app_id=app_id,
                 top_k=self.top_k_similar,
+                weights_override=intent_result.weights if intent_result else None,
             )
             if embedding is not None
             else _empty()
@@ -223,14 +256,45 @@ class ContextBuilder:
             similar_task, profile_task, recent_task, return_exceptions=True
         )
 
-        # ── 3. Handle partial failures gracefully ─────────────────────────
+        # ── 4. Handle partial failures gracefully ─────────────────────────
         similar_events = _safe_result(similar, [], "hybrid_search", user_id)
         user_profile   = _safe_result(profile, None, "get_user_profile", user_id)
         recent_events  = _safe_result(recent,  [], "get_recent", user_id)
 
+        # Track recall so the frequency signal stays current
+        if similar_events:
+            await self.episodic.increment_recall(
+                pg_session, [sr.event.id for sr in similar_events]
+            )
+
         # Deduplicate: don't show the same event in both similar and recent
         similar_ids = {sr.event.id for sr in similar_events}
         recent_events = [e for e in recent_events if e.id not in similar_ids]
+
+        # ── 5. Narrative chain traversal (opt-in) ────────────────────────
+        narrative_chains: list[list[Event]] = []
+        if self.narrative and self.include_chains and similar_events:
+            try:
+                anchor_id = similar_events[0].event.id
+                chain_links = await self.narrative.get_chain_forward(pg_session, anchor_id)
+                if chain_links:
+                    linked_ids = [lnk.to_event_id for lnk in chain_links]
+                    result = await pg_session.execute(
+                        select(Event).where(Event.id.in_(linked_ids))
+                    )
+                    events_by_id = {e.id: e for e in result.scalars().all()}
+                    chain_events = [similar_events[0].event] + [
+                        events_by_id[lnk.to_event_id]
+                        for lnk in chain_links
+                        if lnk.to_event_id in events_by_id
+                    ]
+                    if len(chain_events) > 1:
+                        narrative_chains = [chain_events]
+            except Exception as exc:
+                logger.warning(
+                    "Narrative chain traversal failed",
+                    extra={"user_id": user_id, "error": str(exc)},
+                )
 
         ctx = MemoryContext(
             user_id=user_id,
@@ -239,12 +303,15 @@ class ContextBuilder:
             user_profile=user_profile,
             recent_events=recent_events,
             embedding_failed=embedding_failed,
+            intent=str(detected_intent),
+            narrative_chains=narrative_chains,
         )
 
         logger.info(
             "MemoryContext assembled",
             extra={
                 "user_id": user_id,
+                "intent": str(detected_intent),
                 "similar": len(similar_events),
                 "facts": len(user_profile.facts) if user_profile else 0,
                 "recent": len(recent_events),

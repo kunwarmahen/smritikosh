@@ -16,11 +16,17 @@ from smritikosh.db.postgres import get_session       # re-exported for routes
 from smritikosh.llm.adapter import LLMAdapter
 from smritikosh.memory.episodic import EpisodicMemory
 from smritikosh.memory.hippocampus import Hippocampus
+from smritikosh.memory.identity import IdentityBuilder
+from smritikosh.memory.narrative import NarrativeMemory
+from smritikosh.processing.belief_miner import BeliefMiner
+from smritikosh.processing.memory_clusterer import MemoryClusterer
+from smritikosh.processing.reinforcement import ReinforcementLoop
 from smritikosh.memory.semantic import SemanticMemory
 from smritikosh.processing.amygdala import Amygdala
 from smritikosh.processing.consolidator import Consolidator
 from smritikosh.processing.synaptic_pruner import SynapticPruner
 from smritikosh.retrieval.context_builder import ContextBuilder
+from smritikosh.retrieval.intent_classifier import IntentClassifier
 
 
 @lru_cache(maxsize=1)
@@ -55,11 +61,24 @@ def get_hippocampus() -> Hippocampus:
 
 
 @lru_cache(maxsize=1)
+def get_narrative() -> NarrativeMemory:
+    return NarrativeMemory()
+
+
+@lru_cache(maxsize=1)
+def get_intent_classifier() -> IntentClassifier:
+    return IntentClassifier()
+
+
+@lru_cache(maxsize=1)
 def get_context_builder() -> ContextBuilder:
     return ContextBuilder(
         llm=get_llm(),
         episodic=get_episodic(),
         semantic=get_semantic(),
+        intent_classifier=get_intent_classifier(),
+        narrative=get_narrative(),
+        include_chains=True,
     )
 
 
@@ -69,7 +88,28 @@ def get_consolidator() -> Consolidator:
         llm=get_llm(),
         episodic=get_episodic(),
         semantic=get_semantic(),
+        narrative=get_narrative(),
     )
+
+
+@lru_cache(maxsize=1)
+def get_belief_miner() -> BeliefMiner:
+    return BeliefMiner(llm=get_llm(), semantic=get_semantic())
+
+
+@lru_cache(maxsize=1)
+def get_reinforcement() -> ReinforcementLoop:
+    return ReinforcementLoop()
+
+
+@lru_cache(maxsize=1)
+def get_clusterer() -> MemoryClusterer:
+    return MemoryClusterer(llm=get_llm(), episodic=get_episodic())
+
+
+@lru_cache(maxsize=1)
+def get_identity_builder() -> IdentityBuilder:
+    return IdentityBuilder(llm=get_llm(), semantic=get_semantic())
 
 
 @lru_cache(maxsize=1)

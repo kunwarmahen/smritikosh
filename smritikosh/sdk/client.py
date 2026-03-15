@@ -34,7 +34,16 @@ from __future__ import annotations
 
 import httpx
 
-from smritikosh.sdk.types import EncodedEvent, HealthStatus, MemoryContext, RecentEvent
+from smritikosh.sdk.types import (
+    BeliefItem,
+    EncodedEvent,
+    FeedbackRecord,
+    HealthStatus,
+    IdentityDimensionItem,
+    IdentityProfile,
+    MemoryContext,
+    RecentEvent,
+)
 
 _DEFAULT_TIMEOUT = 30.0   # seconds
 
@@ -214,6 +223,93 @@ class SmritikoshClient:
             )
             for item in data["events"]
         ]
+
+    async def submit_feedback(
+        self,
+        *,
+        event_id: str,
+        user_id: str,
+        feedback_type: str,
+        app_id: str | None = None,
+        comment: str | None = None,
+    ) -> FeedbackRecord:
+        """
+        Submit feedback on a recalled memory event.
+
+        Feedback immediately adjusts the event's importance_score, influencing
+        how prominently it surfaces in future hybrid_search results.
+
+        Args:
+            event_id:      UUID of the recalled event being rated.
+            user_id:       User submitting the feedback.
+            feedback_type: ``"positive"``, ``"negative"``, or ``"neutral"``.
+            app_id:        Application namespace. Defaults to the client-level app_id.
+            comment:       Optional free-text note.
+
+        Returns:
+            :class:`FeedbackRecord` with the new importance_score.
+        """
+        payload = {
+            "event_id": event_id,
+            "user_id": user_id,
+            "feedback_type": feedback_type,
+            "app_id": app_id or self._app_id,
+            "comment": comment,
+        }
+        data = await self._post("/feedback", payload)
+        return FeedbackRecord(
+            feedback_id=data["feedback_id"],
+            event_id=data["event_id"],
+            new_importance_score=data["new_importance_score"],
+        )
+
+    async def get_identity(
+        self,
+        *,
+        user_id: str,
+        app_id: str | None = None,
+    ) -> IdentityProfile:
+        """
+        Fetch the synthesized identity model for a user.
+
+        Aggregates all semantic facts from Neo4j, groups them by category,
+        and generates a narrative summary via LLM.
+
+        Args:
+            user_id: User whose identity to retrieve.
+            app_id:  Application namespace. Defaults to the client-level app_id.
+
+        Returns:
+            :class:`IdentityProfile` with per-category dimensions and a narrative summary.
+        """
+        params = {"app_id": app_id or self._app_id}
+        data = await self._get(f"/identity/{user_id}", params=params)
+        return IdentityProfile(
+            user_id=data["user_id"],
+            app_id=data["app_id"],
+            summary=data["summary"],
+            dimensions=[
+                IdentityDimensionItem(
+                    category=d["category"],
+                    dominant_value=d["dominant_value"],
+                    confidence=d["confidence"],
+                    fact_count=d["fact_count"],
+                )
+                for d in data["dimensions"]
+            ],
+            beliefs=[
+                BeliefItem(
+                    statement=b["statement"],
+                    category=b["category"],
+                    confidence=b["confidence"],
+                    evidence_count=b["evidence_count"],
+                )
+                for b in data["beliefs"]
+            ],
+            total_facts=data["total_facts"],
+            computed_at=data["computed_at"],
+            is_empty=data["is_empty"],
+        )
 
     async def health(self) -> HealthStatus:
         """

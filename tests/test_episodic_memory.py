@@ -61,11 +61,26 @@ def make_event(user_id="u1", raw_text="test event", **kwargs) -> Event:
 class TestHybridWeights:
     def test_defaults_sum_to_one(self):
         w = HybridWeights()
-        assert abs(w.similarity + w.recency + w.importance - 1.0) < 1e-6
+        total = w.similarity + w.recency + w.importance + w.frequency + w.contextual_match
+        assert abs(total - 1.0) < 1e-6
+
+    def test_default_values(self):
+        w = HybridWeights()
+        assert w.similarity == 0.40
+        assert w.recency == 0.30
+        assert w.importance == 0.15
+        assert w.frequency == 0.15
+        assert w.contextual_match == 0.0
 
     def test_custom_weights_valid(self):
-        w = HybridWeights(similarity=0.6, recency=0.2, importance=0.2)
-        assert w.similarity == 0.6
+        w = HybridWeights(similarity=0.50, recency=0.20, importance=0.15, frequency=0.15)
+        assert w.similarity == 0.50
+
+    def test_contextual_match_slot(self):
+        # Phase 2: activate contextual_match by redistributing from recency
+        w = HybridWeights(similarity=0.40, recency=0.25, importance=0.15, frequency=0.15, contextual_match=0.05)
+        total = w.similarity + w.recency + w.importance + w.frequency + w.contextual_match
+        assert abs(total - 1.0) < 1e-6
 
     def test_invalid_weights_raise(self):
         with pytest.raises(ValueError, match="sum to 1.0"):
@@ -74,6 +89,10 @@ class TestHybridWeights:
     def test_default_decay_days(self):
         w = HybridWeights()
         assert w.decay_days == 30.0
+
+    def test_default_frequency_cap(self):
+        w = HybridWeights()
+        assert w.frequency_cap == 50
 
 
 # ── _embedding_literal ────────────────────────────────────────────────────────
@@ -270,10 +289,13 @@ class TestSearchResult:
             event=event,
             similarity_score=0.9,
             recency_score=0.8,
+            frequency_score=0.6,
             hybrid_score=0.85,
         )
         assert sr.event is event
         assert sr.similarity_score == 0.9
+        assert sr.recency_score == 0.8
+        assert sr.frequency_score == 0.6
         assert sr.hybrid_score == 0.85
 
     def test_search_result_defaults(self):
@@ -281,7 +303,32 @@ class TestSearchResult:
         sr = SearchResult(event=event)
         assert sr.similarity_score == 0.0
         assert sr.recency_score == 0.0
+        assert sr.frequency_score == 0.0
         assert sr.hybrid_score == 0.0
+
+
+# ── increment_recall() ────────────────────────────────────────────────────────
+
+
+class TestIncrementRecall:
+    @pytest.mark.asyncio
+    async def test_executes_update_for_ids(self):
+        episodic = make_episodic()
+        session = make_mock_session()
+        ids = [uuid.uuid4(), uuid.uuid4()]
+
+        await episodic.increment_recall(session, ids)
+
+        session.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_no_op_for_empty_list(self):
+        episodic = make_episodic()
+        session = make_mock_session()
+
+        await episodic.increment_recall(session, [])
+
+        session.execute.assert_not_called()
 
 
 # ── DB integration tests ───────────────────────────────────────────────────────

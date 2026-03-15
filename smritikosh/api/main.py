@@ -24,11 +24,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from smritikosh.api.deps import (
+    get_belief_miner,
+    get_clusterer,
     get_consolidator,
     get_episodic,
     get_pruner,
 )
-from smritikosh.api.routes import context, health, memory
+from smritikosh.api.routes import context, feedback, health, identity, memory
 from smritikosh.db.neo4j import close_neo4j, init_neo4j
 from smritikosh.db.postgres import close_db, init_db
 from smritikosh.processing.scheduler import MemoryScheduler
@@ -47,6 +49,8 @@ async def lifespan(app: FastAPI):
         consolidator=get_consolidator(),
         pruner=get_pruner(),
         episodic=get_episodic(),
+        clusterer=get_clusterer(),
+        belief_miner=get_belief_miner(),
     )
     scheduler.start()
     logger.info("Smritikosh ready.")
@@ -69,3 +73,5 @@ app = FastAPI(
 app.include_router(health.router)
 app.include_router(memory.router)
 app.include_router(context.router)
+app.include_router(identity.router)
+app.include_router(feedback.router)

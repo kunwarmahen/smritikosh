@@ -21,9 +21,10 @@ from datetime import datetime, timezone
 from neo4j import AsyncSession as NeoSession
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from smritikosh.db.models import Event
+from smritikosh.db.models import Event, RelationType
 from smritikosh.llm.adapter import LLMAdapter
 from smritikosh.memory.episodic import EpisodicMemory
+from smritikosh.memory.narrative import NarrativeMemory
 from smritikosh.memory.semantic import FactRecord, SemanticMemory
 
 logger = logging.getLogger(__name__)
@@ -34,10 +35,15 @@ MIN_EVENTS_TO_CONSOLIDATE = 5     # skip if fewer unconsolidated events exist
 BATCH_SIZE = 10                    # events processed per LLM call
 
 _CONSOLIDATION_SCHEMA = (
+    "summary (string), "
     "facts: list of objects with: "
     "category (preference|interest|role|project|skill|goal|relationship), "
     "key (short snake_case label), value (concise string), confidence (0.0–1.0). "
-    "Only include clear, durable facts — skip vague or transient statements."
+    "links: optional list of objects with: "
+    "from_index (0-based int matching the interaction number), "
+    "to_index (0-based int), "
+    "relation_type (caused|preceded|related|contradicts). "
+    "Only include clear, durable facts and unambiguous causal or temporal relationships."
 )
 
 _CONSOLIDATION_EXAMPLE = {
@@ -45,6 +51,9 @@ _CONSOLIDATION_EXAMPLE = {
     "facts": [
         {"category": "project",    "key": "active",   "value": "smritikosh",  "confidence": 0.95},
         {"category": "preference", "key": "ui_color", "value": "green",       "confidence": 0.9},
+    ],
+    "links": [
+        {"from_index": 0, "to_index": 1, "relation_type": "preceded"},
     ],
 }
 
@@ -58,6 +67,7 @@ class ConsolidationResult:
     events_processed: int = 0
     events_consolidated: int = 0
     facts_distilled: int = 0
+    links_created: int = 0
     batches: int = 0
     skipped: bool = False          # True if fewer than MIN_EVENTS_TO_CONSOLIDATE
     skip_reason: str = ""
@@ -84,12 +94,14 @@ class Consolidator:
         llm: LLMAdapter,
         episodic: EpisodicMemory,
         semantic: SemanticMemory,
+        narrative: NarrativeMemory | None = None,
         batch_size: int = BATCH_SIZE,
         min_events: int = MIN_EVENTS_TO_CONSOLIDATE,
     ) -> None:
         self.llm = llm
         self.episodic = episodic
         self.semantic = semantic
+        self.narrative = narrative
         self.batch_size = batch_size
         self.min_events = min_events
 
@@ -138,11 +150,12 @@ class Consolidator:
         result.batches = len(batches)
 
         for batch in batches:
-            consolidated, facts = await self._consolidate_batch(
+            consolidated, facts, links = await self._consolidate_batch(
                 pg_session, neo_session, user_id, app_id, batch
             )
             result.events_consolidated += consolidated
             result.facts_distilled += facts
+            result.links_created += links
 
         logger.info(
             "Consolidation complete",
@@ -151,6 +164,7 @@ class Consolidator:
                 "events_processed": result.events_processed,
                 "events_consolidated": result.events_consolidated,
                 "facts_distilled": result.facts_distilled,
+                "links_created": result.links_created,
                 "batches": result.batches,
             },
         )
@@ -165,10 +179,10 @@ class Consolidator:
         user_id: str,
         app_id: str,
         batch: list[Event],
-    ) -> tuple[int, int]:
+    ) -> tuple[int, int, int]:
         """
         Consolidate one batch of events.
-        Returns (events_consolidated, facts_distilled).
+        Returns (events_consolidated, facts_distilled, links_created).
         """
         prompt = _build_consolidation_prompt(batch)
 
@@ -183,10 +197,11 @@ class Consolidator:
                 "Consolidation LLM call failed — batch skipped",
                 extra={"user_id": user_id, "batch_size": len(batch), "error": str(exc)},
             )
-            return 0, 0
+            return 0, 0, 0
 
         summary = extracted.get("summary", "")
         fact_dicts = extracted.get("facts", [])
+        link_dicts = extracted.get("links", [])
 
         # Mark events consolidated in Postgres
         event_ids = [e.id for e in batch]
@@ -214,7 +229,33 @@ class Consolidator:
                     extra={"fact": fd, "error": str(exc)},
                 )
 
-        return len(batch), facts_stored
+        # Create narrative links between events in this batch
+        links_created = 0
+        if self.narrative and link_dicts:
+            for ld in link_dicts:
+                try:
+                    from_idx = int(ld["from_index"])
+                    to_idx = int(ld["to_index"])
+                    rel_type = RelationType(ld["relation_type"])
+                    if (
+                        0 <= from_idx < len(batch)
+                        and 0 <= to_idx < len(batch)
+                        and from_idx != to_idx
+                    ):
+                        await self.narrative.create_link(
+                            pg_session,
+                            from_event_id=batch[from_idx].id,
+                            to_event_id=batch[to_idx].id,
+                            relation_type=rel_type,
+                        )
+                        links_created += 1
+                except (KeyError, ValueError) as exc:
+                    logger.warning(
+                        "Skipping invalid narrative link",
+                        extra={"link": ld, "error": str(exc)},
+                    )
+
+        return len(batch), facts_stored, links_created
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

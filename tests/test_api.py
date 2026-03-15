@@ -24,12 +24,14 @@ from httpx import ASGITransport, AsyncClient
 
 from smritikosh.api.main import app
 from smritikosh.api import deps
-from smritikosh.db.models import Event
+from smritikosh.db.models import Event, MemoryFeedback, UserBelief
 from smritikosh.db.neo4j import get_neo4j_session
 from smritikosh.db.postgres import get_session
 from smritikosh.memory.episodic import EpisodicMemory
 from smritikosh.memory.hippocampus import EncodedMemory, Hippocampus
+from smritikosh.memory.identity import IdentityBuilder, IdentityDimension, UserIdentity
 from smritikosh.memory.semantic import FactRecord, SemanticMemory, UserProfile
+from smritikosh.processing.reinforcement import ReinforcementLoop
 from smritikosh.retrieval.context_builder import ContextBuilder, MemoryContext
 
 
@@ -101,15 +103,28 @@ def mock_episodic():
     return AsyncMock(spec=EpisodicMemory)
 
 
+@pytest.fixture
+def mock_identity_builder():
+    return AsyncMock(spec=IdentityBuilder)
+
+
+@pytest.fixture
+def mock_reinforcement():
+    return AsyncMock(spec=ReinforcementLoop)
+
+
 @pytest.fixture(autouse=True)
 def override_deps(mock_pg_session, mock_neo_session, mock_hippocampus,
-                  mock_context_builder, mock_episodic):
+                  mock_context_builder, mock_episodic,
+                  mock_identity_builder, mock_reinforcement):
     """Replace all I/O dependencies with mocks for every test in this module."""
     app.dependency_overrides[get_session] = lambda: mock_pg_session
     app.dependency_overrides[get_neo4j_session] = lambda: mock_neo_session
     app.dependency_overrides[deps.get_hippocampus] = lambda: mock_hippocampus
     app.dependency_overrides[deps.get_context_builder] = lambda: mock_context_builder
     app.dependency_overrides[deps.get_episodic] = lambda: mock_episodic
+    app.dependency_overrides[deps.get_identity_builder] = lambda: mock_identity_builder
+    app.dependency_overrides[deps.get_reinforcement] = lambda: mock_reinforcement
 
     yield
 
@@ -267,6 +282,7 @@ class TestGetContext:
         assert isinstance(body["messages"], list)
         assert isinstance(body["total_memories"], int)
         assert isinstance(body["embedding_failed"], bool)
+        assert isinstance(body["intent"], str)
 
     @pytest.mark.asyncio
     async def test_context_text_contains_memory_header(self, client, mock_context_builder):
@@ -383,3 +399,241 @@ class TestGetRecentEvents:
         response = await client.get("/memory/u1")
 
         assert response.json()["events"] == []
+
+
+# ── GET /identity/{user_id} ───────────────────────────────────────────────────
+
+
+def make_user_identity(user_id="u1", with_beliefs=False) -> UserIdentity:
+    dim = IdentityDimension(
+        category="role",
+        facts=[FactRecord("role", "current", "founder", 0.9, 1,
+                          "2026-03-15T00:00:00+00:00", "2026-03-15T00:00:00+00:00")],
+        dominant_value="founder",
+        confidence=0.9,
+    )
+    beliefs = []
+    if with_beliefs:
+        beliefs = [UserBelief(
+            id=uuid.uuid4(), user_id=user_id, app_id="default",
+            statement="values speed over perfection", category="value",
+            confidence=0.85, evidence_count=2,
+            first_inferred_at=datetime.now(timezone.utc),
+            last_updated_at=datetime.now(timezone.utc),
+        )]
+    return UserIdentity(
+        user_id=user_id,
+        app_id="default",
+        summary="A founder building AI tools.",
+        dimensions=[dim],
+        beliefs=beliefs,
+        total_facts=1,
+        computed_at=datetime.now(timezone.utc),
+    )
+
+
+class TestGetIdentity:
+    @pytest.mark.asyncio
+    async def test_returns_200_on_success(self, client, mock_identity_builder):
+        mock_identity_builder.build = AsyncMock(return_value=make_user_identity())
+
+        response = await client.get("/identity/u1")
+
+        assert response.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_response_shape(self, client, mock_identity_builder):
+        mock_identity_builder.build = AsyncMock(return_value=make_user_identity())
+
+        response = await client.get("/identity/u1")
+
+        body = response.json()
+        assert body["user_id"] == "u1"
+        assert body["app_id"] == "default"
+        assert isinstance(body["summary"], str)
+        assert isinstance(body["dimensions"], list)
+        assert isinstance(body["beliefs"], list)
+        assert isinstance(body["total_facts"], int)
+        assert isinstance(body["is_empty"], bool)
+        assert "computed_at" in body
+
+    @pytest.mark.asyncio
+    async def test_dimensions_shape(self, client, mock_identity_builder):
+        mock_identity_builder.build = AsyncMock(return_value=make_user_identity())
+
+        response = await client.get("/identity/u1")
+
+        dim = response.json()["dimensions"][0]
+        assert dim["category"] == "role"
+        assert dim["dominant_value"] == "founder"
+        assert dim["fact_count"] == 1
+        assert isinstance(dim["confidence"], float)
+
+    @pytest.mark.asyncio
+    async def test_beliefs_included_when_present(self, client, mock_identity_builder):
+        mock_identity_builder.build = AsyncMock(
+            return_value=make_user_identity(with_beliefs=True)
+        )
+
+        response = await client.get("/identity/u1")
+
+        beliefs = response.json()["beliefs"]
+        assert len(beliefs) == 1
+        assert beliefs[0]["statement"] == "values speed over perfection"
+        assert beliefs[0]["category"] == "value"
+        assert beliefs[0]["confidence"] == 0.85
+        assert beliefs[0]["evidence_count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_builder_called_with_correct_args(self, client, mock_identity_builder):
+        mock_identity_builder.build = AsyncMock(return_value=make_user_identity())
+
+        await client.get("/identity/alice?app_id=myapp")
+
+        call_kwargs = mock_identity_builder.build.call_args.kwargs
+        assert call_kwargs["user_id"] == "alice"
+        assert call_kwargs["app_id"] == "myapp"
+
+    @pytest.mark.asyncio
+    async def test_exception_returns_500(self, client, mock_identity_builder):
+        mock_identity_builder.build = AsyncMock(side_effect=RuntimeError("neo4j down"))
+
+        response = await client.get("/identity/u1")
+
+        assert response.status_code == 500
+        assert "neo4j down" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_empty_identity_is_empty_true(self, client, mock_identity_builder):
+        empty = UserIdentity(
+            user_id="u1", app_id="default", summary="",
+            dimensions=[], beliefs=[], total_facts=0,
+            computed_at=datetime.now(timezone.utc),
+        )
+        mock_identity_builder.build = AsyncMock(return_value=empty)
+
+        response = await client.get("/identity/u1")
+
+        assert response.json()["is_empty"] is True
+
+
+# ── POST /feedback ─────────────────────────────────────────────────────────────
+
+
+def make_feedback_record(event_id: str) -> MemoryFeedback:
+    fb = MemoryFeedback()
+    fb.id = uuid.uuid4()
+    fb.event_id = uuid.UUID(event_id)
+    fb.user_id = "u1"
+    fb.app_id = "default"
+    fb.feedback_type = "positive"
+    fb.created_at = datetime.now(timezone.utc)
+    return fb
+
+
+VALID_EVENT_ID = str(uuid.uuid4())
+
+
+class TestSubmitFeedback:
+    @pytest.mark.asyncio
+    async def test_returns_201_on_success(self, client, mock_reinforcement):
+        mock_reinforcement.submit = AsyncMock(
+            return_value=(make_feedback_record(VALID_EVENT_ID), 0.85)
+        )
+
+        response = await client.post("/feedback", json={
+            "event_id": VALID_EVENT_ID,
+            "user_id": "u1",
+            "feedback_type": "positive",
+        })
+
+        assert response.status_code == 201
+
+    @pytest.mark.asyncio
+    async def test_response_shape(self, client, mock_reinforcement):
+        mock_reinforcement.submit = AsyncMock(
+            return_value=(make_feedback_record(VALID_EVENT_ID), 0.85)
+        )
+
+        response = await client.post("/feedback", json={
+            "event_id": VALID_EVENT_ID,
+            "user_id": "u1",
+            "feedback_type": "positive",
+        })
+
+        body = response.json()
+        assert "feedback_id" in body
+        assert body["event_id"] == VALID_EVENT_ID
+        assert body["new_importance_score"] == 0.85
+
+    @pytest.mark.asyncio
+    async def test_reinforcement_called_with_correct_args(self, client, mock_reinforcement):
+        mock_reinforcement.submit = AsyncMock(
+            return_value=(make_feedback_record(VALID_EVENT_ID), 0.75)
+        )
+
+        await client.post("/feedback", json={
+            "event_id": VALID_EVENT_ID,
+            "user_id": "alice",
+            "feedback_type": "negative",
+            "app_id": "myapp",
+            "comment": "wrong memory",
+        })
+
+        call_kwargs = mock_reinforcement.submit.call_args.kwargs
+        assert call_kwargs["user_id"] == "alice"
+        assert call_kwargs["app_id"] == "myapp"
+        assert call_kwargs["comment"] == "wrong memory"
+
+    @pytest.mark.asyncio
+    async def test_invalid_uuid_returns_422(self, client):
+        response = await client.post("/feedback", json={
+            "event_id": "not-a-uuid",
+            "user_id": "u1",
+            "feedback_type": "positive",
+        })
+
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_invalid_feedback_type_returns_422(self, client):
+        response = await client.post("/feedback", json={
+            "event_id": VALID_EVENT_ID,
+            "user_id": "u1",
+            "feedback_type": "great",
+        })
+
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_event_not_found_returns_404(self, client, mock_reinforcement):
+        mock_reinforcement.submit = AsyncMock(
+            side_effect=ValueError("Event not found")
+        )
+
+        response = await client.post("/feedback", json={
+            "event_id": VALID_EVENT_ID,
+            "user_id": "u1",
+            "feedback_type": "positive",
+        })
+
+        assert response.status_code == 404
+        assert "Event not found" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_missing_required_fields_returns_422(self, client):
+        response = await client.post("/feedback", json={"user_id": "u1"})
+
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_exception_returns_500(self, client, mock_reinforcement):
+        mock_reinforcement.submit = AsyncMock(side_effect=RuntimeError("db down"))
+
+        response = await client.post("/feedback", json={
+            "event_id": VALID_EVENT_ID,
+            "user_id": "u1",
+            "feedback_type": "positive",
+        })
+
+        assert response.status_code == 500

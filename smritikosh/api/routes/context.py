@@ -62,4 +62,5 @@ async def get_context(
         messages=ctx.as_messages(),
         total_memories=ctx.total_memories(),
         embedding_failed=ctx.embedding_failed,
+        intent=ctx.intent,
     )

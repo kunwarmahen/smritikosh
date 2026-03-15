@@ -48,14 +48,19 @@ EpisodicMemory            SemanticMemory
 (raw events +             (stable facts:
  vectors)                  preferences,
                            skills, goals…)
-                                │
-          ┌─────────────────────┤
-          │  Background jobs    │
-          │  (every hour/day)   │
-          ▼                     ▼
-    Consolidator          SynapticPruner
-    raw → summary         deletes low-value
-    + distilled facts     memories
+        │                       │
+        └──────────┬────────────┘
+                   │  Background jobs
+        ┌──────────┼────────────────────┐
+        ▼          ▼                    ▼
+  Consolidator  MemoryClusterer    BeliefMiner
+  raw → summary groups similar    infers values &
+  + Neo4j facts events by topic   worldview beliefs
+        │
+        ▼
+  SynapticPruner
+  deletes low-value
+  memories
 ```
 
 When your app needs context before an LLM call:
@@ -63,12 +68,25 @@ When your app needs context before an LLM call:
 ```
 Query → ContextBuilder
           │
-          ├── hybrid_search()   (vector + recency + importance)
+          ├── hybrid_search()    (vector + recency + importance)
           ├── get_user_profile() (Neo4j semantic facts)
-          └── get_recent()      (last N raw events)
+          └── get_recent()       (last N raw events)
                 │
                 ▼
         MemoryContext.messages  →  prepend to LLM messages
+```
+
+To inspect what the system has learned about a user:
+
+```
+GET /identity/{user_id}
+          │
+          ├── IdentityBuilder  →  groups facts into dimensions
+          ├── BeliefMiner      →  fetches inferred beliefs
+          └── LLM              →  generates narrative summary
+                │
+                ▼
+        IdentityProfile  (dimensions + beliefs + summary)
 ```
 
 ---
@@ -81,10 +99,15 @@ Query → ContextBuilder
 | **EpisodicMemory** | Stores raw events; hybrid search over vectors | PostgreSQL + pgvector |
 | **SemanticMemory** | Distilled facts organised in a knowledge graph | Neo4j |
 | **Hippocampus** | Orchestrates intake: score → embed → extract → store | — |
+| **NarrativeMemory** | Tracks causal/temporal links between events (memory chains) | PostgreSQL |
 | **ContextBuilder** | Retrieves relevant context before an LLM call | — |
-| **Consolidator** | Background: compresses events into facts via LLM | — |
+| **Consolidator** | Background: compresses events into summaries + Neo4j facts | — |
 | **SynapticPruner** | Background: deletes old low-scoring events | — |
-| **MemoryScheduler** | Runs Consolidator + Pruner on a timer (APScheduler) | — |
+| **MemoryClusterer** | Background: groups similar events by topic using embeddings | PostgreSQL |
+| **BeliefMiner** | Background: infers durable beliefs and values from event patterns | PostgreSQL |
+| **IdentityBuilder** | Synthesises semantic facts + beliefs into a user identity model | — |
+| **ReinforcementLoop** | Adjusts event importance scores based on user feedback signals | PostgreSQL |
+| **MemoryScheduler** | Runs all background jobs on configurable timers (APScheduler) | — |
 | **LLMAdapter** | Unified interface to Claude, OpenAI, Gemini, Ollama, vLLM | — |
 | **SmritikoshClient** | Python SDK wrapping the REST API | — |
 
@@ -95,53 +118,71 @@ Query → ContextBuilder
 ```
 smritikosh/
 ├── api/
-│   ├── deps.py           # FastAPI dependency injection (@lru_cache singletons)
-│   ├── main.py           # App factory + lifespan (startup/shutdown)
-│   ├── schemas.py        # Pydantic request/response models
+│   ├── deps.py              # FastAPI dependency injection (@lru_cache singletons)
+│   ├── main.py              # App factory + lifespan (startup/shutdown)
+│   ├── schemas.py           # Pydantic request/response models
 │   └── routes/
-│       ├── health.py     # GET /health
-│       ├── memory.py     # POST /memory/event, GET /memory/{user_id}
-│       └── context.py    # POST /context
-├── config.py             # Pydantic Settings (reads .env)
+│       ├── health.py        # GET /health
+│       ├── memory.py        # POST /memory/event, GET /memory/{user_id}
+│       ├── context.py       # POST /context
+│       ├── identity.py      # GET /identity/{user_id}
+│       └── feedback.py      # POST /feedback
+├── config.py                # Pydantic Settings (reads .env)
 ├── db/
-│   ├── models.py         # SQLAlchemy 2.0 ORM: Event, UserFact, MemoryLink
-│   ├── postgres.py       # Async engine, session helpers
-│   └── neo4j.py          # Driver singleton, session helpers, schema init
+│   ├── models.py            # SQLAlchemy 2.0 ORM: Event, UserFact, MemoryLink,
+│   │                        #   MemoryFeedback, UserBelief
+│   ├── postgres.py          # Async engine, session helpers
+│   └── neo4j.py             # Driver singleton, session helpers, schema init
 ├── llm/
-│   └── adapter.py        # LLMAdapter: complete(), embed(), extract_structured()
+│   └── adapter.py           # LLMAdapter: complete(), embed(), extract_structured()
 ├── memory/
-│   ├── episodic.py       # EpisodicMemory: store, search, hybrid_search
-│   ├── semantic.py       # SemanticMemory: upsert_fact, get_user_profile
-│   └── hippocampus.py    # Hippocampus: encode()
+│   ├── episodic.py          # EpisodicMemory: store, search, hybrid_search
+│   ├── semantic.py          # SemanticMemory: upsert_fact, get_user_profile
+│   ├── narrative.py         # NarrativeMemory: memory link chains
+│   ├── identity.py          # IdentityBuilder: dimensions + beliefs + summary
+│   └── hippocampus.py       # Hippocampus: encode()
 ├── processing/
-│   ├── amygdala.py       # Importance scoring (pure, no LLM)
-│   ├── consolidator.py   # Batch compress events → facts
-│   ├── synaptic_pruner.py# Delete low-value memories
-│   └── scheduler.py      # APScheduler background jobs
+│   ├── amygdala.py          # Importance scoring (pure, no LLM)
+│   ├── consolidator.py      # Batch compress events → summaries + Neo4j facts
+│   ├── synaptic_pruner.py   # Delete low-value memories
+│   ├── memory_clusterer.py  # Cluster events by topic using embeddings
+│   ├── belief_miner.py      # Infer beliefs/values from consolidated events
+│   ├── reinforcement.py     # Adjust importance scores from user feedback
+│   └── scheduler.py         # APScheduler background jobs
 ├── retrieval/
-│   └── context_builder.py# Build memory context for LLM calls
+│   └── context_builder.py   # Build memory context for LLM calls
 └── sdk/
-    ├── client.py         # SmritikoshClient (async HTTP)
-    └── types.py          # EncodedEvent, MemoryContext, RecentEvent, HealthStatus
+    ├── client.py            # SmritikoshClient (async HTTP)
+    └── types.py             # EncodedEvent, MemoryContext, RecentEvent,
+                             #   IdentityProfile, FeedbackRecord, HealthStatus
 
 tests/
-├── conftest.py           # pytest marks: live, ollama, db
+├── conftest.py              # pytest marks: live, ollama, db
 ├── test_llm_adapter.py
 ├── test_db_models.py
 ├── test_episodic_memory.py
 ├── test_semantic_memory.py
 ├── test_amygdala.py
 ├── test_hippocampus.py
+├── test_narrative_memory.py
 ├── test_context_builder.py
-├── test_api.py
 ├── test_consolidator.py
 ├── test_synaptic_pruner.py
 ├── test_scheduler.py
+├── test_identity.py
+├── test_memory_clusterer.py
+├── test_reinforcement.py
+├── test_belief_miner.py
+├── test_api.py
 └── test_sdk_client.py
 
 alembic/
 └── versions/
-    └── 0001_initial_schema.py  # events, user_facts, memory_links tables + IVFFlat index
+    ├── 0001_initial_schema.py      # events, user_facts, memory_links + IVFFlat index
+    ├── 0002_narrative_links.py     # memory_links relation types
+    ├── 0003_add_cluster_fields.py  # cluster_id, cluster_label on events
+    ├── 0004_add_memory_feedback.py # memory_feedback table
+    └── 0005_add_user_beliefs.py    # user_beliefs table
 ```
 
 ---
@@ -530,6 +571,82 @@ curl "http://localhost:8080/memory/alice?app_id=myapp&limit=5"
 
 ---
 
+### `GET /identity/{user_id}`
+
+Retrieve the synthesized identity model for a user. Aggregates semantic facts from Neo4j into per-category dimensions, generates a narrative summary via LLM, and includes any inferred beliefs from the `user_beliefs` table.
+
+```bash
+curl "http://localhost:8080/identity/alice?app_id=myapp"
+```
+
+```json
+{
+  "user_id": "alice",
+  "app_id": "myapp",
+  "summary": "Alice is an AI entrepreneur who values speed and iterative development...",
+  "dimensions": [
+    {
+      "category": "role",
+      "dominant_value": "founder",
+      "confidence": 0.95,
+      "fact_count": 3
+    }
+  ],
+  "beliefs": [
+    {
+      "statement": "values iterative development over big-bang launches",
+      "category": "value",
+      "confidence": 0.88,
+      "evidence_count": 4
+    }
+  ],
+  "total_facts": 12,
+  "computed_at": "2026-03-15T10:00:00+00:00",
+  "is_empty": false
+}
+```
+
+| Query param | Default | Description |
+|---|---|---|
+| `app_id` | `"default"` | Application namespace |
+
+---
+
+### `POST /feedback`
+
+Submit feedback on a recalled memory event. Immediately adjusts the event's `importance_score`, influencing future hybrid search rankings.
+
+```bash
+curl -X POST http://localhost:8080/feedback \
+  -H "Content-Type: application/json" \
+  -d '{
+    "event_id": "3f7a1b2c-...",
+    "user_id": "alice",
+    "feedback_type": "positive",
+    "comment": "Exactly what I was looking for"
+  }'
+```
+
+```json
+{
+  "feedback_id": "9a2c4e1f-...",
+  "event_id": "3f7a1b2c-...",
+  "new_importance_score": 0.82
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `event_id` | string | **Required.** UUID of the recalled event |
+| `user_id` | string | **Required.** User submitting the feedback |
+| `feedback_type` | string | **Required.** `"positive"`, `"negative"`, or `"neutral"` |
+| `app_id` | string | Application namespace (default: `"default"`) |
+| `comment` | string | Optional free-text note |
+
+Score adjustments: `positive` → +0.10, `negative` → −0.10, `neutral` → no change (signal is stored but score is unchanged). Score is always clamped to [0.0, 1.0].
+
+---
+
 ## Python SDK
 
 Install the package (the SDK is included):
@@ -569,7 +686,22 @@ async def main():
         for e in events:
             print(f"[{e.created_at}] {e.raw_text[:60]}")
 
-        # 4. Check server health
+        # 4. Submit feedback on a recalled event
+        record = await client.submit_feedback(
+            event_id=events[0].event_id,
+            user_id="alice",
+            feedback_type="positive",
+            comment="Very relevant",
+        )
+        print(f"New importance score: {record.new_importance_score:.2f}")
+
+        # 5. Fetch the user's identity model
+        identity = await client.get_identity(user_id="alice")
+        print(identity.summary)
+        for belief in identity.beliefs:
+            print(f"  [{belief.category}] {belief.statement} ({belief.confidence:.0%})")
+
+        # 6. Check server health
         status = await client.health()
         print(f"Server status: {status.status}")
 
@@ -609,6 +741,8 @@ async with SmritikoshClient(base_url="http://localhost:8080") as client:
 | `encode(user_id, content, *, app_id, metadata)` | Store a memory event → `EncodedEvent` |
 | `build_context(user_id, query, *, app_id)` | Retrieve LLM-ready context → `MemoryContext` |
 | `get_recent(user_id, *, app_id, limit)` | List recent events → `list[RecentEvent]` |
+| `submit_feedback(event_id, user_id, feedback_type, *, app_id, comment)` | Rate a recalled event → `FeedbackRecord` |
+| `get_identity(user_id, *, app_id)` | Fetch synthesized identity model → `IdentityProfile` |
 | `health()` | Server liveness check → `HealthStatus` |
 
 ---
@@ -621,10 +755,10 @@ async with SmritikoshClient(base_url="http://localhost:8080") as client:
 pytest
 ```
 
-The default run executes **256 tests** in about 6 seconds. All tests that require real API keys, a local Ollama server, or running databases are automatically skipped.
+The default run executes **453 tests** in about 7 seconds. All tests that require real API keys, a local Ollama server, or running databases are automatically skipped.
 
 ```
-256 passed, 28 skipped in 5.95s
+453 passed, 5 skipped in 6.80s
 ```
 
 ### Run with coverage report
@@ -675,12 +809,17 @@ pytest tests/test_amygdala.py::TestAmygdala::test_scores_decision_text -v
 | `test_semantic_memory.py` | 37 | upsert_fact, get_user_profile, UserProfile.as_text_summary() |
 | `test_amygdala.py` | 19 | All scoring rules, boosts, penalties, clamp behaviour |
 | `test_hippocampus.py` | 16 | Parallel LLM calls, embedding failure, extraction failure |
-| `test_context_builder.py` | 28 | Deduplication, degraded-mode fallbacks, prompt rendering |
-| `test_api.py` | 24 | All HTTP routes via httpx test client + dependency overrides |
-| `test_consolidator.py` | 20 | Batch splitting, LLM failures, fact upserts, skip guard |
+| `test_narrative_memory.py` | 18 | Memory link creation, chain traversal, relation types |
+| `test_context_builder.py` | 34 | Deduplication, degraded-mode fallbacks, prompt rendering, narrative chains |
+| `test_consolidator.py` | 26 | Batch splitting, LLM failures, fact upserts, narrative link creation |
 | `test_synaptic_pruner.py` | 22 | Score formula, pruning logic, threshold sensitivity |
 | `test_scheduler.py` | 14 | Job registration, manual triggers, error recovery |
-| `test_sdk_client.py` | 28 | HTTP mocking via respx, error handling, type checks |
+| `test_identity.py` | 26 | Dimension grouping, dominant value, LLM summary, empty profile |
+| `test_memory_clusterer.py` | 29 | Cosine sim, greedy clustering, LLM labelling, skip guards |
+| `test_reinforcement.py` | 23 | apply_delta clamping, submit(), score update, neutral no-op |
+| `test_belief_miner.py` | 29 | Prompt building, skip guards, upsert logic, LLM failure, identity integration |
+| `test_api.py` | 40 | All HTTP routes via httpx test client + dependency overrides |
+| `test_sdk_client.py` | 40 | HTTP mocking via respx, error handling, type checks |
 
 ---
 
@@ -770,7 +909,14 @@ EMBEDDING_DIMENSIONS=3584          # match your model's output dimension
 
 ## Background jobs
 
-The `MemoryScheduler` runs two jobs inside the FastAPI process using APScheduler:
+The `MemoryScheduler` runs four jobs inside the FastAPI process using APScheduler:
+
+| Job | Default interval | What it does |
+|---|---|---|
+| **Consolidation** | every 1 hour | Compresses raw events → summaries + Neo4j facts |
+| **Synaptic pruning** | every 24 hours | Deletes old low-scoring events |
+| **Memory clustering** | every 6 hours | Groups similar events by topic using embeddings |
+| **Belief mining** | every 12 hours | Infers durable beliefs and values from event patterns |
 
 ### Consolidation (every hour)
 
@@ -792,6 +938,14 @@ prune_score = importance_score × exp(−age_days / 30)
 
 Events scoring below `0.15` are deleted. High-importance or recently-accessed memories are preserved.
 
+### Memory clustering (every 6 hours)
+
+Groups events with embeddings into topical clusters using a greedy centroid algorithm (cosine similarity ≥ 0.75). Each cluster is labelled by the LLM (`cluster_label`) and stored on the event rows. Requires at least 5 events with embeddings to run.
+
+### Belief mining (every 12 hours)
+
+Reads consolidated events (minimum 3) and semantic facts, then prompts the LLM to infer higher-order beliefs and values. Results are upserted into `user_beliefs` — `evidence_count` increments each time the same belief is independently inferred, reinforcing confidence over time.
+
 ### Manual triggers (admin / testing)
 
 ```python
@@ -800,10 +954,14 @@ from smritikosh.processing.scheduler import MemoryScheduler
 # Trigger immediately for one user
 await scheduler.run_consolidation_now(user_id="alice", app_id="myapp")
 await scheduler.run_pruning_now(user_id="alice", app_id="myapp")
+await scheduler.run_clustering_now(user_id="alice", app_id="myapp")
+await scheduler.run_belief_mining_now(user_id="alice", app_id="myapp")
 
 # Run batch across all users
 await scheduler.run_consolidation_for_all_users()
 await scheduler.run_pruning_for_all_users()
+await scheduler.run_clustering_for_all_users()
+await scheduler.run_belief_mining_for_all_users()
 ```
 
 ### Tune the schedule
@@ -813,7 +971,10 @@ Pass custom intervals when constructing the scheduler (or subclass `MemorySchedu
 ```python
 MemoryScheduler(
     consolidator=..., pruner=..., episodic=...,
-    consolidation_hours=2,   # consolidate every 2 hours
-    pruning_hours=48,        # prune every 2 days
+    clusterer=..., belief_miner=...,
+    consolidation_hours=2,    # consolidate every 2 hours
+    pruning_hours=48,         # prune every 2 days
+    clustering_hours=12,      # cluster every 12 hours
+    belief_mining_hours=24,   # mine beliefs once a day
 )
 ```

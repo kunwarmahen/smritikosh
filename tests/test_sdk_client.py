@@ -10,7 +10,16 @@ import respx
 from httpx import Response
 
 from smritikosh.sdk.client import SmritikoshClient, SmritikoshError
-from smritikosh.sdk.types import EncodedEvent, HealthStatus, MemoryContext, RecentEvent
+from smritikosh.sdk.types import (
+    BeliefItem,
+    EncodedEvent,
+    FeedbackRecord,
+    HealthStatus,
+    IdentityDimensionItem,
+    IdentityProfile,
+    MemoryContext,
+    RecentEvent,
+)
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -49,6 +58,37 @@ RECENT_RESPONSE = {
 }
 
 HEALTH_RESPONSE = {"status": "ok", "version": "0.1.0"}
+
+FEEDBACK_RESPONSE = {
+    "feedback_id": "fb-001",
+    "event_id": "evt-001",
+    "new_importance_score": 0.85,
+}
+
+IDENTITY_RESPONSE = {
+    "user_id": "alice",
+    "app_id": "default",
+    "summary": "A founder building AI tools.",
+    "dimensions": [
+        {
+            "category": "role",
+            "dominant_value": "founder",
+            "confidence": 0.9,
+            "fact_count": 2,
+        }
+    ],
+    "beliefs": [
+        {
+            "statement": "values speed over perfection",
+            "category": "value",
+            "confidence": 0.85,
+            "evidence_count": 3,
+        }
+    ],
+    "total_facts": 2,
+    "computed_at": "2026-03-15T00:00:00+00:00",
+    "is_empty": False,
+}
 
 
 @pytest.fixture
@@ -327,3 +367,156 @@ class TestTypes:
     def test_health_status_fields(self):
         h = HealthStatus(status="ok", version="0.1.0")
         assert h.status == "ok"
+
+    def test_feedback_record_fields(self):
+        f = FeedbackRecord(feedback_id="fb-1", event_id="evt-1", new_importance_score=0.7)
+        assert f.feedback_id == "fb-1"
+        assert f.new_importance_score == 0.7
+
+    def test_identity_profile_fields(self):
+        profile = IdentityProfile(
+            user_id="u1", app_id="default", summary="",
+            dimensions=[], beliefs=[], total_facts=0,
+            computed_at="2026-03-15T00:00:00+00:00", is_empty=True,
+        )
+        assert profile.is_empty is True
+        assert profile.beliefs == []
+
+
+# ── submit_feedback() ─────────────────────────────────────────────────────────
+
+class TestSubmitFeedback:
+    @respx.mock
+    async def test_returns_feedback_record(self, client):
+        respx.post(f"{BASE_URL}/feedback").mock(
+            return_value=Response(201, json=FEEDBACK_RESPONSE)
+        )
+        record = await client.submit_feedback(
+            event_id="evt-001",
+            user_id="alice",
+            feedback_type="positive",
+        )
+        assert isinstance(record, FeedbackRecord)
+        assert record.feedback_id == "fb-001"
+        assert record.event_id == "evt-001"
+        assert record.new_importance_score == 0.85
+
+    @respx.mock
+    async def test_sends_correct_payload(self, client):
+        route = respx.post(f"{BASE_URL}/feedback").mock(
+            return_value=Response(201, json=FEEDBACK_RESPONSE)
+        )
+        await client.submit_feedback(
+            event_id="evt-001",
+            user_id="alice",
+            feedback_type="negative",
+            app_id="myapp",
+            comment="wrong memory",
+        )
+        import json
+        payload = json.loads(route.calls[0].request.content)
+        assert payload["event_id"] == "evt-001"
+        assert payload["user_id"] == "alice"
+        assert payload["feedback_type"] == "negative"
+        assert payload["app_id"] == "myapp"
+        assert payload["comment"] == "wrong memory"
+
+    @respx.mock
+    async def test_uses_client_app_id_by_default(self, client):
+        route = respx.post(f"{BASE_URL}/feedback").mock(
+            return_value=Response(201, json=FEEDBACK_RESPONSE)
+        )
+        await client.submit_feedback(
+            event_id="evt-001", user_id="alice", feedback_type="neutral"
+        )
+        import json
+        payload = json.loads(route.calls[0].request.content)
+        assert payload["app_id"] == "default"
+
+    @respx.mock
+    async def test_raises_on_404(self, client):
+        respx.post(f"{BASE_URL}/feedback").mock(
+            return_value=Response(404, json={"detail": "Event not found"})
+        )
+        with pytest.raises(SmritikoshError) as exc_info:
+            await client.submit_feedback(
+                event_id="evt-001", user_id="alice", feedback_type="positive"
+            )
+        assert exc_info.value.status_code == 404
+
+    @respx.mock
+    async def test_raises_on_422(self, client):
+        respx.post(f"{BASE_URL}/feedback").mock(
+            return_value=Response(422, json={"detail": "Invalid feedback_type"})
+        )
+        with pytest.raises(SmritikoshError) as exc_info:
+            await client.submit_feedback(
+                event_id="evt-001", user_id="alice", feedback_type="great"
+            )
+        assert exc_info.value.status_code == 422
+
+
+# ── get_identity() ────────────────────────────────────────────────────────────
+
+class TestGetIdentity:
+    @respx.mock
+    async def test_returns_identity_profile(self, client):
+        respx.get(f"{BASE_URL}/identity/alice").mock(
+            return_value=Response(200, json=IDENTITY_RESPONSE)
+        )
+        profile = await client.get_identity(user_id="alice")
+        assert isinstance(profile, IdentityProfile)
+        assert profile.user_id == "alice"
+        assert profile.summary == "A founder building AI tools."
+        assert profile.total_facts == 2
+        assert profile.is_empty is False
+
+    @respx.mock
+    async def test_dimensions_parsed(self, client):
+        respx.get(f"{BASE_URL}/identity/alice").mock(
+            return_value=Response(200, json=IDENTITY_RESPONSE)
+        )
+        profile = await client.get_identity(user_id="alice")
+        assert len(profile.dimensions) == 1
+        assert isinstance(profile.dimensions[0], IdentityDimensionItem)
+        assert profile.dimensions[0].category == "role"
+        assert profile.dimensions[0].dominant_value == "founder"
+        assert profile.dimensions[0].fact_count == 2
+
+    @respx.mock
+    async def test_beliefs_parsed(self, client):
+        respx.get(f"{BASE_URL}/identity/alice").mock(
+            return_value=Response(200, json=IDENTITY_RESPONSE)
+        )
+        profile = await client.get_identity(user_id="alice")
+        assert len(profile.beliefs) == 1
+        assert isinstance(profile.beliefs[0], BeliefItem)
+        assert profile.beliefs[0].statement == "values speed over perfection"
+        assert profile.beliefs[0].confidence == 0.85
+        assert profile.beliefs[0].evidence_count == 3
+
+    @respx.mock
+    async def test_passes_app_id_param(self, client):
+        route = respx.get(f"{BASE_URL}/identity/alice").mock(
+            return_value=Response(200, json=IDENTITY_RESPONSE)
+        )
+        await client.get_identity(user_id="alice", app_id="myapp")
+        assert "app_id=myapp" in str(route.calls[0].request.url)
+
+    @respx.mock
+    async def test_empty_beliefs_list(self, client):
+        response = {**IDENTITY_RESPONSE, "beliefs": [], "is_empty": True}
+        respx.get(f"{BASE_URL}/identity/alice").mock(
+            return_value=Response(200, json=response)
+        )
+        profile = await client.get_identity(user_id="alice")
+        assert profile.beliefs == []
+
+    @respx.mock
+    async def test_raises_on_500(self, client):
+        respx.get(f"{BASE_URL}/identity/alice").mock(
+            return_value=Response(500, json={"detail": "neo4j down"})
+        )
+        with pytest.raises(SmritikoshError) as exc_info:
+            await client.get_identity(user_id="alice")
+        assert exc_info.value.status_code == 500

@@ -20,8 +20,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from smritikosh.db.models import Event
+from smritikosh.db.models import Event, MemoryLink, RelationType
 from smritikosh.memory.episodic import EpisodicMemory, SearchResult
+from smritikosh.memory.narrative import NarrativeMemory
 from smritikosh.memory.semantic import FactRecord, SemanticMemory, UserProfile
 from smritikosh.retrieval.context_builder import (
     ContextBuilder,
@@ -29,6 +30,7 @@ from smritikosh.retrieval.context_builder import (
     _format_date,
     _truncate,
 )
+from smritikosh.retrieval.intent_classifier import IntentClassifier, QueryIntent, _INTENT_WEIGHTS
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -81,6 +83,9 @@ def make_builder(**kwargs) -> tuple[ContextBuilder, AsyncMock, AsyncMock, AsyncM
         top_k_similar=kwargs.get("top_k_similar", 5),
         recent_limit=kwargs.get("recent_limit", 5),
         min_profile_confidence=kwargs.get("min_profile_confidence", 0.5),
+        intent_classifier=kwargs.get("intent_classifier", None),
+        narrative=kwargs.get("narrative", None),
+        include_chains=kwargs.get("include_chains", False),
     )
     return builder, llm, episodic, semantic
 
@@ -382,3 +387,200 @@ class TestContextBuilderDegradation:
 
         assert ctx.is_empty()
         assert ctx.embedding_failed is True
+
+
+# ── Intent-aware retrieval ────────────────────────────────────────────────────
+
+
+class TestIntentAwareRetrieval:
+    def _setup(self, query: str, classifier=None):
+        builder, llm, episodic, semantic = make_builder(
+            intent_classifier=classifier or IntentClassifier()
+        )
+        pg, neo = make_sessions()
+        llm.embed = AsyncMock(return_value=[0.1] * 1536)
+        episodic.hybrid_search = AsyncMock(return_value=[])
+        episodic.get_recent = AsyncMock(return_value=[])
+        semantic.get_user_profile = AsyncMock(return_value=make_profile([]))
+        return builder, llm, episodic, semantic, pg, neo
+
+    @pytest.mark.asyncio
+    async def test_intent_stored_on_memory_context(self):
+        builder, llm, episodic, semantic, pg, neo = self._setup("career job role")
+        ctx = await builder.build(pg, neo, user_id="u1", query="career job role")
+        assert ctx.intent == QueryIntent.CAREER
+
+    @pytest.mark.asyncio
+    async def test_general_intent_when_no_classifier(self):
+        builder, llm, episodic, semantic = make_builder(intent_classifier=None)
+        pg, neo = make_sessions()
+        llm.embed = AsyncMock(return_value=[0.1] * 1536)
+        episodic.hybrid_search = AsyncMock(return_value=[])
+        episodic.get_recent = AsyncMock(return_value=[])
+        semantic.get_user_profile = AsyncMock(return_value=make_profile([]))
+
+        ctx = await builder.build(pg, neo, user_id="u1", query="career job role")
+
+        assert ctx.intent == QueryIntent.GENERAL
+
+    @pytest.mark.asyncio
+    async def test_weights_override_passed_to_hybrid_search(self):
+        builder, llm, episodic, semantic, pg, neo = self._setup("career job role")
+        await builder.build(pg, neo, user_id="u1", query="career job role")
+
+        call_kwargs = episodic.hybrid_search.call_args.kwargs
+        assert call_kwargs["weights_override"] == _INTENT_WEIGHTS[QueryIntent.CAREER]
+
+    @pytest.mark.asyncio
+    async def test_no_weights_override_without_classifier(self):
+        builder, llm, episodic, semantic = make_builder(intent_classifier=None)
+        pg, neo = make_sessions()
+        llm.embed = AsyncMock(return_value=[0.1] * 1536)
+        episodic.hybrid_search = AsyncMock(return_value=[])
+        episodic.get_recent = AsyncMock(return_value=[])
+        semantic.get_user_profile = AsyncMock(return_value=make_profile([]))
+
+        await builder.build(pg, neo, user_id="u1", query="career job role")
+
+        call_kwargs = episodic.hybrid_search.call_args.kwargs
+        assert call_kwargs["weights_override"] is None
+
+    @pytest.mark.asyncio
+    async def test_historical_recall_intent_detected(self):
+        builder, llm, episodic, semantic, pg, neo = self._setup(
+            "do you remember what I said last time"
+        )
+        ctx = await builder.build(
+            pg, neo, user_id="u1", query="do you remember what I said last time"
+        )
+        assert ctx.intent == QueryIntent.HISTORICAL_RECALL
+
+    @pytest.mark.asyncio
+    async def test_intent_default_is_general_on_empty_query(self):
+        builder, llm, episodic, semantic, pg, neo = self._setup("hello")
+        ctx = await builder.build(pg, neo, user_id="u1", query="hello")
+        assert ctx.intent == QueryIntent.GENERAL
+
+
+# ── Narrative chain traversal ─────────────────────────────────────────────────
+
+
+def make_memory_link(from_id: uuid.UUID, to_id: uuid.UUID) -> MemoryLink:
+    return MemoryLink(
+        id=uuid.uuid4(),
+        from_event_id=from_id,
+        to_event_id=to_id,
+        relation_type="preceded",
+    )
+
+
+class TestNarrativeChains:
+    def _setup_with_narrative(self, narrative_mock):
+        builder, llm, episodic, semantic = make_builder(
+            narrative=narrative_mock,
+            include_chains=True,
+        )
+        pg, neo = make_sessions()
+        llm.embed = AsyncMock(return_value=[0.1] * 1536)
+        episodic.get_recent = AsyncMock(return_value=[])
+        semantic.get_user_profile = AsyncMock(return_value=make_profile([]))
+        return builder, llm, episodic, semantic, pg, neo
+
+    @pytest.mark.asyncio
+    async def test_narrative_chains_populated_when_links_exist(self):
+        anchor_event = make_event(raw_text="anchor")
+        linked_event = make_event(raw_text="linked")
+        link = make_memory_link(anchor_event.id, linked_event.id)
+
+        narrative = AsyncMock(spec=NarrativeMemory)
+        narrative.get_chain_forward = AsyncMock(return_value=[link])
+
+        builder, llm, episodic, semantic, pg, neo = self._setup_with_narrative(narrative)
+        episodic.hybrid_search = AsyncMock(return_value=[
+            SearchResult(event=anchor_event, hybrid_score=0.9)
+        ])
+
+        # pg.execute returns the linked event
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [linked_event]
+        pg.execute = AsyncMock(return_value=mock_result)
+
+        ctx = await builder.build(pg, neo, user_id="u1", query="test")
+
+        assert len(ctx.narrative_chains) == 1
+        assert ctx.narrative_chains[0][0].id == anchor_event.id
+        assert ctx.narrative_chains[0][1].id == linked_event.id
+
+    @pytest.mark.asyncio
+    async def test_no_chains_when_no_links(self):
+        anchor_event = make_event(raw_text="anchor")
+        narrative = AsyncMock(spec=NarrativeMemory)
+        narrative.get_chain_forward = AsyncMock(return_value=[])
+
+        builder, llm, episodic, semantic, pg, neo = self._setup_with_narrative(narrative)
+        episodic.hybrid_search = AsyncMock(return_value=[
+            SearchResult(event=anchor_event, hybrid_score=0.9)
+        ])
+
+        ctx = await builder.build(pg, neo, user_id="u1", query="test")
+
+        assert ctx.narrative_chains == []
+
+    @pytest.mark.asyncio
+    async def test_no_chains_when_include_chains_false(self):
+        narrative = AsyncMock(spec=NarrativeMemory)
+        builder, llm, episodic, semantic = make_builder(
+            narrative=narrative,
+            include_chains=False,
+        )
+        pg, neo = make_sessions()
+        llm.embed = AsyncMock(return_value=[0.1] * 1536)
+        episodic.hybrid_search = AsyncMock(return_value=[make_search_result()])
+        episodic.get_recent = AsyncMock(return_value=[])
+        semantic.get_user_profile = AsyncMock(return_value=make_profile([]))
+
+        ctx = await builder.build(pg, neo, user_id="u1", query="test")
+
+        narrative.get_chain_forward.assert_not_called()
+        assert ctx.narrative_chains == []
+
+    @pytest.mark.asyncio
+    async def test_no_chains_when_no_similar_events(self):
+        narrative = AsyncMock(spec=NarrativeMemory)
+        builder, llm, episodic, semantic, pg, neo = self._setup_with_narrative(narrative)
+        episodic.hybrid_search = AsyncMock(return_value=[])
+
+        ctx = await builder.build(pg, neo, user_id="u1", query="test")
+
+        narrative.get_chain_forward.assert_not_called()
+        assert ctx.narrative_chains == []
+
+    @pytest.mark.asyncio
+    async def test_chain_traversal_failure_graceful(self):
+        anchor_event = make_event(raw_text="anchor")
+        narrative = AsyncMock(spec=NarrativeMemory)
+        narrative.get_chain_forward = AsyncMock(side_effect=RuntimeError("db error"))
+
+        builder, llm, episodic, semantic, pg, neo = self._setup_with_narrative(narrative)
+        episodic.hybrid_search = AsyncMock(return_value=[
+            SearchResult(event=anchor_event, hybrid_score=0.9)
+        ])
+
+        ctx = await builder.build(pg, neo, user_id="u1", query="test")
+
+        assert ctx.narrative_chains == []
+
+    @pytest.mark.asyncio
+    async def test_chain_renders_in_prompt_text(self):
+        e1 = make_event(raw_text="startup founded")
+        e2 = make_event(raw_text="engineers hired")
+        ctx = MemoryContext(
+            user_id="u1",
+            query="test",
+            narrative_chains=[[e1, e2]],
+        )
+        text = ctx.as_prompt_text()
+        assert "Memory chains" in text
+        assert "startup founded" in text
+        assert "engineers hired" in text
+        assert "→" in text

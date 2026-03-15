@@ -48,6 +48,54 @@ class MemoryContext:
 
 
 @dataclass
+class FeedbackRecord:
+    """Returned by SmritikoshClient.submit_feedback()."""
+
+    feedback_id: str
+    event_id: str
+    new_importance_score: float
+
+
+@dataclass
+class BeliefItem:
+    """One inferred belief from SmritikoshClient.get_identity()."""
+
+    statement: str
+    category: str
+    confidence: float
+    evidence_count: int
+
+
+@dataclass
+class IdentityDimensionItem:
+    """One category slice of a user's identity (e.g. all 'role' facts)."""
+
+    category: str
+    dominant_value: str
+    confidence: float
+    fact_count: int
+
+
+@dataclass
+class IdentityProfile:
+    """
+    Returned by SmritikoshClient.get_identity().
+
+    summary      — LLM-generated narrative description of the user.
+    dimensions   — per-category breakdown of identity facts.
+    """
+
+    user_id: str
+    app_id: str
+    summary: str
+    dimensions: list[IdentityDimensionItem]
+    beliefs: list[BeliefItem]
+    total_facts: int
+    computed_at: str
+    is_empty: bool
+
+
+@dataclass
 class HealthStatus:
     status: str
     version: str

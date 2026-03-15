@@ -29,7 +29,9 @@ from sqlalchemy import select, text
 from smritikosh.db.neo4j import neo4j_session
 from smritikosh.db.postgres import db_session
 from smritikosh.memory.episodic import EpisodicMemory
+from smritikosh.processing.belief_miner import BeliefMiner, MiningResult
 from smritikosh.processing.consolidator import Consolidator, ConsolidationResult
+from smritikosh.processing.memory_clusterer import ClusterResult, MemoryClusterer
 from smritikosh.processing.synaptic_pruner import PruningResult, SynapticPruner
 
 logger = logging.getLogger(__name__)
@@ -56,10 +58,16 @@ class MemoryScheduler:
         episodic: EpisodicMemory,
         consolidation_hours: int = 1,
         pruning_hours: int = 24,
+        clusterer: MemoryClusterer | None = None,
+        clustering_hours: int = 6,
+        belief_miner: BeliefMiner | None = None,
+        belief_mining_hours: int = 12,
     ) -> None:
         self.consolidator = consolidator
         self.pruner = pruner
         self.episodic = episodic
+        self.clusterer = clusterer
+        self.belief_miner = belief_miner
         self._scheduler = AsyncIOScheduler()
 
         self._scheduler.add_job(
@@ -78,6 +86,24 @@ class MemoryScheduler:
             name="Synaptic Pruning",
             max_instances=1,
         )
+        if self.clusterer is not None:
+            self._scheduler.add_job(
+                self.run_clustering_for_all_users,
+                trigger="interval",
+                hours=clustering_hours,
+                id="clustering_job",
+                name="Memory Clustering",
+                max_instances=1,
+            )
+        if self.belief_miner is not None:
+            self._scheduler.add_job(
+                self.run_belief_mining_for_all_users,
+                trigger="interval",
+                hours=belief_mining_hours,
+                id="belief_mining_job",
+                name="Belief Mining",
+                max_instances=1,
+            )
 
     def start(self) -> None:
         self._scheduler.start()
@@ -160,6 +186,82 @@ class MemoryScheduler:
                 extra={"user_id": user_id, "error": str(exc)},
             )
             result = PruningResult(user_id=user_id, app_id=app_id, skipped=True)
+            return result
+
+    async def run_belief_mining_for_all_users(self) -> list[MiningResult]:
+        """Run belief mining for all users that have consolidated events."""
+        if self.belief_miner is None:
+            return []
+        user_app_pairs = await self._get_all_users()
+        results: list[MiningResult] = []
+
+        for user_id, app_id in user_app_pairs:
+            result = await self.run_belief_mining_now(user_id=user_id, app_id=app_id)
+            results.append(result)
+
+        logger.info(
+            "Batch belief mining complete",
+            extra={"users_processed": len(results)},
+        )
+        return results
+
+    async def run_belief_mining_now(
+        self, *, user_id: str, app_id: str = "default"
+    ) -> MiningResult:
+        """Run belief mining immediately for a specific user."""
+        if self.belief_miner is None:
+            result = MiningResult(user_id=user_id, app_id=app_id, skipped=True)
+            result.skip_reason = "No belief_miner configured."
+            return result
+        try:
+            async with db_session() as pg, neo4j_session() as neo:
+                return await self.belief_miner.mine(
+                    pg, neo, user_id=user_id, app_id=app_id
+                )
+        except Exception as exc:
+            logger.error(
+                "Belief mining failed",
+                extra={"user_id": user_id, "error": str(exc)},
+            )
+            result = MiningResult(user_id=user_id, app_id=app_id, skipped=True)
+            result.skip_reason = str(exc)
+            return result
+
+    async def run_clustering_for_all_users(self) -> list[ClusterResult]:
+        """Run clustering for all users that have events with embeddings."""
+        if self.clusterer is None:
+            return []
+        user_app_pairs = await self._get_all_users()
+        results: list[ClusterResult] = []
+
+        for user_id, app_id in user_app_pairs:
+            result = await self.run_clustering_now(user_id=user_id, app_id=app_id)
+            results.append(result)
+
+        logger.info(
+            "Batch clustering complete",
+            extra={"users_processed": len(results)},
+        )
+        return results
+
+    async def run_clustering_now(
+        self, *, user_id: str, app_id: str = "default"
+    ) -> ClusterResult:
+        """Run clustering immediately for a specific user."""
+        if self.clusterer is None:
+            result = ClusterResult(user_id=user_id, app_id=app_id, skipped=True)
+            result.skip_reason = "No clusterer configured."
+            return result
+        try:
+            async with db_session() as pg:
+                return await self.clusterer.run(pg, user_id=user_id, app_id=app_id)
+        except Exception as exc:
+            logger.error(
+                "Clustering failed",
+                extra={"user_id": user_id, "error": str(exc)},
+            )
+            result = ClusterResult(user_id=user_id, app_id=app_id, skipped=True)
+            result.skip_reason = str(exc)
             return result
 
     # ── User discovery ─────────────────────────────────────────────────────

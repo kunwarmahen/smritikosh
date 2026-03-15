@@ -4,15 +4,19 @@ EpisodicMemory — stores and retrieves experiences from PostgreSQL + pgvector.
 Mirrors the Hippocampus/episodic memory function in the human brain:
   - Every interaction is recorded as a timestamped event with an embedding.
   - Recall is by similarity (like human associative recall), not keyword search.
-  - Hybrid scoring combines semantic similarity + recency + importance so that
-    recent, important, and contextually relevant memories surface first.
+  - Hybrid scoring combines semantic similarity + recency + importance + frequency
+    so that recent, important, frequently-recalled, and contextually relevant
+    memories surface first.
 
 Hybrid search formula:
     score = similarity_weight  * cosine_similarity(query, event.embedding)
           + recency_weight     * exp(-days_since_event / decay_days)
           + importance_weight  * event.importance_score
+          + frequency_weight   * min(recall_count, freq_cap) / freq_cap
 
-Weights sum to 1.0 and are tunable via constructor arguments.
+Weights (similarity + recency + importance + frequency + contextual_match)
+must sum to 1.0 and are tunable via HybridWeights.
+contextual_match is reserved for Phase 2 intent-aware retrieval (defaults to 0.0).
 """
 
 import uuid
@@ -31,23 +35,40 @@ class SearchResult:
     event: Event
     similarity_score: float = 0.0
     recency_score: float = 0.0
+    frequency_score: float = 0.0
     hybrid_score: float = 0.0
 
 
 @dataclass
 class HybridWeights:
-    """Tunable weights for the three components of hybrid search."""
-    similarity: float = 0.5    # semantic closeness to the query
-    recency: float = 0.3       # exponential decay based on event age
-    importance: float = 0.2    # Amygdala-assigned importance score
-    decay_days: float = 30.0   # half-life for recency decay
+    """
+    Tunable weights for the hybrid search scoring formula.
+
+    All five weights must sum to 1.0.
+    contextual_match defaults to 0.0 and is activated in Phase 2 (intent classification).
+    """
+    similarity: float = 0.40        # semantic closeness to the query
+    recency: float = 0.30           # exponential decay based on event age
+    importance: float = 0.15        # Amygdala-assigned importance score
+    frequency: float = 0.15         # normalised recall_count — how often retrieved
+    contextual_match: float = 0.0   # reserved: intent-aware boost (Phase 2)
+    decay_days: float = 30.0        # half-life for recency decay
+    frequency_cap: int = 50         # recall_count normalisation ceiling
 
     def __post_init__(self) -> None:
-        total = self.similarity + self.recency + self.importance
+        total = (
+            self.similarity
+            + self.recency
+            + self.importance
+            + self.frequency
+            + self.contextual_match
+        )
         if abs(total - 1.0) > 1e-6:
             raise ValueError(
                 f"HybridWeights must sum to 1.0, got {total:.3f}. "
-                f"similarity={self.similarity}, recency={self.recency}, importance={self.importance}"
+                f"similarity={self.similarity}, recency={self.recency}, "
+                f"importance={self.importance}, frequency={self.frequency}, "
+                f"contextual_match={self.contextual_match}"
             )
 
 
@@ -142,6 +163,29 @@ class EpisodicMemory:
         await session.delete(event)
         return True
 
+    async def increment_recall(
+        self,
+        session: AsyncSession,
+        event_ids: list[uuid.UUID],
+    ) -> None:
+        """
+        Increment recall_count for events surfaced by a search.
+
+        Called by ContextBuilder after every hybrid_search so that
+        frequently-retrieved memories get a higher frequency_score
+        in future searches.
+        """
+        if not event_ids:
+            return
+        await session.execute(
+            update(Event)
+            .where(Event.id.in_(event_ids))
+            .values(
+                recall_count=Event.recall_count + 1,
+                updated_at=datetime.now(timezone.utc),
+            )
+        )
+
     # ── Read ───────────────────────────────────────────────────────────────
 
     async def get_recent(
@@ -219,6 +263,7 @@ class EpisodicMemory:
         query_embedding: list[float],
         app_id: str = "default",
         top_k: int = 5,
+        weights_override: "HybridWeights | None" = None,
     ) -> list[SearchResult]:
         """
         Hybrid retrieval: semantic similarity + recency decay + importance score.
@@ -231,19 +276,21 @@ class EpisodicMemory:
                 similarity_weight  * (1 - cosine_distance)
               + recency_weight     * exp(-age_in_days / decay_days)
               + importance_weight  * importance_score
+              + frequency_weight   * min(recall_count, freq_cap) / freq_cap
         """
-        w = self.weights
+        w = weights_override if weights_override is not None else self.weights
         vec_literal = _embedding_literal(query_embedding)
 
         sql = text(f"""
             SELECT
                 id,
-                (1.0 - (embedding <=> '{vec_literal}'))            AS similarity_score,
+                (1.0 - (embedding <=> '{vec_literal}'))                     AS similarity_score,
                 EXP(
                     -EXTRACT(EPOCH FROM (NOW() - created_at))
                     / 86400.0 / :decay_days
-                )                                                   AS recency_score,
-                importance_score
+                )                                                            AS recency_score,
+                importance_score,
+                LEAST(recall_count, :freq_cap)::float / :freq_cap           AS frequency_score
             FROM events
             WHERE
                 user_id = :user_id
@@ -254,6 +301,7 @@ class EpisodicMemory:
                     :w_sim  * (1.0 - (embedding <=> '{vec_literal}'))
                   + :w_rec  * EXP(-EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400.0 / :decay_days)
                   + :w_imp  * importance_score
+                  + :w_freq * (LEAST(recall_count, :freq_cap)::float / :freq_cap)
                 ) DESC
             LIMIT :top_k
         """)
@@ -267,6 +315,8 @@ class EpisodicMemory:
                 "w_sim": w.similarity,
                 "w_rec": w.recency,
                 "w_imp": w.importance,
+                "w_freq": w.frequency,
+                "freq_cap": w.frequency_cap,
                 "top_k": top_k,
             },
         )
@@ -280,10 +330,12 @@ class EpisodicMemory:
                         event=event,
                         similarity_score=float(row.similarity_score),
                         recency_score=float(row.recency_score),
+                        frequency_score=float(row.frequency_score),
                         hybrid_score=(
                             w.similarity * float(row.similarity_score)
                             + w.recency * float(row.recency_score)
                             + w.importance * float(row.importance_score)
+                            + w.frequency * float(row.frequency_score)
                         ),
                     )
                 )

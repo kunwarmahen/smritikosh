@@ -11,6 +11,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from smritikosh.db.models import RelationType
+from smritikosh.memory.narrative import NarrativeMemory
 from smritikosh.processing.consolidator import (
     Consolidator,
     ConsolidationResult,
@@ -82,6 +84,7 @@ class TestConsolidationResult:
         assert r.events_processed == 0
         assert r.events_consolidated == 0
         assert r.facts_distilled == 0
+        assert r.links_created == 0
         assert r.batches == 0
         assert r.skipped is False
         assert r.skip_reason == ""
@@ -305,3 +308,142 @@ class TestConsolidatorLLMFailure:
 
         # mark_consolidated called with summary=None (empty string → None)
         mock_episodic.mark_consolidated.assert_called_once()
+
+
+# ── Consolidator — narrative link extraction ──────────────────────────────────
+
+
+@pytest.fixture
+def mock_narrative():
+    narrative = AsyncMock(spec=NarrativeMemory)
+    narrative.create_link = AsyncMock(return_value=MagicMock())
+    return narrative
+
+
+@pytest.fixture
+def consolidator_with_narrative(mock_llm, mock_episodic, mock_semantic, mock_narrative):
+    return Consolidator(
+        llm=mock_llm,
+        episodic=mock_episodic,
+        semantic=mock_semantic,
+        narrative=mock_narrative,
+    )
+
+
+class TestConsolidatorLinks:
+    async def test_creates_links_from_llm_output(
+        self, consolidator_with_narrative, mock_episodic, mock_llm, mock_narrative
+    ):
+        events = make_events(5)
+        mock_episodic.get_unconsolidated.return_value = events
+        mock_llm.extract_structured.return_value = {
+            "summary": "Summary",
+            "facts": [],
+            "links": [
+                {"from_index": 0, "to_index": 1, "relation_type": "preceded"},
+                {"from_index": 1, "to_index": 2, "relation_type": "caused"},
+            ],
+        }
+        pg, neo = AsyncMock(), AsyncMock()
+
+        result = await consolidator_with_narrative.run(pg, neo, user_id="u1")
+
+        assert mock_narrative.create_link.call_count == 2
+        assert result.links_created == 2
+
+    async def test_skips_out_of_bounds_link_indices(
+        self, consolidator_with_narrative, mock_episodic, mock_llm, mock_narrative
+    ):
+        events = make_events(5)
+        mock_episodic.get_unconsolidated.return_value = events
+        mock_llm.extract_structured.return_value = {
+            "summary": "Summary",
+            "facts": [],
+            "links": [
+                {"from_index": 0, "to_index": 99, "relation_type": "preceded"},  # out of bounds
+                {"from_index": 0, "to_index": 1, "relation_type": "caused"},     # valid
+            ],
+        }
+        pg, neo = AsyncMock(), AsyncMock()
+
+        result = await consolidator_with_narrative.run(pg, neo, user_id="u1")
+
+        assert mock_narrative.create_link.call_count == 1
+        assert result.links_created == 1
+
+    async def test_skips_self_links(
+        self, consolidator_with_narrative, mock_episodic, mock_llm, mock_narrative
+    ):
+        events = make_events(5)
+        mock_episodic.get_unconsolidated.return_value = events
+        mock_llm.extract_structured.return_value = {
+            "summary": "Summary",
+            "facts": [],
+            "links": [
+                {"from_index": 0, "to_index": 0, "relation_type": "related"},  # self-link
+            ],
+        }
+        pg, neo = AsyncMock(), AsyncMock()
+
+        result = await consolidator_with_narrative.run(pg, neo, user_id="u1")
+
+        mock_narrative.create_link.assert_not_called()
+        assert result.links_created == 0
+
+    async def test_skips_invalid_relation_type(
+        self, consolidator_with_narrative, mock_episodic, mock_llm, mock_narrative
+    ):
+        events = make_events(5)
+        mock_episodic.get_unconsolidated.return_value = events
+        mock_llm.extract_structured.return_value = {
+            "summary": "Summary",
+            "facts": [],
+            "links": [
+                {"from_index": 0, "to_index": 1, "relation_type": "invalid_type"},
+            ],
+        }
+        pg, neo = AsyncMock(), AsyncMock()
+
+        result = await consolidator_with_narrative.run(pg, neo, user_id="u1")
+
+        mock_narrative.create_link.assert_not_called()
+        assert result.links_created == 0
+
+    async def test_no_links_when_narrative_is_none(
+        self, mock_llm, mock_episodic, mock_semantic
+    ):
+        """Consolidator without narrative= set should not create any links."""
+        consolidator = Consolidator(
+            llm=mock_llm,
+            episodic=mock_episodic,
+            semantic=mock_semantic,
+            narrative=None,
+        )
+        mock_episodic.get_unconsolidated.return_value = make_events(5)
+        mock_llm.extract_structured.return_value = {
+            "summary": "Summary",
+            "facts": [],
+            "links": [{"from_index": 0, "to_index": 1, "relation_type": "preceded"}],
+        }
+        pg, neo = AsyncMock(), AsyncMock()
+
+        result = await consolidator.run(pg, neo, user_id="u1")
+
+        assert result.links_created == 0
+
+    async def test_empty_links_list_no_calls(
+        self, consolidator_with_narrative, mock_episodic, mock_llm, mock_narrative
+    ):
+        events = make_events(5)
+        mock_episodic.get_unconsolidated.return_value = events
+        mock_llm.extract_structured.return_value = {
+            "summary": "Summary",
+            "facts": [],
+            "links": [],
+        }
+        pg, neo = AsyncMock(), AsyncMock()
+
+        result = await consolidator_with_narrative.run(pg, neo, user_id="u1")
+
+        mock_narrative.create_link.assert_not_called()
+        assert result.links_created == 0
