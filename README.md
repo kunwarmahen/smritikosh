@@ -14,6 +14,9 @@ Smritikosh gives any LLM application persistent, user-specific memory modelled o
 - [Architecture](#architecture)
 - [Project structure](#project-structure)
 - [Prerequisites](#prerequisites)
+- [Database setup](#database-setup)
+  - [PostgreSQL + pgvector](#postgresql--pgvector)
+  - [Neo4j](#neo4j)
 - [Setup](#setup)
 - [Configuration](#configuration)
 - [Running the server](#running-the-server)
@@ -148,8 +151,165 @@ alembic/
 | Tool | Version | Purpose |
 |---|---|---|
 | Python | ≥ 3.11 | StrEnum, `match`, type syntax |
-| Docker + Compose | any recent | PostgreSQL + Neo4j |
+| Docker + Compose | any recent | PostgreSQL + Neo4j (recommended) |
 | An LLM API key | — | Claude / OpenAI / Gemini (or Ollama locally) |
+
+---
+
+## Database setup
+
+Smritikosh uses two databases:
+
+| Database | Purpose | Why |
+|---|---|---|
+| **PostgreSQL + pgvector** | Episodic memory store (events + vector embeddings) | ACID guarantees, hybrid SQL + vector search in one query, no extra infrastructure |
+| **Neo4j** | Semantic memory (knowledge graph of user facts) | Native graph traversal for fact relationships, Cypher MERGE for upsert-with-reinforcement |
+
+### PostgreSQL + pgvector
+
+#### Option A — Docker (recommended)
+
+The `docker-compose.yml` uses the official `pgvector/pgvector:pg17` image which ships with the extension pre-installed. No manual extension setup needed.
+
+```bash
+docker compose up -d postgres
+```
+
+Verify it is healthy:
+
+```bash
+docker compose ps postgres
+# postgres   running (healthy)
+```
+
+#### Option B — Existing PostgreSQL instance
+
+You need PostgreSQL ≥ 13 and the `pgvector` extension.
+
+**Install the extension on the server:**
+
+```bash
+# Ubuntu / Debian
+sudo apt install postgresql-17-pgvector
+
+# macOS (Homebrew)
+brew install pgvector
+
+# From source (any platform)
+git clone https://github.com/pgvector/pgvector.git
+cd pgvector
+make
+sudo make install
+```
+
+**Create the database and user:**
+
+```sql
+-- run as a superuser (e.g. psql -U postgres)
+CREATE USER smritikosh WITH PASSWORD 'smritikosh';
+CREATE DATABASE smritikosh OWNER smritikosh;
+
+-- connect to the new database and enable the extension
+\c smritikosh
+CREATE EXTENSION IF NOT EXISTS vector;
+```
+
+**Update `.env`:**
+
+```dotenv
+POSTGRES_URL=postgresql+asyncpg://smritikosh:smritikosh@localhost:5432/smritikosh
+```
+
+#### Apply the schema
+
+Regardless of which option you chose, run Alembic migrations to create tables and the IVFFlat vector index:
+
+```bash
+alembic upgrade head
+```
+
+What the migration does:
+- Enables the `pgvector` extension (`CREATE EXTENSION IF NOT EXISTS vector`)
+- Creates the `events` table with a `vector(1536)` embedding column
+- Adds an IVFFlat index on `embedding` for fast cosine-distance search
+- Creates `user_facts` and `memory_links` tables
+
+> **Changing embedding dimensions?** If you switch to a model with different output dimensions (e.g. Gemini's 768), set `EMBEDDING_DIMENSIONS=768` in `.env`, then re-run migrations: `alembic downgrade base && alembic upgrade head`.
+
+#### Verify
+
+```bash
+psql postgresql://smritikosh:smritikosh@localhost:5432/smritikosh \
+  -c "\dx vector"           # should show pgvector version
+  -c "\d events"            # should show the embedding column
+```
+
+---
+
+### Neo4j
+
+#### Option A — Docker (recommended)
+
+```bash
+docker compose up -d neo4j
+```
+
+Neo4j takes ~15 seconds to initialise. Check it is ready:
+
+```bash
+docker compose ps neo4j
+# neo4j   running (healthy)
+
+# Or open the browser interface:
+open http://localhost:7474   # login: neo4j / smritikosh
+```
+
+#### Option B — Neo4j Desktop
+
+1. Download [Neo4j Desktop](https://neo4j.com/download/) and install it.
+2. Create a new project → **Add** → **Local DBMS**.
+3. Set the password to `smritikosh` (or update `NEO4J_PASSWORD` in `.env`).
+4. Start the DBMS.
+5. Install the **APOC** plugin from the **Plugins** tab (optional but recommended).
+
+#### Option C — Neo4j AuraDB (cloud)
+
+1. Create a free instance at [console.neo4j.io](https://console.neo4j.io).
+2. Copy the connection URI and credentials into `.env`:
+
+```dotenv
+NEO4J_URI=neo4j+s://xxxxxxxx.databases.neo4j.io
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=<your-aura-password>
+```
+
+#### Schema initialisation
+
+Smritikosh automatically applies Neo4j constraints and indexes on startup — no manual Cypher needed. On first boot the server runs:
+
+```cypher
+-- Uniqueness constraints
+CREATE CONSTRAINT user_unique IF NOT EXISTS
+  FOR (u:User) REQUIRE (u.user_id, u.app_id) IS UNIQUE;
+
+CREATE CONSTRAINT fact_unique IF NOT EXISTS
+  FOR (f:Fact) REQUIRE (f.category, f.key, f.value) IS UNIQUE;
+
+-- Lookup indexes
+CREATE INDEX user_lookup IF NOT EXISTS FOR (u:User) ON (u.user_id);
+CREATE INDEX fact_category IF NOT EXISTS FOR (f:Fact) ON (f.category);
+```
+
+#### Verify
+
+Open the Neo4j browser at `http://localhost:7474` and run:
+
+```cypher
+SHOW CONSTRAINTS;
+SHOW INDEXES;
+```
+
+Both should list the Smritikosh constraints after the server has started at least once.
 
 ---
 
