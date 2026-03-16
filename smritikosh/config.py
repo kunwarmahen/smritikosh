@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     # Set SLACK_SIGNING_SECRET in .env to enable Slack event verification
     slack_signing_secret: str | None = None
 
+    # ── Audit trail (MongoDB) ───────────────────────────────────────────────
+    # Leave unset to disable audit trail (system works without it).
+    mongodb_url: str | None = None
+    mongodb_db_name: str = "smritikosh_audit"
+
 
 # Single shared instance — import this everywhere
 settings = Settings()

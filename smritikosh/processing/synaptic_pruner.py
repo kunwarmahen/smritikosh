@@ -70,11 +70,13 @@ class SynapticPruner:
         importance_threshold: float = DEFAULT_IMPORTANCE_THRESHOLD,
         min_recall_count: int = DEFAULT_MIN_RECALL_COUNT,
         min_age_days: int = DEFAULT_MIN_AGE_DAYS,
+        audit=None,   # AuditLogger | None
     ) -> None:
         self.episodic = episodic
         self.importance_threshold = importance_threshold
         self.min_recall_count = min_recall_count
         self.min_age_days = min_age_days
+        self.audit = audit
 
     async def prune(
         self,
@@ -115,6 +117,27 @@ class SynapticPruner:
                             "recall_count": event.recall_count or 0,
                         },
                     )
+                    if self.audit:
+                        from smritikosh.audit.logger import AuditEvent, EventType
+                        created = event.created_at
+                        if created and created.tzinfo is None:
+                            created = created.replace(tzinfo=timezone.utc)
+                        age_days = round((now - created).total_seconds() / 86400.0, 1) if created else None
+                        await self.audit.emit(AuditEvent(
+                            event_type=EventType.MEMORY_PRUNED,
+                            user_id=user_id,
+                            app_id=app_id,
+                            event_id=str(event.id),
+                            payload={
+                                "importance_score": event.importance_score,
+                                "recall_count": event.recall_count or 0,
+                                "age_days": age_days,
+                                "importance_threshold": self.importance_threshold,
+                                "min_recall_count": self.min_recall_count,
+                                "min_age_days": self.min_age_days,
+                                "raw_text_preview": (event.raw_text or "")[:200],
+                            },
+                        ))
 
         result.events_pruned = pruned
         logger.info(

@@ -28,6 +28,7 @@ Design principles:
 
 import asyncio
 import logging
+import uuid
 from dataclasses import dataclass, field
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -107,11 +108,13 @@ class Hippocampus:
         episodic: EpisodicMemory,
         semantic: SemanticMemory,
         amygdala: Amygdala | None = None,
+        audit=None,   # AuditLogger | None
     ) -> None:
         self.llm = llm
         self.episodic = episodic
         self.semantic = semantic
         self.amygdala = amygdala or Amygdala()
+        self.audit = audit
 
     # ── Primary entry point ────────────────────────────────────────────────
 
@@ -139,6 +142,9 @@ class Hippocampus:
             - Embedding errors  → event stored without embedding vector.
             - Neo4j errors      → event stored; fact upserts skipped with warning.
         """
+        # Session ID groups all audit records for this single encode() call
+        session_id = str(uuid.uuid4())
+
         # ── 1. Importance scoring (sync) ──────────────────────────────────
         importance_score = self.amygdala.score(raw_text)
         logger.debug(
@@ -171,12 +177,54 @@ class Hippocampus:
             neo_session, user_id, app_id, extracted_facts
         )
 
-        return EncodedMemory(
+        result = EncodedMemory(
             event=event,
             facts=stored_facts,
             importance_score=importance_score,
             extraction_failed=extraction_failed,
         )
+
+        # ── 5. Audit ──────────────────────────────────────────────────────
+        if self.audit:
+            from smritikosh.audit.logger import AuditEvent, EventType
+            eid = str(event.id)
+            await self.audit.emit(AuditEvent(
+                event_type=EventType.MEMORY_ENCODED,
+                user_id=user_id,
+                app_id=app_id,
+                event_id=eid,
+                session_id=session_id,
+                payload={
+                    "raw_text_preview": raw_text[:300],
+                    "importance_score": importance_score,
+                    "embedding_success": embedding is not None,
+                    "extraction_failed": extraction_failed,
+                    "source": (metadata or {}).get("source", "api"),
+                    "metadata": metadata or {},
+                },
+            ))
+            if stored_facts:
+                await self.audit.emit(AuditEvent(
+                    event_type=EventType.MEMORY_FACTS_EXTRACTED,
+                    user_id=user_id,
+                    app_id=app_id,
+                    event_id=eid,
+                    session_id=session_id,
+                    payload={
+                        "facts": [
+                            {
+                                "category": f.category,
+                                "key": f.key,
+                                "value": f.value,
+                                "confidence": f.confidence,
+                            }
+                            for f in stored_facts
+                        ],
+                        "facts_count": len(stored_facts),
+                    },
+                ))
+
+        return result
 
     # ── Helpers ────────────────────────────────────────────────────────────
 

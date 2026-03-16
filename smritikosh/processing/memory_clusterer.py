@@ -83,11 +83,13 @@ class MemoryClusterer:
         *,
         similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
         min_events: int = MIN_EVENTS_TO_CLUSTER,
+        audit=None,   # AuditLogger | None
     ) -> None:
         self.llm = llm
         self.episodic = episodic
         self.similarity_threshold = similarity_threshold
         self.min_events = min_events
+        self.audit = audit
 
     # ── Primary entry point ────────────────────────────────────────────────
 
@@ -163,6 +165,29 @@ class MemoryClusterer:
                 "events_clustered": result.events_clustered,
             },
         )
+
+        if self.audit and result.clusters_found:
+            from smritikosh.audit.logger import AuditEvent, EventType
+            cluster_summary = [
+                {
+                    "cluster_id": cid,
+                    "label": cluster_events[0].cluster_label or f"cluster_{cid}",
+                    "event_count": len(cluster_events),
+                }
+                for cid, cluster_events in cluster_groups.items()
+            ]
+            await self.audit.emit(AuditEvent(
+                event_type=EventType.MEMORY_CLUSTERED,
+                user_id=user_id,
+                app_id=app_id,
+                payload={
+                    "events_processed": result.events_processed,
+                    "clusters_found": result.clusters_found,
+                    "events_clustered": result.events_clustered,
+                    "clusters": cluster_summary,
+                },
+            ))
+
         return result
 
     # ── Helpers ────────────────────────────────────────────────────────────

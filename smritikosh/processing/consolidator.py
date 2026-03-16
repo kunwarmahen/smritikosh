@@ -97,6 +97,7 @@ class Consolidator:
         narrative: NarrativeMemory | None = None,
         batch_size: int = BATCH_SIZE,
         min_events: int = MIN_EVENTS_TO_CONSOLIDATE,
+        audit=None,   # AuditLogger | None
     ) -> None:
         self.llm = llm
         self.episodic = episodic
@@ -104,6 +105,7 @@ class Consolidator:
         self.narrative = narrative
         self.batch_size = batch_size
         self.min_events = min_events
+        self.audit = audit
 
     # ── Primary entry point ────────────────────────────────────────────────
 
@@ -150,12 +152,28 @@ class Consolidator:
         result.batches = len(batches)
 
         for batch in batches:
-            consolidated, facts, links = await self._consolidate_batch(
+            consolidated, facts, links, batch_summary, batch_fact_list = await self._consolidate_batch(
                 pg_session, neo_session, user_id, app_id, batch
             )
             result.events_consolidated += consolidated
             result.facts_distilled += facts
             result.links_created += links
+
+            if self.audit and consolidated:
+                from smritikosh.audit.logger import AuditEvent, EventType
+                await self.audit.emit(AuditEvent(
+                    event_type=EventType.MEMORY_CONSOLIDATED,
+                    user_id=user_id,
+                    app_id=app_id,
+                    payload={
+                        "events_in_batch": len(batch),
+                        "event_ids": [str(e.id) for e in batch],
+                        "summary": batch_summary,
+                        "facts_distilled": facts,
+                        "links_created": links,
+                        "facts": batch_fact_list,
+                    },
+                ))
 
         logger.info(
             "Consolidation complete",
@@ -179,10 +197,10 @@ class Consolidator:
         user_id: str,
         app_id: str,
         batch: list[Event],
-    ) -> tuple[int, int, int]:
+    ) -> tuple[int, int, int, str, list]:
         """
         Consolidate one batch of events.
-        Returns (events_consolidated, facts_distilled, links_created).
+        Returns (events_consolidated, facts_distilled, links_created, summary, fact_list).
         """
         prompt = _build_consolidation_prompt(batch)
 
@@ -197,7 +215,7 @@ class Consolidator:
                 "Consolidation LLM call failed — batch skipped",
                 extra={"user_id": user_id, "batch_size": len(batch), "error": str(exc)},
             )
-            return 0, 0, 0
+            return 0, 0, 0, "", []
 
         summary = extracted.get("summary", "")
         fact_dicts = extracted.get("facts", [])
@@ -255,7 +273,7 @@ class Consolidator:
                         extra={"link": ld, "error": str(exc)},
                     )
 
-        return len(batch), facts_stored, links_created
+        return len(batch), facts_stored, links_created, summary, fact_dicts
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

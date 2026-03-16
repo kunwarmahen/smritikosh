@@ -17,6 +17,7 @@ Smritikosh gives any LLM application persistent, user-specific memory modelled o
 - [Database setup](#database-setup)
   - [PostgreSQL + pgvector](#postgresql--pgvector)
   - [Neo4j](#neo4j)
+  - [MongoDB (audit trail)](#mongodb-audit-trail)
 - [Setup](#setup)
 - [Configuration](#configuration)
 - [Running the server](#running-the-server)
@@ -28,6 +29,8 @@ Smritikosh gives any LLM application persistent, user-specific memory modelled o
   - [Procedural memory](#procedural-memory-api)
   - [Admin jobs](#admin-jobs)
   - [External ingest](#external-ingest)
+  - [Audit trail](#audit-trail-api)
+- [Audit trail](#audit-trail)
 - [Python SDK](#python-sdk)
 - [Node.js SDK](#nodejs-sdk)
 - [Testing](#testing)
@@ -214,6 +217,10 @@ smritikosh/
 │   └── scheduler.py         # APScheduler background jobs
 ├── retrieval/
 │   └── context_builder.py   # Build memory context for LLM calls
+├── audit/
+│   ├── __init__.py          # Re-exports AuditLogger, AuditEvent, EventType
+│   ├── logger.py            # AuditLogger: emit(), get_timeline(), get_event_lineage(), get_stats()
+│   └── mongodb.py           # Motor connection, lazy init, index creation
 └── sdk/
     ├── client.py            # SmritikoshClient (async HTTP)
     └── types.py             # EncodedEvent, MemoryContext, RecentEvent,
@@ -271,19 +278,21 @@ alembic/
 | Tool | Version | Purpose |
 |---|---|---|
 | Python | ≥ 3.11 | StrEnum, `match`, type syntax |
-| Docker + Compose | any recent | PostgreSQL + Neo4j (recommended) |
+| Docker + Compose | any recent | PostgreSQL + Neo4j + MongoDB (recommended) |
 | An LLM API key | — | Claude / OpenAI / Gemini (or Ollama locally) |
+| MongoDB 6+ | optional | Audit trail / provenance log (disabled if `MONGODB_URL` unset) |
 
 ---
 
 ## Database setup
 
-Smritikosh uses two databases:
+Smritikosh uses three databases:
 
 | Database | Purpose | Why |
 |---|---|---|
 | **PostgreSQL + pgvector** | Episodic memory store (events + vector embeddings) | ACID guarantees, hybrid SQL + vector search in one query, no extra infrastructure |
 | **Neo4j** | Semantic memory (knowledge graph of user facts) | Native graph traversal for fact relationships, Cypher MERGE for upsert-with-reinforcement |
+| **MongoDB** *(optional)* | Audit trail (provenance log of every pipeline step) | Schema-flexible documents, independent I/O path so audit never blocks the main pipeline |
 
 ### PostgreSQL + pgvector
 
@@ -433,6 +442,58 @@ Both should list the Smritikosh constraints after the server has started at leas
 
 ---
 
+### MongoDB (audit trail)
+
+MongoDB is **fully optional**. If `MONGODB_URL` is not set, the audit system is disabled and all pipeline components operate identically — the only difference is that no provenance records are written.
+
+#### Option A — Docker (recommended)
+
+The `docker-compose.yml` includes a MongoDB 7 service with a `mongosh`-based healthcheck:
+
+```bash
+docker compose up -d mongo
+```
+
+Verify it is healthy:
+
+```bash
+docker compose ps mongo
+# mongo   running (healthy)
+```
+
+The container uses the default port `27017` with no authentication (development only). For production, add auth via `MONGO_INITDB_ROOT_USERNAME` / `MONGO_INITDB_ROOT_PASSWORD` and update the connection string.
+
+#### Option B — MongoDB Atlas (cloud)
+
+1. Create a free cluster at [cloud.mongodb.com](https://cloud.mongodb.com).
+2. Create a database user and allowlist your IP.
+3. Copy the connection string into `.env`:
+
+```dotenv
+MONGODB_URL=mongodb+srv://user:password@cluster.mongodb.net/?retryWrites=true&w=majority
+MONGODB_DB_NAME=smritikosh_audit
+```
+
+#### Option C — Existing MongoDB instance
+
+```dotenv
+MONGODB_URL=mongodb://localhost:27017
+MONGODB_DB_NAME=smritikosh_audit
+```
+
+#### Schema initialisation
+
+Smritikosh automatically creates the `audit_events` collection and its indexes on startup — no manual setup needed. The indexes created are:
+
+| Index | Purpose |
+|---|---|
+| `user_id + app_id + timestamp` (compound) | Timeline queries per user |
+| `event_type + timestamp` | Filter by pipeline stage |
+| `event_id` | Provenance chain lookups |
+| `session_id` | Group all records from one pipeline run |
+
+---
+
 ## Setup
 
 ### 1. Clone and create a virtual environment
@@ -481,6 +542,7 @@ docker compose up -d
 This starts:
 - **PostgreSQL 17** with the `pgvector` extension on port `5432`
 - **Neo4j 5.26** on ports `7474` (browser) and `7687` (bolt)
+- **MongoDB 7** on port `27017` (audit trail — optional, safe to omit)
 
 Wait for both to be healthy:
 
@@ -519,6 +581,8 @@ All settings are read from the environment (or `.env`). Every field has a defaul
 | `NEO4J_PASSWORD` | `smritikosh` | Neo4j password |
 | `LOG_LEVEL` | `INFO` | Python log level |
 | `SLACK_SIGNING_SECRET` | — | Signing secret for Slack Events API signature verification (required only for `POST /ingest/slack/events`) |
+| `MONGODB_URL` | — | MongoDB connection string. If unset, audit trail is disabled (no-op) |
+| `MONGODB_DB_NAME` | `smritikosh_audit` | MongoDB database to store audit events in |
 
 ---
 
@@ -531,7 +595,8 @@ uvicorn smritikosh.api.main:app --reload --port 8080
 On startup the server will:
 1. Enable the `pgvector` extension and create tables (if not already present via Alembic)
 2. Apply Neo4j schema constraints and indexes
-3. Start background scheduler (consolidation every hour, pruning every 24 hours)
+3. Create MongoDB `audit_events` collection and indexes (if `MONGODB_URL` is configured)
+4. Start background scheduler (consolidation every hour, pruning every 24 hours)
 
 Interactive API docs are available at `http://localhost:8080/docs`.
 
@@ -1060,6 +1125,219 @@ curl -X POST http://localhost:8080/ingest/calendar \
 
 ```json
 {"source": "calendar:calendar.ics", "events_ingested": 12, "events_failed": 0, "event_ids": [...]}
+```
+
+---
+
+## Audit trail API
+
+These endpoints are available only when `MONGODB_URL` is configured. All return `503 Service Unavailable` if MongoDB is not set up.
+
+### `GET /audit/{user_id}`
+
+Returns the full chronological audit timeline for a user — every pipeline step that touched their data, across all event types.
+
+```bash
+curl "http://localhost:8080/audit/alice?app_id=myapp&limit=20"
+```
+
+```json
+[
+  {
+    "id": "a1b2c3d4-...",
+    "event_type": "memory.encoded",
+    "user_id": "alice",
+    "app_id": "myapp",
+    "event_id": "3f7a1b2c-...",
+    "session_id": "9e8d7c6b-...",
+    "timestamp": "2026-03-16T10:00:00+00:00",
+    "payload": {
+      "raw_text_preview": "I prefer dark mode and use Neovim.",
+      "importance_score": 0.72,
+      "embedding_success": true,
+      "extraction_failed": false
+    }
+  },
+  {
+    "id": "b2c3d4e5-...",
+    "event_type": "memory.facts_extracted",
+    "user_id": "alice",
+    "app_id": "myapp",
+    "event_id": "3f7a1b2c-...",
+    "session_id": "9e8d7c6b-...",
+    "timestamp": "2026-03-16T10:00:00+00:00",
+    "payload": {
+      "facts_count": 2,
+      "facts": [
+        {"category": "preference", "key": "theme", "value": "dark mode", "confidence": 0.9},
+        {"category": "skill",      "key": "editor", "value": "Neovim",    "confidence": 0.95}
+      ]
+    }
+  }
+]
+```
+
+| Query param | Default | Description |
+|---|---|---|
+| `app_id` | `"default"` | Application namespace |
+| `event_type` | — | Filter to one event type (e.g. `memory.encoded`) |
+| `limit` | `50` | Maximum records to return |
+| `offset` | `0` | Pagination offset |
+| `from_ts` | — | Only events on or after this ISO 8601 timestamp |
+| `to_ts` | — | Only events on or before this ISO 8601 timestamp |
+
+---
+
+### `GET /audit/event/{event_id}/lineage`
+
+Returns the complete provenance chain for a single episodic event — every audit record associated with that event's UUID, in chronological order.
+
+```bash
+curl "http://localhost:8080/audit/event/3f7a1b2c-.../lineage"
+```
+
+```json
+[
+  {"event_type": "memory.encoded",         "timestamp": "2026-03-16T10:00:00+00:00", "payload": {...}},
+  {"event_type": "memory.facts_extracted", "timestamp": "2026-03-16T10:00:00+00:00", "payload": {...}},
+  {"event_type": "memory.consolidated",    "timestamp": "2026-03-16T11:00:00+00:00", "payload": {...}},
+  {"event_type": "memory.reconsolidated",  "timestamp": "2026-03-16T14:23:00+00:00", "payload": {...}}
+]
+```
+
+This is the primary "why was this memory stored / how did it change" endpoint — useful for debugging and building provenance UIs.
+
+---
+
+### `GET /audit/stats/{user_id}`
+
+Returns per-event-type counts for a user. Useful for dashboards and monitoring.
+
+```bash
+curl "http://localhost:8080/audit/stats/alice?app_id=myapp"
+```
+
+```json
+{
+  "memory.encoded":         42,
+  "memory.facts_extracted": 38,
+  "memory.consolidated":    12,
+  "memory.reconsolidated":   5,
+  "memory.pruned":           3,
+  "memory.clustered":        2,
+  "belief.mined":            4,
+  "feedback.submitted":      9,
+  "context.built":          87,
+  "search.performed":       31
+}
+```
+
+---
+
+## Audit trail
+
+The audit trail captures a complete, immutable provenance record of every step the memory pipeline takes. Each record answers: *what happened, to which event, for which user, at what time, and what data was involved*.
+
+### How it works
+
+Every pipeline component emits a structured `AuditEvent` document to MongoDB after completing its work. Writes are **fire-and-forget** — they use `asyncio.create_task()` so MongoDB I/O never adds latency to the API response. Audit failures are logged as warnings and never raise exceptions to the caller.
+
+```
+POST /memory/event
+      │
+      ▼
+  Hippocampus.encode()
+      ├─► emit: memory.encoded          (importance score, embedding success, metadata)
+      └─► emit: memory.facts_extracted  (facts list with categories + confidence)
+                                                │
+                                                ▼ (background scheduler)
+                                     Consolidator._consolidate_batch()
+                                             └─► emit: memory.consolidated
+                                                        (event IDs, summary, facts distilled)
+
+                                     ReconsolidationEngine._reconsolidate_one()
+                                             └─► emit: memory.reconsolidated
+                                                        (old summary, new summary, recall context)
+
+                                     SynapticPruner.prune()
+                                             └─► emit: memory.pruned
+                                                        (importance, recall count, age, thresholds)
+
+                                     MemoryClusterer.run()
+                                             └─► emit: memory.clustered
+                                                        (cluster labels, event counts per cluster)
+
+                                     BeliefMiner.mine()
+                                             └─► emit: belief.mined
+                                                        (belief statements, categories, confidence)
+
+POST /feedback
+      └─► emit: feedback.submitted      (feedback type, new importance score)
+
+POST /context
+      └─► emit: context.built           (intent, memory counts, embedding status)
+
+POST /memory/search
+      └─► emit: search.performed        (query preview, results count, embedding status)
+```
+
+### Event types
+
+| Event type | Emitted by | Key payload fields |
+|---|---|---|
+| `memory.encoded` | `Hippocampus.encode()` | `raw_text_preview`, `importance_score`, `embedding_success`, `extraction_failed` |
+| `memory.facts_extracted` | `Hippocampus.encode()` | `facts` (list with category/key/value/confidence), `facts_count` |
+| `memory.consolidated` | `Consolidator._consolidate_batch()` | `event_ids`, `summary`, `facts_distilled`, `links_created`, `facts` |
+| `memory.reconsolidated` | `ReconsolidationEngine._reconsolidate_one()` | `old_summary`, `new_summary`, `recall_context`, `reconsolidation_count` |
+| `memory.pruned` | `SynapticPruner.prune()` | `importance_score`, `recall_count`, `age_days`, `thresholds`, `raw_text_preview` |
+| `memory.clustered` | `MemoryClusterer.run()` | `clusters_found`, `events_clustered`, `clusters` (label + event count per cluster) |
+| `belief.mined` | `BeliefMiner.mine()` | `beliefs_found`, `beliefs_upserted`, `beliefs` (statement/category/confidence list) |
+| `feedback.submitted` | `POST /feedback` route | `feedback_type`, `comment`, `new_importance_score` |
+| `context.built` | `ContextBuilder.build()` | `query_preview`, `intent`, `similar_events_count`, `recent_events_count`, `facts_count` |
+| `search.performed` | `POST /memory/search` route | `query_preview`, `results_count`, `embedding_failed`, `limit` |
+
+### Session grouping
+
+All audit records from a single `POST /memory/event` request share a `session_id` UUID. This lets you reconstruct the full intake run — embedding, extraction, and storage — from a single ID:
+
+```bash
+# Find all records from one intake session
+curl "http://localhost:8080/audit/alice?session_id=9e8d7c6b-..."
+```
+
+### Enabling audit
+
+1. Start MongoDB (Docker or external — see [MongoDB setup](#mongodb-audit-trail) above).
+2. Add to `.env`:
+
+```dotenv
+MONGODB_URL=mongodb://localhost:27017
+MONGODB_DB_NAME=smritikosh_audit   # optional, this is the default
+```
+
+3. Restart the server. On startup it logs:
+
+```
+INFO  smritikosh.audit.mongodb — audit indexes created on smritikosh_audit.audit_events
+```
+
+To **disable** the audit trail, remove `MONGODB_URL` from `.env`. All pipeline components fall back to no-ops — zero performance impact.
+
+### Running MongoDB with Docker Compose
+
+```bash
+# Start MongoDB only
+docker compose up -d mongo
+
+# Start all services (Postgres + Neo4j + MongoDB)
+docker compose up -d
+
+# Check status
+docker compose ps mongo
+# mongo   running (healthy)
+
+# Connect with mongosh (for inspection)
+docker compose exec mongo mongosh smritikosh_audit
 ```
 
 ---

@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from neo4j import AsyncSession as NeoSession
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from smritikosh.api.deps import get_hippocampus, get_episodic, get_llm
+from smritikosh.api.deps import get_audit_logger, get_hippocampus, get_episodic, get_llm
 from smritikosh.api.schemas import (
     DeleteEventResponse,
     DeleteUserMemoryResponse,
@@ -177,6 +177,21 @@ async def search_memory(
         )
         for r in results
     ]
+
+    audit = get_audit_logger()
+    if audit:
+        from smritikosh.audit.logger import AuditEvent, EventType
+        await audit.emit(AuditEvent(
+            event_type=EventType.SEARCH_PERFORMED,
+            user_id=request.user_id,
+            app_id=request.app_id,
+            payload={
+                "query_preview": request.query[:200],
+                "results_count": len(items),
+                "embedding_failed": embedding_failed,
+                "limit": request.limit,
+            },
+        ))
 
     return SearchResponse(
         user_id=request.user_id,

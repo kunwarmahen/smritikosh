@@ -8,7 +8,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from smritikosh.api.deps import get_reinforcement
+from smritikosh.api.deps import get_audit_logger, get_reinforcement
 from smritikosh.api.schemas import FeedbackRequest, FeedbackResponse
 from smritikosh.db.models import FeedbackType
 from smritikosh.db.postgres import get_session
@@ -66,6 +66,21 @@ async def submit_feedback(
             extra={"user_id": request.user_id, "event_id": request.event_id, "error": str(exc)},
         )
         raise HTTPException(status_code=500, detail=str(exc))
+
+    audit = get_audit_logger()
+    if audit:
+        from smritikosh.audit.logger import AuditEvent, EventType
+        await audit.emit(AuditEvent(
+            event_type=EventType.FEEDBACK_SUBMITTED,
+            user_id=request.user_id,
+            app_id=request.app_id,
+            event_id=request.event_id,
+            payload={
+                "feedback_type": request.feedback_type,
+                "comment": request.comment,
+                "new_importance_score": new_score,
+            },
+        ))
 
     return FeedbackResponse(
         feedback_id=str(feedback.id),

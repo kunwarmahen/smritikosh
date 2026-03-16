@@ -59,6 +59,7 @@ def get_hippocampus() -> Hippocampus:
         episodic=get_episodic(),
         semantic=get_semantic(),
         amygdala=get_amygdala(),
+        audit=get_audit_logger(),
     )
 
 
@@ -87,6 +88,7 @@ def get_context_builder() -> ContextBuilder:
         narrative=get_narrative(),
         include_chains=True,
         procedural=get_procedural(),
+        audit=get_audit_logger(),
     )
 
 
@@ -97,12 +99,13 @@ def get_consolidator() -> Consolidator:
         episodic=get_episodic(),
         semantic=get_semantic(),
         narrative=get_narrative(),
+        audit=get_audit_logger(),
     )
 
 
 @lru_cache(maxsize=1)
 def get_belief_miner() -> BeliefMiner:
-    return BeliefMiner(llm=get_llm(), semantic=get_semantic())
+    return BeliefMiner(llm=get_llm(), semantic=get_semantic(), audit=get_audit_logger())
 
 
 @lru_cache(maxsize=1)
@@ -112,7 +115,7 @@ def get_reinforcement() -> ReinforcementLoop:
 
 @lru_cache(maxsize=1)
 def get_clusterer() -> MemoryClusterer:
-    return MemoryClusterer(llm=get_llm(), episodic=get_episodic())
+    return MemoryClusterer(llm=get_llm(), episodic=get_episodic(), audit=get_audit_logger())
 
 
 @lru_cache(maxsize=1)
@@ -122,9 +125,22 @@ def get_identity_builder() -> IdentityBuilder:
 
 @lru_cache(maxsize=1)
 def get_pruner() -> SynapticPruner:
-    return SynapticPruner(episodic=get_episodic())
+    return SynapticPruner(episodic=get_episodic(), audit=get_audit_logger())
 
 
 @lru_cache(maxsize=1)
 def get_reconsolidation_engine() -> ReconsolidationEngine:
-    return ReconsolidationEngine(llm=get_llm(), episodic=get_episodic())
+    return ReconsolidationEngine(llm=get_llm(), episodic=get_episodic(), audit=get_audit_logger())
+
+
+def get_audit_logger():
+    """
+    Return an AuditLogger backed by MongoDB, or None if MongoDB is not configured.
+    Not cached — collection reference is stable, no need for lru_cache.
+    """
+    from smritikosh.audit.logger import AuditLogger
+    from smritikosh.audit.mongodb import get_audit_collection
+    col = get_audit_collection()
+    if col is None:
+        return None
+    return AuditLogger(col)

@@ -107,6 +107,7 @@ class ReconsolidationEngine:
         min_importance: float = DEFAULT_MIN_IMPORTANCE,
         cooldown_hours: int = DEFAULT_COOLDOWN_HOURS,
         max_events: int = DEFAULT_MAX_EVENTS,
+        audit=None,   # AuditLogger | None
     ) -> None:
         self.llm = llm
         self.episodic = episodic
@@ -114,6 +115,7 @@ class ReconsolidationEngine:
         self.min_importance = min_importance
         self.cooldown_hours = cooldown_hours
         self.max_events = max_events
+        self.audit = audit
 
     # ── Primary entry point (called as BackgroundTask) ────────────────────
 
@@ -254,6 +256,22 @@ class ReconsolidationEngine:
                 "reconsolidation_count": (event.reconsolidation_count or 0) + 1,
             },
         )
+
+        if self.audit:
+            from smritikosh.audit.logger import AuditEvent, EventType
+            await self.audit.emit(AuditEvent(
+                event_type=EventType.MEMORY_RECONSOLIDATED,
+                user_id=event.user_id,
+                app_id=event.app_id,
+                event_id=str(event.id),
+                payload={
+                    "recall_context": query,
+                    "old_summary": result.old_summary,
+                    "new_summary": new_summary,
+                    "reconsolidation_count": (event.reconsolidation_count or 0) + 1,
+                },
+            ))
+
         return result
 
     def _check_gate(self, event: Event) -> str:

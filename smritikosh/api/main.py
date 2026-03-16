@@ -30,7 +30,8 @@ from smritikosh.api.deps import (
     get_episodic,
     get_pruner,
 )
-from smritikosh.api.routes import admin, context, feedback, health, identity, ingest, memory, procedures
+from smritikosh.api.routes import admin, audit, context, feedback, health, identity, ingest, memory, procedures
+from smritikosh.audit.mongodb import close_audit, init_audit_indexes
 from smritikosh.db.neo4j import close_neo4j, init_neo4j
 from smritikosh.db.postgres import close_db, init_db
 from smritikosh.processing.scheduler import MemoryScheduler
@@ -44,6 +45,7 @@ async def lifespan(app: FastAPI):
     logger.info("Smritikosh starting — initialising databases …")
     await init_db()
     await init_neo4j()
+    await init_audit_indexes()   # no-op if MONGODB_URL is not set
 
     scheduler = MemoryScheduler(
         consolidator=get_consolidator(),
@@ -62,6 +64,7 @@ async def lifespan(app: FastAPI):
     scheduler.shutdown()
     await close_db()
     await close_neo4j()
+    await close_audit()
 
 
 app = FastAPI(
@@ -79,3 +82,4 @@ app.include_router(feedback.router)
 app.include_router(procedures.router)
 app.include_router(admin.router)
 app.include_router(ingest.router)
+app.include_router(audit.router)

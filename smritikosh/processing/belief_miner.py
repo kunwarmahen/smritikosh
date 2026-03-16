@@ -102,10 +102,12 @@ class BeliefMiner:
         semantic: SemanticMemory,
         *,
         min_events: int = MIN_CONSOLIDATED_EVENTS,
+        audit=None,   # AuditLogger | None
     ) -> None:
         self.llm = llm
         self.semantic = semantic
         self.min_events = min_events
+        self.audit = audit
 
     # ── Primary entry point ────────────────────────────────────────────────
 
@@ -194,6 +196,27 @@ class BeliefMiner:
                 "beliefs_upserted": result.beliefs_upserted,
             },
         )
+
+        if self.audit and result.beliefs_upserted:
+            from smritikosh.audit.logger import AuditEvent, EventType
+            await self.audit.emit(AuditEvent(
+                event_type=EventType.BELIEF_MINED,
+                user_id=user_id,
+                app_id=app_id,
+                payload={
+                    "beliefs_found": result.beliefs_found,
+                    "beliefs_upserted": result.beliefs_upserted,
+                    "beliefs": [
+                        {
+                            "statement": bd.get("statement", ""),
+                            "category": bd.get("category", ""),
+                            "confidence": bd.get("confidence", 0.0),
+                        }
+                        for bd in belief_dicts
+                    ],
+                },
+            ))
+
         return result
 
     # ── Read ───────────────────────────────────────────────────────────────

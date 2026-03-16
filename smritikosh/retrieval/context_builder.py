@@ -214,6 +214,7 @@ class ContextBuilder:
         include_chains: bool = False,
         procedural: ProceduralMemory | None = None,
         top_k_procedures: int = 5,
+        audit=None,   # AuditLogger | None
     ) -> None:
         self.llm = llm
         self.episodic = episodic
@@ -226,6 +227,7 @@ class ContextBuilder:
         self.include_chains = include_chains
         self.procedural = procedural
         self.top_k_procedures = top_k_procedures
+        self.audit = audit
 
     # ── Primary entry point ────────────────────────────────────────────────
 
@@ -369,6 +371,26 @@ class ContextBuilder:
                 "total": ctx.total_memories(),
             },
         )
+
+        if self.audit:
+            from smritikosh.audit.logger import AuditEvent, EventType
+            await self.audit.emit(AuditEvent(
+                event_type=EventType.CONTEXT_BUILT,
+                user_id=user_id,
+                app_id=app_id,
+                payload={
+                    "query_preview": query[:200],
+                    "intent": str(detected_intent),
+                    "embedding_failed": embedding_failed,
+                    "similar_events_count": len(similar_events),
+                    "recent_events_count": len(recent_events),
+                    "facts_count": len(user_profile.facts) if user_profile else 0,
+                    "procedures_count": len(procedures),
+                    "narrative_chains_count": len(narrative_chains),
+                    "total_memories": ctx.total_memories(),
+                },
+            ))
+
         return ctx
 
     # ── Helpers ────────────────────────────────────────────────────────────
