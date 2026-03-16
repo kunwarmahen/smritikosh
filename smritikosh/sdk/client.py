@@ -50,11 +50,14 @@ from smritikosh.sdk.types import (
     HealthStatus,
     IdentityDimensionItem,
     IdentityProfile,
+    IngestResult,
     MemoryContext,
     ProcedureCreated,
     ProcedureRecord,
     RecentEvent,
     ReconsolidationResult,
+    SearchResult,
+    SearchResultItem,
 )
 
 _DEFAULT_TIMEOUT = 30.0   # seconds
@@ -569,18 +572,230 @@ class SmritikoshClient:
         data = await self._post("/admin/mine-beliefs", payload)
         return _parse_admin_response(data)
 
-    async def health(self) -> HealthStatus:
+    async def search(
+        self,
+        *,
+        user_id: str,
+        query: str,
+        app_id: str | None = None,
+        limit: int = 10,
+        from_date: Optional[datetime] = None,
+        to_date: Optional[datetime] = None,
+    ) -> SearchResult:
         """
-        Check server health.
+        Hybrid search over a user's episodic memory.
+
+        Returns raw scored events (similarity, recency, hybrid scores) rather
+        than the pre-formatted context block returned by ``build_context()``.
+        Useful for building custom memory UIs or filtering/ranking logic.
+
+        Args:
+            user_id:   User to search.
+            query:     Natural-language search query.
+            app_id:    Application namespace. Defaults to the client-level app_id.
+            limit:     Maximum events to return (1–50).
+            from_date: Only include events on or after this datetime.
+            to_date:   Only include events on or before this datetime.
 
         Returns:
-            :class:`HealthStatus` with ``status="ok"`` when the server is running.
+            :class:`SearchResult` with a list of scored :class:`SearchResultItem`.
+        """
+        payload: dict = {
+            "user_id": user_id,
+            "query": query,
+            "app_id": app_id or self._app_id,
+            "limit": limit,
+        }
+        if from_date is not None:
+            payload["from_date"] = from_date.isoformat()
+        if to_date is not None:
+            payload["to_date"] = to_date.isoformat()
+        data = await self._post("/memory/search", payload)
+        return SearchResult(
+            user_id=data["user_id"],
+            query=data["query"],
+            results=[
+                SearchResultItem(
+                    event_id=r["event_id"],
+                    raw_text=r["raw_text"],
+                    importance_score=r["importance_score"],
+                    hybrid_score=r["hybrid_score"],
+                    similarity_score=r["similarity_score"],
+                    recency_score=r["recency_score"],
+                    consolidated=r["consolidated"],
+                    created_at=r["created_at"],
+                )
+                for r in data["results"]
+            ],
+            total=data["total"],
+            embedding_failed=data["embedding_failed"],
+        )
+
+    async def ingest_push(
+        self,
+        *,
+        user_id: str,
+        content: str,
+        source: str = "api",
+        source_id: str = "",
+        app_id: str | None = None,
+        metadata: dict | None = None,
+    ) -> IngestResult:
+        """
+        Push a single event from an external source.
+
+        Equivalent to the server's ``POST /ingest/push`` endpoint — useful
+        for programmatic ingestion from webhooks or backend services.
+
+        Args:
+            user_id:   Owner of the memory.
+            content:   Raw text to store.
+            source:    Label for the source (e.g. ``"github"``, ``"jira"``).
+            source_id: Optional unique identifier within the source.
+            app_id:    Application namespace. Defaults to the client-level app_id.
+            metadata:  Optional extra key/value context.
+
+        Returns:
+            :class:`IngestResult` with ingestion counts and stored event IDs.
+        """
+        payload = {
+            "user_id": user_id,
+            "content": content,
+            "source": source,
+            "source_id": source_id,
+            "app_id": app_id or self._app_id,
+            "metadata": metadata or {},
+        }
+        data = await self._post("/ingest/push", payload)
+        return _parse_ingest_result(data)
+
+    async def ingest_file(
+        self,
+        *,
+        user_id: str,
+        file_content: bytes,
+        filename: str,
+        app_id: str | None = None,
+    ) -> IngestResult:
+        """
+        Ingest a file as episodic memories.
+
+        Supported formats: ``.txt``, ``.md`` (paragraph chunks), ``.csv``
+        (one event per row), ``.json`` (array of strings or objects).
+
+        Args:
+            user_id:      Owner of the memories.
+            file_content: Raw file bytes.
+            filename:     Original filename including extension (used for format detection).
+            app_id:       Application namespace. Defaults to the client-level app_id.
+
+        Returns:
+            :class:`IngestResult` with ingestion counts and stored event IDs.
+        """
+        client = self._ensure_open()
+        response = await client.post(
+            "/ingest/file",
+            data={"user_id": user_id, "app_id": app_id or self._app_id},
+            files={"file": (filename, file_content)},
+        )
+        return _parse_ingest_result(self._raise_or_json(response))
+
+    async def ingest_email(
+        self,
+        *,
+        user_id: str,
+        host: str,
+        port: int = 993,
+        username: str,
+        password: str,
+        mailbox: str = "INBOX",
+        limit: int = 20,
+        unseen_only: bool = True,
+        app_id: str | None = None,
+    ) -> IngestResult:
+        """
+        Fetch and ingest unread emails from an IMAP mailbox.
+
+        Credentials are used per-request and never stored on the server.
+
+        Args:
+            user_id:     Owner of the memories.
+            host:        IMAP server hostname (e.g. ``"imap.gmail.com"``).
+            port:        IMAP SSL port (default: 993).
+            username:    IMAP account username / email address.
+            password:    IMAP account password or app password.
+            mailbox:     Mailbox to fetch from (default: ``"INBOX"``).
+            limit:       Maximum emails to fetch.
+            unseen_only: If True (default), fetch only UNSEEN messages.
+            app_id:      Application namespace. Defaults to the client-level app_id.
+
+        Returns:
+            :class:`IngestResult` with ingestion counts and stored event IDs.
+        """
+        payload = {
+            "user_id": user_id,
+            "host": host,
+            "port": port,
+            "username": username,
+            "password": password,
+            "mailbox": mailbox,
+            "limit": limit,
+            "unseen_only": unseen_only,
+            "app_id": app_id or self._app_id,
+        }
+        data = await self._post("/ingest/email/sync", payload)
+        return _parse_ingest_result(data)
+
+    async def ingest_calendar(
+        self,
+        *,
+        user_id: str,
+        file_content: bytes,
+        filename: str = "calendar.ics",
+        app_id: str | None = None,
+    ) -> IngestResult:
+        """
+        Ingest calendar events from an iCalendar (``.ics``) file.
+
+        Each VEVENT becomes one memory event containing the summary,
+        description, location, and time range.
+
+        Args:
+            user_id:      Owner of the memories.
+            file_content: Raw ``.ics`` file bytes.
+            filename:     Filename to use when uploading (default: ``"calendar.ics"``).
+            app_id:       Application namespace. Defaults to the client-level app_id.
+
+        Returns:
+            :class:`IngestResult` with ingestion counts and stored event IDs.
+        """
+        client = self._ensure_open()
+        response = await client.post(
+            "/ingest/calendar",
+            data={"user_id": user_id, "app_id": app_id or self._app_id},
+            files={"file": (filename, file_content)},
+        )
+        return _parse_ingest_result(self._raise_or_json(response))
+
+    async def health(self) -> HealthStatus:
+        """
+        Check server health, including database connectivity.
+
+        Returns:
+            :class:`HealthStatus` with ``status="ok"`` when both PostgreSQL and
+            Neo4j are reachable.  ``status="degraded"`` when the server is up
+            but a database is unreachable.
 
         Raises:
-            :class:`SmritikoshError` if the server is unreachable or unhealthy.
+            :class:`SmritikoshError` if the server is unreachable.
         """
         data = await self._get("/health")
-        return HealthStatus(status=data["status"], version=data["version"])
+        return HealthStatus(
+            status=data["status"],
+            version=data["version"],
+            postgres=data.get("postgres", "unknown"),
+            neo4j=data.get("neo4j", "unknown"),
+        )
 
     # ── HTTP helpers ──────────────────────────────────────────────────────────
 
@@ -620,6 +835,15 @@ class SmritikoshClient:
 
 
 # ── Module helpers ─────────────────────────────────────────────────────────────
+
+
+def _parse_ingest_result(data: dict) -> IngestResult:
+    return IngestResult(
+        source=data["source"],
+        events_ingested=data["events_ingested"],
+        events_failed=data["events_failed"],
+        event_ids=data["event_ids"],
+    )
 
 
 def _parse_admin_response(data: dict) -> AdminJobResponse:

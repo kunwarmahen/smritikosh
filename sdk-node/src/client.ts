@@ -39,6 +39,16 @@ import type {
   // reconsolidate
   ReconsolidateOptions,
   ReconsolidationResult,
+  // search
+  SearchOptions,
+  SearchResult,
+  SearchResultItem,
+  // ingest
+  IngestPushOptions,
+  IngestFileOptions,
+  IngestEmailOptions,
+  IngestCalendarOptions,
+  IngestResult,
   // admin
   AdminJobOptions,
   AdminJobResponse,
@@ -50,6 +60,15 @@ import type {
 
 function toIso(d: string | Date): string {
   return d instanceof Date ? d.toISOString() : d;
+}
+
+function parseIngestResult(raw: Record<string, unknown>): IngestResult {
+  return {
+    source: raw["source"] as string,
+    eventsIngested: raw["events_ingested"] as number,
+    eventsFailed: raw["events_failed"] as number,
+    eventIds: raw["event_ids"] as string[],
+  };
 }
 
 class SmritikoshError extends Error {
@@ -125,6 +144,31 @@ export class SmritikoshClient {
 
   private delete<T>(path: string): Promise<T> {
     return this.request<T>("DELETE", path);
+  }
+
+  private async postForm<T>(path: string, form: FormData): Promise<T> {
+    // Omit Content-Type so the browser/Node sets it with the multipart boundary.
+    const headers: Record<string, string> = { ...this.headers };
+    delete headers["Content-Type"];
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}${path}`, {
+        method: "POST",
+        headers,
+        body: form,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+
+    const text = await response.text();
+    if (!response.ok) throw new SmritikoshError(response.status, text);
+    return JSON.parse(text) as T;
   }
 
   // ── encode ─────────────────────────────────────────────────────────────────
@@ -396,6 +440,89 @@ export class SmritikoshClient {
     return this.adminJob("/admin/mine-beliefs", options);
   }
 
+  // ── search ─────────────────────────────────────────────────────────────────
+
+  async search(options: SearchOptions): Promise<SearchResult> {
+    const body: Record<string, unknown> = {
+      user_id: options.userId,
+      query: options.query,
+      app_id: options.appId ?? this.appId,
+      limit: options.limit,
+    };
+    if (options.fromDate !== undefined) body["from_date"] = toIso(options.fromDate);
+    if (options.toDate !== undefined) body["to_date"] = toIso(options.toDate);
+
+    const raw = await this.post<Record<string, unknown>>("/memory/search", body);
+    return {
+      userId: raw["user_id"] as string,
+      query: raw["query"] as string,
+      results: (raw["results"] as Array<Record<string, unknown>>).map((r) => ({
+        eventId: r["event_id"] as string,
+        rawText: r["raw_text"] as string,
+        importanceScore: r["importance_score"] as number,
+        hybridScore: r["hybrid_score"] as number,
+        similarityScore: r["similarity_score"] as number,
+        recencyScore: r["recency_score"] as number,
+        consolidated: r["consolidated"] as boolean,
+        createdAt: r["created_at"] as string,
+      })),
+      total: raw["total"] as number,
+      embeddingFailed: raw["embedding_failed"] as boolean,
+    };
+  }
+
+  // ── ingest ─────────────────────────────────────────────────────────────────
+
+  async ingestPush(options: IngestPushOptions): Promise<IngestResult> {
+    const raw = await this.post<Record<string, unknown>>("/ingest/push", {
+      user_id: options.userId,
+      content: options.content,
+      source: options.source ?? "api",
+      source_id: options.sourceId ?? "",
+      app_id: options.appId ?? this.appId,
+      metadata: options.metadata ?? {},
+    });
+    return parseIngestResult(raw);
+  }
+
+  async ingestFile(options: IngestFileOptions): Promise<IngestResult> {
+    const form = new FormData();
+    form.append("user_id", options.userId);
+    form.append("app_id", options.appId ?? this.appId ?? "default");
+    form.append(
+      "file",
+      new Blob([options.fileContent]),
+      options.filename,
+    );
+    const raw = await this.postForm<Record<string, unknown>>("/ingest/file", form);
+    return parseIngestResult(raw);
+  }
+
+  async ingestEmail(options: IngestEmailOptions): Promise<IngestResult> {
+    const raw = await this.post<Record<string, unknown>>("/ingest/email/sync", {
+      user_id: options.userId,
+      host: options.host,
+      port: options.port ?? 993,
+      username: options.username,
+      password: options.password,
+      mailbox: options.mailbox ?? "INBOX",
+      limit: options.limit ?? 20,
+      unseen_only: options.unseenOnly ?? true,
+      app_id: options.appId ?? this.appId,
+    });
+    return parseIngestResult(raw);
+  }
+
+  async ingestCalendar(options: IngestCalendarOptions): Promise<IngestResult> {
+    const filename = options.filename ?? "calendar.ics";
+    const form = new FormData();
+    form.append("user_id", options.userId);
+    form.append("app_id", options.appId ?? this.appId ?? "default");
+    form.append("file", new Blob([options.fileContent]), filename);
+    const raw = await this.postForm<Record<string, unknown>>("/ingest/calendar", form);
+    return parseIngestResult(raw);
+  }
+
   // ── health ─────────────────────────────────────────────────────────────────
 
   async health(): Promise<HealthStatus> {
@@ -403,6 +530,8 @@ export class SmritikoshClient {
     return {
       status: raw["status"] as string,
       version: raw["version"] as string,
+      postgres: (raw["postgres"] as string | undefined) ?? "unknown",
+      neo4j: (raw["neo4j"] as string | undefined) ?? "unknown",
     };
   }
 }

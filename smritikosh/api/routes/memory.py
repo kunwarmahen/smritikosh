@@ -1,7 +1,8 @@
 """
 Memory routes — capture and retrieve episodic events.
 
-POST /memory/event   Encode a raw interaction into memory (Hippocampus.encode)
+POST /memory/event      Encode a raw interaction into memory (Hippocampus.encode)
+POST /memory/search     Hybrid search — returns raw scored events
 GET  /memory/{user_id}  Return recent events for a user
 """
 
@@ -13,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from neo4j import AsyncSession as NeoSession
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from smritikosh.api.deps import get_hippocampus, get_episodic
+from smritikosh.api.deps import get_hippocampus, get_episodic, get_llm
 from smritikosh.api.schemas import (
     DeleteEventResponse,
     DeleteUserMemoryResponse,
@@ -21,7 +22,11 @@ from smritikosh.api.schemas import (
     EventResponse,
     RecentEventItem,
     RecentEventsResponse,
+    SearchRequest,
+    SearchResponse,
+    SearchResultItem,
 )
+from smritikosh.llm.adapter import LLMAdapter
 from smritikosh.db.neo4j import get_neo4j_session
 from smritikosh.db.postgres import get_session
 from smritikosh.memory.episodic import EpisodicMemory
@@ -112,6 +117,74 @@ async def delete_user_memory(
         extra={"user_id": user_id, "app_id": app_id, "events_deleted": count},
     )
     return DeleteUserMemoryResponse(events_deleted=count, user_id=user_id, app_id=app_id)
+
+
+@router.post("/search", response_model=SearchResponse)
+async def search_memory(
+    request: SearchRequest,
+    episodic: Annotated[EpisodicMemory, Depends(get_episodic)],
+    llm: Annotated[LLMAdapter, Depends(get_llm)],
+    pg: Annotated[AsyncSession, Depends(get_session)],
+) -> SearchResponse:
+    """
+    Hybrid search over a user's episodic memory.
+
+    Embeds the query, then scores all events using the same weighted formula
+    as ``/context`` (cosine similarity + recency decay + importance).
+    Returns raw scored events so callers can build their own presentation layer.
+
+    Unlike ``/context``, this endpoint does not inject semantic facts from Neo4j
+    or procedural rules — it returns event rows with their score breakdown.
+    """
+    embedding_failed = False
+    query_embedding: list[float] | None = None
+
+    try:
+        query_embedding = await llm.embed(request.query)
+    except Exception as exc:
+        logger.warning("Embedding failed for search query: %s", exc)
+        embedding_failed = True
+
+    if query_embedding is None:
+        return SearchResponse(
+            user_id=request.user_id,
+            query=request.query,
+            results=[],
+            total=0,
+            embedding_failed=True,
+        )
+
+    results = await episodic.hybrid_search(
+        pg,
+        request.user_id,
+        query_embedding,
+        app_id=request.app_id,
+        top_k=request.limit,
+        from_date=request.from_date,
+        to_date=request.to_date,
+    )
+
+    items = [
+        SearchResultItem(
+            event_id=str(r.event.id),
+            raw_text=r.event.raw_text,
+            importance_score=r.event.importance_score,
+            hybrid_score=round(r.hybrid_score, 4),
+            similarity_score=round(r.similarity_score, 4),
+            recency_score=round(r.recency_score, 4),
+            consolidated=r.event.consolidated,
+            created_at=r.event.created_at.isoformat() if r.event.created_at else "",
+        )
+        for r in results
+    ]
+
+    return SearchResponse(
+        user_id=request.user_id,
+        query=request.query,
+        results=items,
+        total=len(items),
+        embedding_failed=embedding_failed,
+    )
 
 
 @router.get("/{user_id}", response_model=RecentEventsResponse, tags=["memory"])

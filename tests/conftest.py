@@ -6,8 +6,10 @@ Marks:
              Run with: pytest -m live
     ollama — requires local Ollama server running. Skipped by default.
              Run with: pytest -m ollama
+    db     — requires running PostgreSQL + Neo4j (docker compose up -d). Skipped by default.
+             Run with: pytest -m db
 
-All other tests run offline with mocked LLM calls.
+All other tests run offline with mocked LLM calls and in-memory mocks.
 """
 
 import pytest

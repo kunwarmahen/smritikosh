@@ -24,16 +24,16 @@ function mockFetch(body: unknown, status = 200) {
 }
 
 function capturedUrl(fetchMock: ReturnType<typeof vi.fn>): string {
-  return fetchMock.mock.calls[0][0] as string;
+  return fetchMock.mock.calls[0]![0] as string;
 }
 
 function capturedBody(fetchMock: ReturnType<typeof vi.fn>): unknown {
-  const init = fetchMock.mock.calls[0][1] as RequestInit;
+  const init = fetchMock.mock.calls[0]![1] as RequestInit;
   return init.body ? JSON.parse(init.body as string) : undefined;
 }
 
 function capturedMethod(fetchMock: ReturnType<typeof vi.fn>): string {
-  const init = fetchMock.mock.calls[0][1] as RequestInit;
+  const init = fetchMock.mock.calls[0]![1] as RequestInit;
   return (init.method ?? "GET").toUpperCase();
 }
 

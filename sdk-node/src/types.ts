@@ -257,11 +257,95 @@ export interface AdminJobResponse {
   results: AdminJobResult[];
 }
 
+// ── search ────────────────────────────────────────────────────────────────────
+
+export interface SearchOptions {
+  userId: string;
+  query: string;
+  appId?: string;
+  /** Maximum results to return (1–50). Default 10. */
+  limit?: number;
+  /** Only include events on or after this datetime. */
+  fromDate?: string | Date;
+  /** Only include events on or before this datetime. */
+  toDate?: string | Date;
+}
+
+export interface SearchResultItem {
+  eventId: string;
+  rawText: string;
+  importanceScore: number;
+  hybridScore: number;
+  similarityScore: number;
+  recencyScore: number;
+  consolidated: boolean;
+  createdAt: string;
+}
+
+export interface SearchResult {
+  userId: string;
+  query: string;
+  results: SearchResultItem[];
+  total: number;
+  embeddingFailed: boolean;
+}
+
+// ── ingest ────────────────────────────────────────────────────────────────────
+
+export interface IngestPushOptions {
+  userId: string;
+  content: string;
+  /** Source label, e.g. "github", "jira". Default "api". */
+  source?: string;
+  /** Unique identifier within the source system. */
+  sourceId?: string;
+  appId?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface IngestFileOptions {
+  userId: string;
+  /** Raw file bytes as a Buffer or Uint8Array. */
+  fileContent: Uint8Array | Buffer;
+  /** Original filename including extension (.txt, .md, .csv, .json). */
+  filename: string;
+  appId?: string;
+}
+
+export interface IngestEmailOptions {
+  userId: string;
+  host: string;
+  port?: number;
+  username: string;
+  password: string;
+  mailbox?: string;
+  limit?: number;
+  unseenOnly?: boolean;
+  appId?: string;
+}
+
+export interface IngestCalendarOptions {
+  userId: string;
+  /** Raw .ics file bytes as a Buffer or Uint8Array. */
+  fileContent: Uint8Array | Buffer;
+  filename?: string;
+  appId?: string;
+}
+
+export interface IngestResult {
+  source: string;
+  eventsIngested: number;
+  eventsFailed: number;
+  eventIds: string[];
+}
+
 // ── health ────────────────────────────────────────────────────────────────────
 
 export interface HealthStatus {
-  status: string;
+  status: string;   // "ok" | "degraded" | "error"
   version: string;
+  postgres: string; // "ok" | "error" | "unknown"
+  neo4j: string;    // "ok" | "error" | "unknown"
 }
 
 // ── client config ─────────────────────────────────────────────────────────────

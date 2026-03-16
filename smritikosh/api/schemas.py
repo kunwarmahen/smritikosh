@@ -252,5 +252,38 @@ class AdminJobResponse(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    status: str
+    status: str                  # "ok" | "degraded" | "error"
     version: str = "0.1.0"
+    postgres: str = "unknown"    # "ok" | "error"
+    neo4j: str = "unknown"       # "ok" | "error"
+
+
+# ── POST /memory/search ───────────────────────────────────────────────────────
+
+
+class SearchRequest(BaseModel):
+    user_id: str = Field(..., description="User to search memories for")
+    query: str = Field(..., description="Natural-language query to search against")
+    app_id: str = Field("default", description="Application namespace")
+    limit: int = Field(10, ge=1, le=50, description="Maximum results to return")
+    from_date: Optional[datetime] = Field(None, description="Only include events on or after this datetime")
+    to_date: Optional[datetime] = Field(None, description="Only include events on or before this datetime")
+
+
+class SearchResultItem(BaseModel):
+    event_id: str
+    raw_text: str
+    importance_score: float
+    hybrid_score: float
+    similarity_score: float
+    recency_score: float
+    consolidated: bool
+    created_at: str
+
+
+class SearchResponse(BaseModel):
+    user_id: str
+    query: str
+    results: list[SearchResultItem]
+    total: int
+    embedding_failed: bool

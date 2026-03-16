@@ -541,13 +541,77 @@ Interactive API docs are available at `http://localhost:8080/docs`.
 
 ### `GET /health`
 
+Checks server liveness **and** database connectivity. Useful for container readiness probes.
+
 ```bash
 curl http://localhost:8080/health
 ```
 
 ```json
-{"status": "ok", "version": "0.1.0"}
+{
+  "status": "ok",
+  "version": "0.1.0",
+  "postgres": "ok",
+  "neo4j": "ok"
+}
 ```
+
+| `status` value | Meaning |
+|---|---|
+| `"ok"` | Server running, both databases reachable |
+| `"degraded"` | Server running, but one or both databases unreachable |
+| `"error"` | Server internal error |
+
+The `postgres` and `neo4j` fields each carry `"ok"` or `"error"` independently so you can tell which dependency is down.
+
+---
+
+### `POST /memory/search`
+
+Hybrid search over a user's episodic memory. Returns raw scored events with score breakdown — useful for building custom memory UIs or your own ranking logic.
+
+Unlike `/context`, this endpoint does not inject semantic facts from Neo4j or procedural rules; it returns event rows with their full score breakdown.
+
+```bash
+curl -X POST http://localhost:8080/memory/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "alice",
+    "query": "What editor does Alice use?",
+    "app_id": "myapp",
+    "limit": 5
+  }'
+```
+
+```json
+{
+  "user_id": "alice",
+  "query": "What editor does Alice use?",
+  "results": [
+    {
+      "event_id": "3f7a1b2c-...",
+      "raw_text": "I prefer dark mode and use Neovim as my editor.",
+      "importance_score": 0.72,
+      "hybrid_score": 0.8341,
+      "similarity_score": 0.9102,
+      "recency_score": 0.6712,
+      "consolidated": false,
+      "created_at": "2024-06-01T12:00:00+00:00"
+    }
+  ],
+  "total": 1,
+  "embedding_failed": false
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `user_id` | string | **Required.** User to search |
+| `query` | string | **Required.** Natural-language search query |
+| `app_id` | string | Application namespace (default: `"default"`) |
+| `limit` | int | Maximum results (1–50, default: 10) |
+| `from_date` | datetime | Only include events on or after this datetime (ISO 8601) |
+| `to_date` | datetime | Only include events on or before this datetime (ISO 8601) |
 
 ---
 
@@ -1093,6 +1157,7 @@ async with SmritikoshClient(base_url="http://localhost:8080") as client:
 |---|---|
 | `encode(user_id, content, *, app_id, metadata)` | Store a memory event → `EncodedEvent` |
 | `build_context(user_id, query, *, app_id)` | Retrieve LLM-ready context → `MemoryContext` |
+| `search(user_id, query, *, app_id, limit, from_date, to_date)` | Hybrid search → `SearchResult` with scored `SearchResultItem` list |
 | `get_recent(user_id, *, app_id, limit)` | List recent events → `list[RecentEvent]` |
 | `submit_feedback(event_id, user_id, feedback_type, *, app_id, comment)` | Rate a recalled event → `FeedbackRecord` |
 | `get_identity(user_id, *, app_id)` | Fetch synthesized identity model → `IdentityProfile` |
@@ -1103,7 +1168,11 @@ async with SmritikoshClient(base_url="http://localhost:8080") as client:
 | `delete_procedure(procedure_id)` | Delete a single procedure |
 | `delete_user_procedures(user_id, *, app_id)` | Delete all procedures for a user |
 | `reconsolidate(event_id, new_context)` | Re-summarise an event with new context |
-| `health()` | Server liveness check → `HealthStatus` |
+| `ingest_push(user_id, content, *, source, source_id, app_id, metadata)` | Push a single event from an external source → `IngestResult` |
+| `ingest_file(user_id, file_content, filename, *, app_id)` | Upload a file (txt/md/csv/json) → `IngestResult` |
+| `ingest_email(user_id, host, username, password, *, ...)` | Fetch IMAP emails → `IngestResult` |
+| `ingest_calendar(user_id, file_content, *, filename, app_id)` | Upload an `.ics` file → `IngestResult` |
+| `health()` | Server + DB liveness check → `HealthStatus` |
 
 ---
 
@@ -1188,20 +1257,25 @@ try {
 |---|---|
 | `encode(params)` | Store a memory → `EncodedEvent` |
 | `buildContext(params)` | Retrieve LLM-ready context → `MemoryContext` |
+| `search(params)` | Hybrid search → `SearchResult` with scored items |
 | `getRecent(params)` | List recent events → `RecentEvent[]` |
 | `submitFeedback(params)` | Rate a recalled event → `FeedbackRecord` |
-| `deleteEvent(eventId)` | Delete a single episodic event |
-| `deleteUserMemory(userId, appId?)` | Delete all events for a user |
+| `deleteEvent(params)` | Delete a single episodic event |
+| `deleteUserMemory(params)` | Delete all events for a user |
 | `storeProcedure(params)` | Create a procedural memory rule |
-| `listProcedures(params)` | List procedures → `Procedure[]` |
-| `deleteProcedure(procedureId)` | Delete a single procedure |
-| `deleteUserProcedures(userId, appId?)` | Delete all procedures for a user |
+| `listProcedures(params)` | List procedures → `ProcedureRecord[]` |
+| `deleteProcedure(params)` | Delete a single procedure |
+| `deleteUserProcedures(params)` | Delete all procedures for a user |
 | `reconsolidate(params)` | Re-summarise an event with new context |
+| `ingestPush(params)` | Push a single event from an external source → `IngestResult` |
+| `ingestFile(params)` | Upload a file (txt/md/csv/json) → `IngestResult` |
+| `ingestEmail(params)` | Fetch IMAP emails → `IngestResult` |
+| `ingestCalendar(params)` | Upload an `.ics` file → `IngestResult` |
 | `adminConsolidate(params)` | Trigger consolidation for a user |
 | `adminPrune(params)` | Trigger synaptic pruning |
 | `adminCluster(params)` | Trigger memory clustering |
 | `adminMineBeliefs(params)` | Trigger belief mining |
-| `health()` | Server liveness check → `HealthStatus` |
+| `health()` | Server + DB liveness check → `HealthStatus` |
 
 ### Running Node.js tests
 
@@ -1221,10 +1295,10 @@ npm run test:watch
 pytest
 ```
 
-The default run executes **~530 tests** in about 8 seconds. All tests that require real API keys, a local Ollama server, or running databases are automatically skipped.
+The default run executes **~600 tests** in about 8 seconds. All tests that require real API keys, a local Ollama server, or running databases are automatically skipped.
 
 ```
-530 passed, 5 skipped in 8.1s
+601 passed, 42 skipped in 7.9s
 ```
 
 Run the Node.js SDK tests separately:
@@ -1295,7 +1369,7 @@ pytest tests/test_amygdala.py::TestAmygdala::test_scores_decision_text -v
 | `test_procedural_memory.py` | 25 | _tokenise, _jaccard, store/update/delete/search (all 3 strategies), priority ranking |
 | `test_reconsolidation.py` | 22 | Gate conditions, _reconsolidate_one, reconsolidate_event, reconsolidate_after_recall |
 | `test_connectors.py` | 30 | All 5 connector types, to_metadata(), Slack signature verification, ICS parsing |
-| `test_api.py` | 40 | Core HTTP routes via httpx test client + dependency overrides |
+| `test_api.py` | 43 | Core HTTP routes via httpx test client + dependency overrides; health DB fields |
 | `test_api_procedures.py` | 18 | Procedure CRUD routes + delete_all_for_user, delete event/user memory |
 | `test_api_admin.py` | 22 | Admin job endpoints, ingest routes (push/file/slack/calendar), 503 on missing scheduler |
 | `test_sdk_client.py` | 40 | HTTP mocking via respx, error handling, type checks |

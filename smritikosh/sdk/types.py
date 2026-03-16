@@ -186,3 +186,37 @@ class ReconsolidationResult:
 class HealthStatus:
     status: str
     version: str
+    postgres: str = "unknown"
+    neo4j: str = "unknown"
+
+
+@dataclass
+class SearchResultItem:
+    """One scored event from SmritikoshClient.search()."""
+    event_id: str
+    raw_text: str
+    importance_score: float
+    hybrid_score: float
+    similarity_score: float
+    recency_score: float
+    consolidated: bool
+    created_at: str
+
+
+@dataclass
+class SearchResult:
+    """Returned by SmritikoshClient.search()."""
+    user_id: str
+    query: str
+    results: list[SearchResultItem]
+    total: int
+    embedding_failed: bool
+
+
+@dataclass
+class IngestResult:
+    """Returned by SmritikoshClient ingest methods."""
+    source: str
+    events_ingested: int
+    events_failed: int
+    event_ids: list[str]
