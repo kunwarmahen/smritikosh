@@ -38,63 +38,100 @@ Smritikosh gives any LLM application persistent, user-specific memory modelled o
 
 ## How it works
 
-```
-User message
-     │
-     ▼
-┌─────────────────────────────────────────────────┐
-│  Hippocampus  (intake coordinator)              │
-│                                                 │
-│  1. Amygdala scores emotional importance        │
-│  2. Embed text + extract facts  (parallel)      │
-│  3. Store event → PostgreSQL + pgvector         │
-│  4. Upsert facts → Neo4j knowledge graph        │
-└─────────────────────────────────────────────────┘
-     │                         │
-     ▼                         ▼
-EpisodicMemory            SemanticMemory
-(raw events +             (stable facts:
- vectors)                  preferences,
-                           skills, goals…)
-        │                       │
-        └──────────┬────────────┘
-                   │  Background jobs
-        ┌──────────┼────────────────────┐
-        ▼          ▼                    ▼
-  Consolidator  MemoryClusterer    BeliefMiner
-  raw → summary groups similar    infers values &
-  + Neo4j facts events by topic   worldview beliefs
-        │
-        ▼
-  SynapticPruner
-  deletes low-value
-  memories
-```
-
-When your app needs context before an LLM call:
+### Intake pipeline
 
 ```
-Query → ContextBuilder
-          │
-          ├── hybrid_search()    (vector + recency + importance)
-          ├── get_user_profile() (Neo4j semantic facts)
-          └── get_recent()       (last N raw events)
+External sources                    Direct API call
+──────────────────────────────────  ─────────────────
+  File / Webhook / Slack            POST /memory/event
+  IMAP email / iCalendar                   │
+        │                                  │
+        ▼                                  │
+  SourceConnector                          │
+  (normalise → ConnectorEvent)             │
+        │                                  │
+        └─────────────┬────────────────────┘
+                      ▼
+        ┌─────────────────────────────────────────────┐
+        │  Hippocampus  (intake coordinator)          │
+        │                                             │
+        │  1. Amygdala  — scores emotional importance │
+        │  2. Embed text + extract facts  (parallel)  │
+        │  3. Store event  → PostgreSQL + pgvector    │
+        │  4. Upsert facts → Neo4j knowledge graph    │
+        └─────────────────────────────────────────────┘
+                  │                    │
+                  ▼                    ▼
+          EpisodicMemory          SemanticMemory
+          (raw events +           (stable facts:
+           vectors)                preferences,
+                                   skills, goals…)
+```
+
+### Background jobs
+
+```
+EpisodicMemory
+      │
+      │  (scheduled / POST /admin/*)
+      ├──────────────────────────────────────────────────┐
+      ▼                                                  │
+Consolidator          MemoryClusterer    BeliefMiner     │
+raw → summary         groups similar     infers values   │
++ Neo4j facts         events by topic    & beliefs       │
+      │                                                  │
+      ▼                                                  │
+SynapticPruner        ReconsolidationEngine ◄────────────┘
+deletes low-value     re-summarises events
+memories              after recall
+```
+
+### Context retrieval
+
+```
+Query + ProceduralMemory lookup
+      │
+      ▼
+ContextBuilder
+      │
+      ├── hybrid_search()      (vector + recency + importance)
+      ├── get_user_profile()   (Neo4j semantic facts)
+      ├── get_recent()         (last N raw events)
+      └── search_by_query()    (trigger→instruction rules)
                 │
                 ▼
         MemoryContext.messages  →  prepend to LLM messages
 ```
 
-To inspect what the system has learned about a user:
+### Identity model
 
 ```
 GET /identity/{user_id}
-          │
-          ├── IdentityBuilder  →  groups facts into dimensions
-          ├── BeliefMiner      →  fetches inferred beliefs
-          └── LLM              →  generates narrative summary
+      │
+      ├── IdentityBuilder  →  groups facts into dimensions
+      ├── BeliefMiner      →  fetches inferred beliefs
+      └── LLM              →  generates narrative summary
                 │
                 ▼
         IdentityProfile  (dimensions + beliefs + summary)
+```
+
+### SDK surface
+
+```
+Your application
+      │
+      ├── SmritikoshClient (Python)   smritikosh.sdk
+      └── SmritikoshClient (Node.js)  sdk-node/
+                │
+                ▼  REST API (FastAPI)
+        ┌───────────────────────────────┐
+        │  /memory   /context           │
+        │  /identity /feedback          │
+        │  /procedures                  │
+        │  /ingest/{push,file,slack,…}  │
+        │  /admin/{consolidate,prune,…} │
+        └───────────────────────────────┘
 ```
 
 ---
