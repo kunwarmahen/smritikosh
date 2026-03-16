@@ -22,8 +22,9 @@ contextual_match is reserved for Phase 2 intent-aware retrieval (defaults to 0.0
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import Optional
 
-from sqlalchemy import select, text, update
+from sqlalchemy import delete as sql_delete, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from smritikosh.db.models import Event
@@ -155,6 +156,29 @@ class EpisodicMemory:
             update(Event).where(Event.id.in_(event_ids)).values(**values)
         )
 
+    async def update_summary(
+        self,
+        session: AsyncSession,
+        event_id: uuid.UUID,
+        new_summary: str,
+    ) -> bool:
+        """
+        Update the summary of an event after reconsolidation.
+
+        Also increments reconsolidation_count and records last_reconsolidated_at
+        so the gate logic can enforce a per-event cooldown.
+
+        Returns True if the event existed and was updated.
+        """
+        event = await session.get(Event, event_id)
+        if event is None:
+            return False
+        event.summary = new_summary
+        event.reconsolidation_count = (event.reconsolidation_count or 0) + 1
+        event.last_reconsolidated_at = datetime.now(timezone.utc)
+        event.updated_at = datetime.now(timezone.utc)
+        return True
+
     async def delete(self, session: AsyncSession, event_id: uuid.UUID) -> bool:
         """Delete an event. Returns True if it existed."""
         event = await session.get(Event, event_id)
@@ -195,8 +219,15 @@ class EpisodicMemory:
         app_id: str = "default",
         limit: int = 10,
         include_consolidated: bool = True,
+        from_date: Optional[datetime] = None,
+        to_date: Optional[datetime] = None,
     ) -> list[Event]:
-        """Return the most recent events for a user, newest first."""
+        """Return the most recent events for a user, newest first.
+
+        Args:
+            from_date: If provided, only return events created on or after this datetime.
+            to_date:   If provided, only return events created on or before this datetime.
+        """
         q = (
             select(Event)
             .where(Event.user_id == user_id, Event.app_id == app_id)
@@ -205,6 +236,10 @@ class EpisodicMemory:
         )
         if not include_consolidated:
             q = q.where(Event.consolidated.is_(False))
+        if from_date is not None:
+            q = q.where(Event.created_at >= from_date)
+        if to_date is not None:
+            q = q.where(Event.created_at <= to_date)
 
         result = await session.execute(q)
         return list(result.scalars().all())
@@ -256,6 +291,20 @@ class EpisodicMemory:
         )
         return list(result.scalars().all())
 
+    async def delete_all_for_user(
+        self,
+        session: AsyncSession,
+        user_id: str,
+        app_id: str = "default",
+    ) -> int:
+        """Delete all events for a user+app. Returns the number of events deleted."""
+        result = await session.execute(
+            sql_delete(Event)
+            .where(Event.user_id == user_id, Event.app_id == app_id)
+            .returning(Event.id)
+        )
+        return len(result.fetchall())
+
     async def hybrid_search(
         self,
         session: AsyncSession,
@@ -264,6 +313,8 @@ class EpisodicMemory:
         app_id: str = "default",
         top_k: int = 5,
         weights_override: "HybridWeights | None" = None,
+        from_date: Optional[datetime] = None,
+        to_date: Optional[datetime] = None,
     ) -> list[SearchResult]:
         """
         Hybrid retrieval: semantic similarity + recency decay + importance score.
@@ -296,6 +347,8 @@ class EpisodicMemory:
                 user_id = :user_id
                 AND app_id = :app_id
                 AND embedding IS NOT NULL
+                AND (:from_date IS NULL OR created_at >= :from_date)
+                AND (:to_date IS NULL OR created_at <= :to_date)
             ORDER BY
                 (
                     :w_sim  * (1.0 - (embedding <=> '{vec_literal}'))
@@ -318,6 +371,8 @@ class EpisodicMemory:
                 "w_freq": w.frequency,
                 "freq_cap": w.frequency_cap,
                 "top_k": top_k,
+                "from_date": from_date,
+                "to_date": to_date,
             },
         )
 

@@ -24,15 +24,17 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import Optional
 
 from neo4j import AsyncSession as NeoSession
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from smritikosh.db.models import Event
+from smritikosh.db.models import Event, UserProcedure
 from smritikosh.llm.adapter import LLMAdapter
 from smritikosh.memory.episodic import EpisodicMemory, SearchResult
 from smritikosh.memory.narrative import NarrativeMemory
+from smritikosh.memory.procedural import ProceduralMemory
 from smritikosh.memory.semantic import SemanticMemory, UserProfile
 from smritikosh.retrieval.intent_classifier import IntentClassifier, QueryIntent
 
@@ -67,6 +69,8 @@ class MemoryContext:
     intent: str = QueryIntent.GENERAL
     # Narrative chains originating from the top similar event (Phase 3)
     narrative_chains: list[list[Event]] = field(default_factory=list)
+    # Procedural rules that fired for this query
+    procedures: list[UserProcedure] = field(default_factory=list)
 
     # ── Rendering ─────────────────────────────────────────────────────────
 
@@ -91,6 +95,17 @@ class MemoryContext:
             - User has experience with LangGraph and vector DBs  [score: 0.84]
         """
         sections: list[str] = ["## User Memory Context\n"]
+
+        # ── Behavioral rules (procedural memory) ──────────────────────────
+        if self.procedures:
+            active = sorted(self.procedures, key=lambda p: p.priority, reverse=True)
+            sections.append("### Behavioral rules for this user:")
+            for proc in active:
+                sections.append(
+                    f"- [{proc.category}, priority {proc.priority}]"
+                    f" When discussing \"{proc.trigger}\": {proc.instruction}"
+                )
+            sections.append("")
 
         # ── Identity / semantic facts ──────────────────────────────────────
         if self.user_profile and self.user_profile.facts:
@@ -149,12 +164,22 @@ class MemoryContext:
     def is_empty(self) -> bool:
         """True if no memory was found for this user."""
         no_profile = not self.user_profile or not self.user_profile.facts
-        return not self.similar_events and no_profile and not self.recent_events
+        return (
+            not self.similar_events
+            and no_profile
+            and not self.recent_events
+            and not self.procedures
+        )
 
     def total_memories(self) -> int:
         """Total number of memory fragments assembled."""
         profile_count = len(self.user_profile.facts) if self.user_profile else 0
-        return len(self.similar_events) + profile_count + len(self.recent_events)
+        return (
+            len(self.similar_events)
+            + profile_count
+            + len(self.recent_events)
+            + len(self.procedures)
+        )
 
 
 # ── ContextBuilder ────────────────────────────────────────────────────────────
@@ -187,6 +212,8 @@ class ContextBuilder:
         intent_classifier: IntentClassifier | None = None,
         narrative: NarrativeMemory | None = None,
         include_chains: bool = False,
+        procedural: ProceduralMemory | None = None,
+        top_k_procedures: int = 5,
     ) -> None:
         self.llm = llm
         self.episodic = episodic
@@ -197,6 +224,8 @@ class ContextBuilder:
         self.intent_classifier = intent_classifier
         self.narrative = narrative
         self.include_chains = include_chains
+        self.procedural = procedural
+        self.top_k_procedures = top_k_procedures
 
     # ── Primary entry point ────────────────────────────────────────────────
 
@@ -208,6 +237,8 @@ class ContextBuilder:
         user_id: str,
         query: str,
         app_id: str = "default",
+        from_date: Optional[datetime] = None,
+        to_date: Optional[datetime] = None,
     ) -> MemoryContext:
         """
         Build a MemoryContext for the given query.
@@ -240,6 +271,8 @@ class ContextBuilder:
                 app_id=app_id,
                 top_k=self.top_k_similar,
                 weights_override=intent_result.weights if intent_result else None,
+                from_date=from_date,
+                to_date=to_date,
             )
             if embedding is not None
             else _empty()
@@ -249,22 +282,38 @@ class ContextBuilder:
             min_confidence=self.min_profile_confidence,
         )
         recent_task = self.episodic.get_recent(
-            pg_session, user_id, app_id, limit=self.recent_limit
+            pg_session, user_id, app_id, limit=self.recent_limit,
+            from_date=from_date, to_date=to_date,
+        )
+        procedural_task = (
+            self.procedural.search_by_query(
+                pg_session, user_id, query, app_id=app_id, top_k=self.top_k_procedures
+            )
+            if self.procedural is not None
+            else _empty()
         )
 
-        similar, profile, recent = await asyncio.gather(
-            similar_task, profile_task, recent_task, return_exceptions=True
+        similar, profile, recent, procedures_raw = await asyncio.gather(
+            similar_task, profile_task, recent_task, procedural_task,
+            return_exceptions=True,
         )
 
         # ── 4. Handle partial failures gracefully ─────────────────────────
         similar_events = _safe_result(similar, [], "hybrid_search", user_id)
         user_profile   = _safe_result(profile, None, "get_user_profile", user_id)
         recent_events  = _safe_result(recent,  [], "get_recent", user_id)
+        procedures     = _safe_result(procedures_raw, [], "search_by_query", user_id)
 
         # Track recall so the frequency signal stays current
         if similar_events:
             await self.episodic.increment_recall(
                 pg_session, [sr.event.id for sr in similar_events]
+            )
+
+        # Track procedure hits
+        if procedures and self.procedural is not None:
+            await self.procedural.increment_hit_count(
+                pg_session, [p.id for p in procedures]
             )
 
         # Deduplicate: don't show the same event in both similar and recent
@@ -305,6 +354,7 @@ class ContextBuilder:
             embedding_failed=embedding_failed,
             intent=str(detected_intent),
             narrative_chains=narrative_chains,
+            procedures=procedures,
         )
 
         logger.info(
@@ -315,6 +365,7 @@ class ContextBuilder:
                 "similar": len(similar_events),
                 "facts": len(user_profile.facts) if user_profile else 0,
                 "recent": len(recent_events),
+                "procedures": len(procedures),
                 "total": ctx.total_memories(),
             },
         )

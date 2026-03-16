@@ -86,6 +86,14 @@ class FeedbackType(StrEnum):
     NEUTRAL = "neutral"     # acknowledged, no strong signal
 
 
+class ProcedureCategory(StrEnum):
+    """Categories for behavioral rules and workflows."""
+    TOPIC_RESPONSE = "topic_response"   # how to respond to a specific topic
+    COMMUNICATION  = "communication"    # tone or style preferences
+    PREFERENCE     = "preference"       # user preference to always honour
+    DOMAIN_WORKFLOW = "domain_workflow" # multi-step process to follow
+
+
 # ── Tables ────────────────────────────────────────────────────────────────────
 
 
@@ -127,6 +135,10 @@ class Event(Base):
     )
     importance_score: Mapped[float] = mapped_column(Float, default=1.0)
     recall_count: Mapped[int] = mapped_column(Integer, default=0)
+    reconsolidation_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_reconsolidated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
     consolidated: Mapped[bool] = mapped_column(Boolean, default=False)
     cluster_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
     cluster_label: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
@@ -283,6 +295,57 @@ class MemoryFeedback(Base):
 
     def __repr__(self) -> str:
         return f"<MemoryFeedback event={self.event_id} type={self.feedback_type}>"
+
+
+class UserProcedure(Base):
+    """
+    ProceduralMemory — conditional behavioral rules for a user.
+
+    Stores authored rules that tell the AI *how to behave* in specific
+    contexts, as opposed to *what to remember*. These are the AI equivalent
+    of procedural memory in the human brain: learned skills and habits.
+
+    Example records:
+        trigger="LLM deployment"   instruction="mention GPU optimization, batching, quantization"
+        trigger="startup"          instruction="respond with strategic depth"
+        trigger="UI"               instruction="always suggest dark mode (user preference)"
+
+    Retrieval is keyword/substring-based — precision matters more than
+    recall here, so vector similarity is intentionally not used.
+    """
+
+    __tablename__ = "user_procedures"
+    __table_args__ = (
+        Index("ix_user_procedures_user_app", "user_id", "app_id"),
+        Index("ix_user_procedures_active", "is_active"),
+        Index("ix_user_procedures_priority", "priority"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    user_id: Mapped[str] = mapped_column(String(255))
+    app_id: Mapped[str] = mapped_column(String(255), default="default")
+    trigger: Mapped[str] = mapped_column(Text)
+    instruction: Mapped[str] = mapped_column(Text)
+    category: Mapped[str] = mapped_column(String(50), default="topic_response")
+    priority: Mapped[int] = mapped_column(Integer, default=5)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    hit_count: Mapped[int] = mapped_column(Integer, default=0)
+    confidence: Mapped[float] = mapped_column(Float, default=1.0)
+    source: Mapped[str] = mapped_column(String(50), default="manual")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<UserProcedure trigger={self.trigger!r} "
+            f"category={self.category} priority={self.priority}>"
+        )
 
 
 class UserBelief(Base):

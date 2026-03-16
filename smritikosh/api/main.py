@@ -30,7 +30,7 @@ from smritikosh.api.deps import (
     get_episodic,
     get_pruner,
 )
-from smritikosh.api.routes import context, feedback, health, identity, memory
+from smritikosh.api.routes import admin, context, feedback, health, identity, ingest, memory, procedures
 from smritikosh.db.neo4j import close_neo4j, init_neo4j
 from smritikosh.db.postgres import close_db, init_db
 from smritikosh.processing.scheduler import MemoryScheduler
@@ -53,6 +53,7 @@ async def lifespan(app: FastAPI):
         belief_miner=get_belief_miner(),
     )
     scheduler.start()
+    app.state.scheduler = scheduler
     logger.info("Smritikosh ready.")
 
     yield
@@ -75,3 +76,6 @@ app.include_router(memory.router)
 app.include_router(context.router)
 app.include_router(identity.router)
 app.include_router(feedback.router)
+app.include_router(procedures.router)
+app.include_router(admin.router)
+app.include_router(ingest.router)

@@ -96,6 +96,93 @@ class IdentityProfile:
 
 
 @dataclass
+class ProcedureRecord:
+    """One behavioral rule from SmritikoshClient.list_procedures()."""
+    procedure_id: str
+    trigger: str
+    instruction: str
+    category: str
+    priority: int
+    is_active: bool
+    hit_count: int
+
+
+@dataclass
+class ProcedureCreated:
+    """Returned by SmritikoshClient.store_procedure()."""
+    procedure_id: str
+    user_id: str
+    trigger: str
+    instruction: str
+    category: str
+    priority: int
+    is_active: bool
+    hit_count: int
+    confidence: float
+    source: str
+    created_at: str
+
+
+@dataclass
+class DeleteProcedureResult:
+    """Returned by SmritikoshClient.delete_procedure()."""
+    deleted: bool
+    procedure_id: str
+
+
+@dataclass
+class DeleteUserProceduresResult:
+    """Returned by SmritikoshClient.delete_user_procedures()."""
+    procedures_deleted: int
+    user_id: str
+    app_id: str
+
+
+@dataclass
+class DeleteEventResult:
+    """Returned by SmritikoshClient.delete_event()."""
+    deleted: bool
+    event_id: str
+
+
+@dataclass
+class DeleteUserMemoryResult:
+    """Returned by SmritikoshClient.delete_user_memory()."""
+    events_deleted: int
+    user_id: str
+    app_id: str
+
+
+@dataclass
+class AdminJobResult:
+    """Summary of one user's admin job outcome."""
+    user_id: str
+    app_id: str
+    skipped: bool
+    detail: str
+
+
+@dataclass
+class AdminJobResponse:
+    """Returned by SmritikoshClient admin methods."""
+    job: str
+    users_processed: int
+    results: list[AdminJobResult]
+
+
+@dataclass
+class ReconsolidationResult:
+    """Returned by SmritikoshClient.reconsolidate()."""
+    event_id: str
+    user_id: str
+    updated: bool
+    skipped: bool
+    skip_reason: str
+    old_summary: str
+    new_summary: str
+
+
+@dataclass
 class HealthStatus:
     status: str
     version: str

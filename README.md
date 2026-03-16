@@ -21,7 +21,15 @@ Smritikosh gives any LLM application persistent, user-specific memory modelled o
 - [Configuration](#configuration)
 - [Running the server](#running-the-server)
 - [API reference](#api-reference)
+  - [Memory](#memory)
+  - [Context](#context)
+  - [Identity](#identity)
+  - [Feedback](#feedback)
+  - [Procedural memory](#procedural-memory-api)
+  - [Admin jobs](#admin-jobs)
+  - [External ingest](#external-ingest)
 - [Python SDK](#python-sdk)
+- [Node.js SDK](#nodejs-sdk)
 - [Testing](#testing)
 - [LLM provider guide](#llm-provider-guide)
 - [Background jobs](#background-jobs)
@@ -107,9 +115,13 @@ GET /identity/{user_id}
 | **BeliefMiner** | Background: infers durable beliefs and values from event patterns | PostgreSQL |
 | **IdentityBuilder** | Synthesises semantic facts + beliefs into a user identity model | — |
 | **ReinforcementLoop** | Adjusts event importance scores based on user feedback signals | PostgreSQL |
+| **ProceduralMemory** | Stores trigger→instruction rules; fuzzy-matched against each query | PostgreSQL |
+| **ReconsolidationEngine** | Re-summarises events after recall to incorporate new context | PostgreSQL |
+| **SourceConnector** | Normalises external sources (file, webhook, Slack, email, calendar) into events | — |
 | **MemoryScheduler** | Runs all background jobs on configurable timers (APScheduler) | — |
 | **LLMAdapter** | Unified interface to Claude, OpenAI, Gemini, Ollama, vLLM | — |
-| **SmritikoshClient** | Python SDK wrapping the REST API | — |
+| **SmritikoshClient (Python)** | Python SDK wrapping the REST API | — |
+| **SmritikoshClient (Node.js)** | TypeScript/ESM SDK with identical surface to the Python SDK | — |
 
 ---
 
@@ -123,14 +135,26 @@ smritikosh/
 │   ├── schemas.py           # Pydantic request/response models
 │   └── routes/
 │       ├── health.py        # GET /health
-│       ├── memory.py        # POST /memory/event, GET /memory/{user_id}
+│       ├── memory.py        # POST /memory/event, GET /memory/{user_id},
+│       │                    #   DELETE /memory/event/{id}, DELETE /memory/user/{id}
 │       ├── context.py       # POST /context
 │       ├── identity.py      # GET /identity/{user_id}
-│       └── feedback.py      # POST /feedback
+│       ├── feedback.py      # POST /feedback
+│       ├── procedures.py    # CRUD /procedures + DELETE /procedures/user/{id}
+│       ├── admin.py         # POST /admin/{consolidate,prune,cluster,mine-beliefs,reconsolidate}
+│       └── ingest.py        # POST /ingest/{push,file,slack/events,email/sync,calendar}
 ├── config.py                # Pydantic Settings (reads .env)
+├── connectors/
+│   ├── __init__.py          # Re-exports ConnectorEvent, SourceConnector
+│   ├── base.py              # ConnectorEvent dataclass + SourceConnector ABC
+│   ├── file.py              # FileConnector: txt/md/csv/json → events
+│   ├── webhook.py           # WebhookConnector: arbitrary JSON payload → events
+│   ├── slack.py             # SlackConnector: Events API + HMAC verification
+│   ├── email.py             # EmailConnector: IMAP fetch (runs in thread executor)
+│   └── calendar.py          # CalendarConnector: RFC 5545 iCal stdlib parser
 ├── db/
 │   ├── models.py            # SQLAlchemy 2.0 ORM: Event, UserFact, MemoryLink,
-│   │                        #   MemoryFeedback, UserBelief
+│   │                        #   MemoryFeedback, UserBelief, UserProcedure
 │   ├── postgres.py          # Async engine, session helpers
 │   └── neo4j.py             # Driver singleton, session helpers, schema init
 ├── llm/
@@ -140,6 +164,7 @@ smritikosh/
 │   ├── semantic.py          # SemanticMemory: upsert_fact, get_user_profile
 │   ├── narrative.py         # NarrativeMemory: memory link chains
 │   ├── identity.py          # IdentityBuilder: dimensions + beliefs + summary
+│   ├── procedural.py        # ProceduralMemory: store, search_by_query (3-strategy fuzzy match)
 │   └── hippocampus.py       # Hippocampus: encode()
 ├── processing/
 │   ├── amygdala.py          # Importance scoring (pure, no LLM)
@@ -148,6 +173,7 @@ smritikosh/
 │   ├── memory_clusterer.py  # Cluster events by topic using embeddings
 │   ├── belief_miner.py      # Infer beliefs/values from consolidated events
 │   ├── reinforcement.py     # Adjust importance scores from user feedback
+│   ├── reconsolidation.py   # Re-summarise events after recall
 │   └── scheduler.py         # APScheduler background jobs
 ├── retrieval/
 │   └── context_builder.py   # Build memory context for LLM calls
@@ -155,6 +181,15 @@ smritikosh/
     ├── client.py            # SmritikoshClient (async HTTP)
     └── types.py             # EncodedEvent, MemoryContext, RecentEvent,
                              #   IdentityProfile, FeedbackRecord, HealthStatus
+
+sdk-node/                    # TypeScript / Node.js SDK
+├── src/
+│   ├── client.ts            # SmritikoshClient (native fetch, ESM)
+│   ├── types.ts             # Branded types, request/response shapes
+│   ├── errors.ts            # SmritikoshError
+│   └── client.test.ts       # 41 Vitest tests (all methods, error paths)
+├── package.json
+└── tsconfig*.json
 
 tests/
 ├── conftest.py              # pytest marks: live, ollama, db
@@ -173,16 +208,23 @@ tests/
 ├── test_memory_clusterer.py
 ├── test_reinforcement.py
 ├── test_belief_miner.py
+├── test_procedural_memory.py
+├── test_reconsolidation.py
+├── test_connectors.py
 ├── test_api.py
+├── test_api_procedures.py
+├── test_api_admin.py
 └── test_sdk_client.py
 
 alembic/
 └── versions/
-    ├── 0001_initial_schema.py      # events, user_facts, memory_links + IVFFlat index
-    ├── 0002_narrative_links.py     # memory_links relation types
-    ├── 0003_add_cluster_fields.py  # cluster_id, cluster_label on events
-    ├── 0004_add_memory_feedback.py # memory_feedback table
-    └── 0005_add_user_beliefs.py    # user_beliefs table
+    ├── 0001_initial_schema.py        # events, user_facts, memory_links + IVFFlat index
+    ├── 0002_narrative_links.py       # memory_links relation types
+    ├── 0003_add_cluster_fields.py    # cluster_id, cluster_label on events
+    ├── 0004_add_memory_feedback.py   # memory_feedback table
+    ├── 0005_add_user_beliefs.py      # user_beliefs table
+    ├── 0006_add_user_procedures.py   # user_procedures table + priority/active indexes
+    └── 0007_add_reconsolidation_fields.py  # reconsolidation_count, last_reconsolidated_at
 ```
 
 ---
@@ -439,6 +481,7 @@ All settings are read from the environment (or `.env`). Every field has a defaul
 | `NEO4J_USER` | `neo4j` | Neo4j username |
 | `NEO4J_PASSWORD` | `smritikosh` | Neo4j password |
 | `LOG_LEVEL` | `INFO` | Python log level |
+| `SLACK_SIGNING_SECRET` | — | Signing secret for Slack Events API signature verification (required only for `POST /ingest/slack/events`) |
 
 ---
 
@@ -647,6 +690,279 @@ Score adjustments: `positive` → +0.10, `negative` → −0.10, `neutral` → n
 
 ---
 
+### `DELETE /memory/event/{event_id}`
+
+Delete a single event from episodic memory (PostgreSQL only — Neo4j facts distilled from this event are retained).
+
+```bash
+curl -X DELETE "http://localhost:8080/memory/event/3f7a1b2c-..."
+```
+
+```json
+{"deleted": true}
+```
+
+---
+
+### `DELETE /memory/user/{user_id}`
+
+Delete **all** episodic events for a user. Useful for GDPR/right-to-erasure workflows.
+
+```bash
+curl -X DELETE "http://localhost:8080/memory/user/alice?app_id=myapp"
+```
+
+```json
+{"deleted_count": 42}
+```
+
+| Query param | Default | Description |
+|---|---|---|
+| `app_id` | `"default"` | Scope deletion to one application namespace |
+
+---
+
+## Procedural memory API
+
+Procedural memories are persistent **trigger → instruction** rules attached to a user. On every `/context` call they are fuzzy-matched against the current query and injected into the context block, so the LLM automatically adjusts its behaviour without the application needing to track this separately.
+
+Matching uses three escalating strategies:
+1. **Substring match** — trigger phrase appears inside the query → score 1.0
+2. **Token match** — any query token (> 3 chars) appears inside the trigger → score 0.5
+3. **Jaccard overlap** — token overlap between query and trigger ≥ threshold → score varies
+
+### `POST /procedures`
+
+```bash
+curl -X POST http://localhost:8080/procedures \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "alice",
+    "trigger": "LLM deployment",
+    "instruction": "Always mention GPU memory requirements and batching strategies.",
+    "priority": 8,
+    "category": "topic_response"
+  }'
+```
+
+```json
+{
+  "procedure_id": "7c3d9f...",
+  "user_id": "alice",
+  "trigger": "LLM deployment",
+  "instruction": "Always mention GPU memory requirements...",
+  "priority": 8,
+  "category": "topic_response",
+  "is_active": true,
+  "hit_count": 0
+}
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `user_id` | string | **Required** | User this rule applies to |
+| `trigger` | string | **Required** | Topic/phrase that activates this rule |
+| `instruction` | string | **Required** | Instruction injected into the system prompt |
+| `app_id` | string | `"default"` | Application namespace |
+| `priority` | int | `5` | 1–10, higher = appears first in context |
+| `category` | string | `"topic_response"` | Free-form label (e.g. `communication`, `format`) |
+
+### `GET /procedures/{user_id}`
+
+```bash
+curl "http://localhost:8080/procedures/alice?app_id=myapp&active_only=true"
+```
+
+Returns a JSON array of the user's procedures ordered by priority descending.
+
+### `PATCH /procedures/{procedure_id}`
+
+Update any field on an existing procedure. Useful for deactivating (`is_active: false`) or adjusting priority.
+
+```bash
+curl -X PATCH "http://localhost:8080/procedures/7c3d9f..." \
+  -H "Content-Type: application/json" \
+  -d '{"priority": 10, "is_active": true}'
+```
+
+### `DELETE /procedures/{procedure_id}`
+
+```bash
+curl -X DELETE "http://localhost:8080/procedures/7c3d9f..."
+```
+
+```json
+{"deleted": true}
+```
+
+### `DELETE /procedures/user/{user_id}`
+
+Delete all procedures for a user.
+
+```bash
+curl -X DELETE "http://localhost:8080/procedures/user/alice?app_id=myapp"
+```
+
+```json
+{"deleted_count": 5}
+```
+
+---
+
+## Admin jobs
+
+Manual triggers for background jobs. Useful during development, testing, or forced re-processing.
+
+### `POST /admin/consolidate`
+
+Trigger consolidation immediately for one user.
+
+```bash
+curl -X POST "http://localhost:8080/admin/consolidate?user_id=alice&app_id=myapp"
+```
+
+### `POST /admin/prune`
+
+Trigger synaptic pruning immediately.
+
+```bash
+curl -X POST "http://localhost:8080/admin/prune?user_id=alice&app_id=myapp"
+```
+
+### `POST /admin/cluster`
+
+Trigger memory clustering immediately.
+
+```bash
+curl -X POST "http://localhost:8080/admin/cluster?user_id=alice&app_id=myapp"
+```
+
+### `POST /admin/mine-beliefs`
+
+Trigger belief mining immediately.
+
+```bash
+curl -X POST "http://localhost:8080/admin/mine-beliefs?user_id=alice&app_id=myapp"
+```
+
+### `POST /admin/reconsolidate`
+
+Re-summarise a single event after it has been recalled, blending its existing summary with new context.
+
+```bash
+curl -X POST http://localhost:8080/admin/reconsolidate \
+  -H "Content-Type: application/json" \
+  -d '{"event_id": "3f7a1b2c-...", "new_context": "Alice now works at a larger team."}'
+```
+
+```json
+{
+  "event_id": "3f7a1b2c-...",
+  "updated": true,
+  "new_summary": "Alice is a founder who recently expanded her team...",
+  "reconsolidation_count": 1
+}
+```
+
+All admin routes return `503 Service Unavailable` if the background scheduler has not been started (e.g. bare ASGI without `lifespan`).
+
+---
+
+## External ingest
+
+Smritikosh can ingest memories from external sources. All five endpoints share the same pipeline: `ConnectorEvent` objects are normalised → run through Hippocampus → stored in PostgreSQL/Neo4j.
+
+### `POST /ingest/push`
+
+Push a single event programmatically (webhook or backend service).
+
+```bash
+curl -X POST http://localhost:8080/ingest/push \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "alice",
+    "content": "Alice merged PR #412 fixing the vector index.",
+    "source": "github",
+    "source_id": "pr-412",
+    "metadata": {"repo": "smritikosh"}
+  }'
+```
+
+```json
+{"source": "github", "events_ingested": 1, "events_failed": 0, "event_ids": ["3f7a..."]}
+```
+
+### `POST /ingest/file`
+
+Upload a file. Supported formats: `.txt`, `.md` (paragraph chunks), `.csv` (one event per row), `.json` (array of strings or objects).
+
+```bash
+curl -X POST http://localhost:8080/ingest/file \
+  -F "user_id=alice" \
+  -F "file=@notes.md"
+```
+
+```json
+{"source": "file:notes.md", "events_ingested": 7, "events_failed": 0, "event_ids": [...]}
+```
+
+### `POST /ingest/slack/events`
+
+Receive events from the [Slack Events API](https://api.slack.com/apis/events-api). Register this URL as your Slack app's event subscription endpoint.
+
+Smritikosh handles the `url_verification` challenge automatically. For production, set `SLACK_SIGNING_SECRET` to verify request signatures.
+
+```dotenv
+SLACK_SIGNING_SECRET=your_slack_signing_secret_here
+```
+
+Supported event types: `message`, `app_mention`, `message.im`. Bot messages are filtered by default.
+
+The `user_id` and `app_id` to store events under are passed as **query parameters** (since Slack controls the request body):
+
+```
+POST /ingest/slack/events?user_id=alice&app_id=myapp
+```
+
+### `POST /ingest/email/sync`
+
+Fetch unread emails from an IMAP mailbox and ingest them as episodic memories. Credentials are used per-request and never stored.
+
+```bash
+curl -X POST http://localhost:8080/ingest/email/sync \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "alice",
+    "host": "imap.gmail.com",
+    "port": 993,
+    "username": "alice@example.com",
+    "password": "app-password",
+    "mailbox": "INBOX",
+    "limit": 20,
+    "unseen_only": true
+  }'
+```
+
+```json
+{"source": "email:imap.gmail.com", "events_ingested": 5, "events_failed": 0, "event_ids": [...]}
+```
+
+### `POST /ingest/calendar`
+
+Upload an `.ics` file (RFC 5545 iCalendar). Each `VEVENT` becomes one memory event containing the summary, description, location, and time range. Parsed using the stdlib — no extra dependencies.
+
+```bash
+curl -X POST http://localhost:8080/ingest/calendar \
+  -F "user_id=alice" \
+  -F "file=@calendar.ics"
+```
+
+```json
+{"source": "calendar:calendar.ics", "events_ingested": 12, "events_failed": 0, "event_ids": [...]}
+```
+
+---
+
 ## Python SDK
 
 Install the package (the SDK is included):
@@ -743,7 +1059,120 @@ async with SmritikoshClient(base_url="http://localhost:8080") as client:
 | `get_recent(user_id, *, app_id, limit)` | List recent events → `list[RecentEvent]` |
 | `submit_feedback(event_id, user_id, feedback_type, *, app_id, comment)` | Rate a recalled event → `FeedbackRecord` |
 | `get_identity(user_id, *, app_id)` | Fetch synthesized identity model → `IdentityProfile` |
+| `delete_event(event_id)` | Delete a single episodic event |
+| `delete_user_memory(user_id, *, app_id)` | Delete all events for a user |
+| `store_procedure(user_id, trigger, instruction, *, ...)` | Create a procedural memory rule |
+| `list_procedures(user_id, *, app_id, active_only)` | List a user's procedures |
+| `delete_procedure(procedure_id)` | Delete a single procedure |
+| `delete_user_procedures(user_id, *, app_id)` | Delete all procedures for a user |
+| `reconsolidate(event_id, new_context)` | Re-summarise an event with new context |
 | `health()` | Server liveness check → `HealthStatus` |
+
+---
+
+## Node.js SDK
+
+A native TypeScript SDK is available in `sdk-node/`. It targets Node.js ≥ 18 and uses the built-in `fetch` — no extra HTTP dependencies.
+
+### Installation
+
+```bash
+cd sdk-node
+npm install
+npm run build          # emits dist/esm/ + dist/cjs/ + dist/types/
+```
+
+### Basic usage
+
+```typescript
+import { SmritikoshClient } from 'smritikosh';
+
+const client = new SmritikoshClient({
+  baseUrl: 'http://localhost:8080',
+  appId: 'myapp',
+});
+
+// Store a memory
+const event = await client.encode({
+  userId: 'alice',
+  content: "I prefer TypeScript over plain JavaScript for large projects.",
+});
+console.log(event.eventId, event.importanceScore);
+
+// Build context before an LLM call
+const ctx = await client.buildContext({
+  userId: 'alice',
+  query: 'What language does Alice prefer?',
+});
+if (!ctx.isEmpty()) {
+  // ctx.messages is OpenAI-style — prepend to your messages array
+  console.log(ctx.contextText);
+}
+
+// Browse recent events
+const events = await client.getRecent({ userId: 'alice', limit: 5 });
+
+// Submit feedback
+await client.submitFeedback({
+  eventId: events[0].eventId,
+  userId: 'alice',
+  feedbackType: 'positive',
+});
+
+// Procedural memory
+await client.storeProcedure({
+  userId: 'alice',
+  trigger: 'code review',
+  instruction: 'Always suggest adding tests first.',
+  priority: 8,
+});
+
+// Admin
+await client.adminConsolidate({ userId: 'alice' });
+```
+
+### Error handling
+
+```typescript
+import { SmritikoshError } from 'smritikosh';
+
+try {
+  await client.encode({ userId: 'alice', content: '...' });
+} catch (err) {
+  if (err instanceof SmritikoshError) {
+    console.error(`API error ${err.status}: ${err.message}`);
+  }
+}
+```
+
+### Node.js SDK reference
+
+| Method | Description |
+|---|---|
+| `encode(params)` | Store a memory → `EncodedEvent` |
+| `buildContext(params)` | Retrieve LLM-ready context → `MemoryContext` |
+| `getRecent(params)` | List recent events → `RecentEvent[]` |
+| `submitFeedback(params)` | Rate a recalled event → `FeedbackRecord` |
+| `deleteEvent(eventId)` | Delete a single episodic event |
+| `deleteUserMemory(userId, appId?)` | Delete all events for a user |
+| `storeProcedure(params)` | Create a procedural memory rule |
+| `listProcedures(params)` | List procedures → `Procedure[]` |
+| `deleteProcedure(procedureId)` | Delete a single procedure |
+| `deleteUserProcedures(userId, appId?)` | Delete all procedures for a user |
+| `reconsolidate(params)` | Re-summarise an event with new context |
+| `adminConsolidate(params)` | Trigger consolidation for a user |
+| `adminPrune(params)` | Trigger synaptic pruning |
+| `adminCluster(params)` | Trigger memory clustering |
+| `adminMineBeliefs(params)` | Trigger belief mining |
+| `health()` | Server liveness check → `HealthStatus` |
+
+### Running Node.js tests
+
+```bash
+cd sdk-node
+npm test          # vitest run — 41 tests, ~300ms
+npm run test:watch
+```
 
 ---
 
@@ -755,10 +1184,16 @@ async with SmritikoshClient(base_url="http://localhost:8080") as client:
 pytest
 ```
 
-The default run executes **453 tests** in about 7 seconds. All tests that require real API keys, a local Ollama server, or running databases are automatically skipped.
+The default run executes **~530 tests** in about 8 seconds. All tests that require real API keys, a local Ollama server, or running databases are automatically skipped.
 
 ```
-453 passed, 5 skipped in 6.80s
+530 passed, 5 skipped in 8.1s
+```
+
+Run the Node.js SDK tests separately:
+
+```bash
+cd sdk-node && npm test    # 41 tests, ~300ms
 ```
 
 ### Run with coverage report
@@ -801,6 +1236,8 @@ pytest tests/test_amygdala.py::TestAmygdala::test_scores_decision_text -v
 
 ### Test suite overview
 
+#### Python (`pytest`)
+
 | File | Tests | What it covers |
 |---|---|---|
 | `test_llm_adapter.py` | 22 | Model resolution, complete(), embed(), extract_structured(), retry logic |
@@ -818,8 +1255,19 @@ pytest tests/test_amygdala.py::TestAmygdala::test_scores_decision_text -v
 | `test_memory_clusterer.py` | 29 | Cosine sim, greedy clustering, LLM labelling, skip guards |
 | `test_reinforcement.py` | 23 | apply_delta clamping, submit(), score update, neutral no-op |
 | `test_belief_miner.py` | 29 | Prompt building, skip guards, upsert logic, LLM failure, identity integration |
-| `test_api.py` | 40 | All HTTP routes via httpx test client + dependency overrides |
+| `test_procedural_memory.py` | 25 | _tokenise, _jaccard, store/update/delete/search (all 3 strategies), priority ranking |
+| `test_reconsolidation.py` | 22 | Gate conditions, _reconsolidate_one, reconsolidate_event, reconsolidate_after_recall |
+| `test_connectors.py` | 30 | All 5 connector types, to_metadata(), Slack signature verification, ICS parsing |
+| `test_api.py` | 40 | Core HTTP routes via httpx test client + dependency overrides |
+| `test_api_procedures.py` | 18 | Procedure CRUD routes + delete_all_for_user, delete event/user memory |
+| `test_api_admin.py` | 22 | Admin job endpoints, ingest routes (push/file/slack/calendar), 503 on missing scheduler |
 | `test_sdk_client.py` | 40 | HTTP mocking via respx, error handling, type checks |
+
+#### Node.js (`vitest`)
+
+| File | Tests | What it covers |
+|---|---|---|
+| `src/client.test.ts` | 41 | All client methods, snake↔camelCase mapping, error handling, baseUrl normalisation |
 
 ---
 

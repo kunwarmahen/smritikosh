@@ -34,6 +34,7 @@ dependencies = [
     # Utilities
     "tenacity>=9.0.0",          # retries for LLM calls
     "structlog>=24.4.0",        # structured logging
+    "python-multipart>=0.0.9",  # file upload support (FastAPI UploadFile)
 ]
 
 [project.optional-dependencies]

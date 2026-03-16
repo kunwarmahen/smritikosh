@@ -32,17 +32,29 @@ Usage (manual lifecycle):
 
 from __future__ import annotations
 
+from datetime import datetime
+from typing import Optional
+
 import httpx
 
 from smritikosh.sdk.types import (
+    AdminJobResponse,
+    AdminJobResult,
     BeliefItem,
+    DeleteEventResult,
+    DeleteProcedureResult,
+    DeleteUserMemoryResult,
+    DeleteUserProceduresResult,
     EncodedEvent,
     FeedbackRecord,
     HealthStatus,
     IdentityDimensionItem,
     IdentityProfile,
     MemoryContext,
+    ProcedureCreated,
+    ProcedureRecord,
     RecentEvent,
+    ReconsolidationResult,
 )
 
 _DEFAULT_TIMEOUT = 30.0   # seconds
@@ -155,6 +167,8 @@ class SmritikoshClient:
         user_id: str,
         query: str,
         app_id: str | None = None,
+        from_date: Optional[datetime] = None,
+        to_date: Optional[datetime] = None,
     ) -> MemoryContext:
         """
         Retrieve a memory context block for a user query.
@@ -175,11 +189,15 @@ class SmritikoshClient:
         Returns:
             :class:`MemoryContext` — ready-to-use context block.
         """
-        payload = {
+        payload: dict = {
             "user_id": user_id,
             "query": query,
             "app_id": app_id or self._app_id,
         }
+        if from_date is not None:
+            payload["from_date"] = from_date.isoformat()
+        if to_date is not None:
+            payload["to_date"] = to_date.isoformat()
         data = await self._post("/context", payload)
         return MemoryContext(
             user_id=data["user_id"],
@@ -311,6 +329,246 @@ class SmritikoshClient:
             is_empty=data["is_empty"],
         )
 
+    async def store_procedure(
+        self,
+        *,
+        user_id: str,
+        trigger: str,
+        instruction: str,
+        app_id: str | None = None,
+        category: str = "topic_response",
+        priority: int = 5,
+        confidence: float = 1.0,
+        source: str = "manual",
+    ) -> ProcedureCreated:
+        """
+        Store a behavioral rule that fires when the trigger phrase is detected.
+
+        Args:
+            user_id:     User this rule applies to.
+            trigger:     Topic/keyword phrase that activates the rule (e.g. ``"LLM deployment"``).
+            instruction: What the AI should do when triggered.
+            category:    ``"topic_response"`` | ``"communication"`` | ``"preference"`` | ``"domain_workflow"``.
+            priority:    1 (low) – 10 (high). Higher priority rules appear first in context.
+
+        Returns:
+            :class:`ProcedureCreated` with the stored procedure ID.
+        """
+        payload = {
+            "user_id": user_id,
+            "trigger": trigger,
+            "instruction": instruction,
+            "app_id": app_id or self._app_id,
+            "category": category,
+            "priority": priority,
+            "confidence": confidence,
+            "source": source,
+        }
+        data = await self._post("/procedures", payload)
+        return ProcedureCreated(
+            procedure_id=data["procedure_id"],
+            user_id=data["user_id"],
+            trigger=data["trigger"],
+            instruction=data["instruction"],
+            category=data["category"],
+            priority=data["priority"],
+            is_active=data["is_active"],
+            hit_count=data["hit_count"],
+            confidence=data["confidence"],
+            source=data["source"],
+            created_at=data["created_at"],
+        )
+
+    async def list_procedures(
+        self,
+        *,
+        user_id: str,
+        app_id: str | None = None,
+        active_only: bool = True,
+        category: str | None = None,
+    ) -> list[ProcedureRecord]:
+        """
+        List all behavioral rules for a user.
+
+        Args:
+            user_id:    User whose rules to fetch.
+            active_only: If True (default), only return active rules.
+            category:   Filter to a specific category if provided.
+
+        Returns:
+            List of :class:`ProcedureRecord`, ordered by priority descending.
+        """
+        params: dict = {"app_id": app_id or self._app_id, "active_only": active_only}
+        if category is not None:
+            params["category"] = category
+        data = await self._get(f"/procedures/{user_id}", params=params)
+        return [
+            ProcedureRecord(
+                procedure_id=item["procedure_id"],
+                trigger=item["trigger"],
+                instruction=item["instruction"],
+                category=item["category"],
+                priority=item["priority"],
+                is_active=item["is_active"],
+                hit_count=item["hit_count"],
+            )
+            for item in data["procedures"]
+        ]
+
+    async def delete_procedure(
+        self,
+        *,
+        procedure_id: str,
+    ) -> DeleteProcedureResult:
+        """Delete a specific behavioral rule by ID."""
+        data = await self._delete(f"/procedures/{procedure_id}")
+        return DeleteProcedureResult(
+            deleted=data["deleted"], procedure_id=data["procedure_id"]
+        )
+
+    async def delete_user_procedures(
+        self,
+        *,
+        user_id: str,
+        app_id: str | None = None,
+    ) -> DeleteUserProceduresResult:
+        """Delete all behavioral rules for a user within an app namespace."""
+        params = {"app_id": app_id or self._app_id}
+        data = await self._delete(f"/procedures/user/{user_id}", params=params)
+        return DeleteUserProceduresResult(
+            procedures_deleted=data["procedures_deleted"],
+            user_id=data["user_id"],
+            app_id=data["app_id"],
+        )
+
+    async def delete_event(
+        self,
+        *,
+        event_id: str,
+    ) -> DeleteEventResult:
+        """
+        Delete a specific memory event by ID.
+
+        Args:
+            event_id: UUID of the event to delete.
+
+        Returns:
+            :class:`DeleteEventResult` with ``deleted=True`` if the event existed.
+        """
+        data = await self._delete(f"/memory/event/{event_id}")
+        return DeleteEventResult(deleted=data["deleted"], event_id=data["event_id"])
+
+    async def delete_user_memory(
+        self,
+        *,
+        user_id: str,
+        app_id: str | None = None,
+    ) -> DeleteUserMemoryResult:
+        """
+        Delete all memory events for a user within an app namespace.
+
+        Args:
+            user_id: User whose events should be deleted.
+            app_id:  Application namespace. Defaults to the client-level app_id.
+
+        Returns:
+            :class:`DeleteUserMemoryResult` with the number of events removed.
+        """
+        params = {"app_id": app_id or self._app_id}
+        data = await self._delete(f"/memory/user/{user_id}", params=params)
+        return DeleteUserMemoryResult(
+            events_deleted=data["events_deleted"],
+            user_id=data["user_id"],
+            app_id=data["app_id"],
+        )
+
+    async def reconsolidate(
+        self,
+        *,
+        event_id: str,
+        query: str,
+        user_id: str,
+    ) -> ReconsolidationResult:
+        """
+        Manually reconsolidate a specific memory event.
+
+        Refines the event's summary by incorporating the recall context (``query``).
+        The same gate conditions apply as automatic reconsolidation:
+        the event must have been recalled at least twice, have sufficient importance,
+        and not have been reconsolidated within the cooldown window.
+
+        Args:
+            event_id: UUID of the event to reconsolidate.
+            query:    The context in which this memory was recalled.
+            user_id:  Owner of the event.
+
+        Returns:
+            :class:`ReconsolidationResult` with ``updated=True`` if the summary changed.
+        """
+        payload = {"event_id": event_id, "query": query, "user_id": user_id}
+        data = await self._post("/admin/reconsolidate", payload)
+        return ReconsolidationResult(
+            event_id=data["event_id"],
+            user_id=data["user_id"],
+            updated=data["updated"],
+            skipped=data["skipped"],
+            skip_reason=data.get("skip_reason", ""),
+            old_summary=data.get("old_summary", ""),
+            new_summary=data.get("new_summary", ""),
+        )
+
+    async def admin_consolidate(
+        self,
+        *,
+        user_id: str | None = None,
+        app_id: str | None = None,
+    ) -> AdminJobResponse:
+        """Trigger memory consolidation. Pass ``user_id`` to target one user."""
+        payload: dict = {"app_id": app_id or self._app_id}
+        if user_id:
+            payload["user_id"] = user_id
+        data = await self._post("/admin/consolidate", payload)
+        return _parse_admin_response(data)
+
+    async def admin_prune(
+        self,
+        *,
+        user_id: str | None = None,
+        app_id: str | None = None,
+    ) -> AdminJobResponse:
+        """Trigger synaptic pruning. Pass ``user_id`` to target one user."""
+        payload: dict = {"app_id": app_id or self._app_id}
+        if user_id:
+            payload["user_id"] = user_id
+        data = await self._post("/admin/prune", payload)
+        return _parse_admin_response(data)
+
+    async def admin_cluster(
+        self,
+        *,
+        user_id: str | None = None,
+        app_id: str | None = None,
+    ) -> AdminJobResponse:
+        """Trigger memory clustering. Pass ``user_id`` to target one user."""
+        payload: dict = {"app_id": app_id or self._app_id}
+        if user_id:
+            payload["user_id"] = user_id
+        data = await self._post("/admin/cluster", payload)
+        return _parse_admin_response(data)
+
+    async def admin_mine_beliefs(
+        self,
+        *,
+        user_id: str | None = None,
+        app_id: str | None = None,
+    ) -> AdminJobResponse:
+        """Trigger belief mining. Pass ``user_id`` to target one user."""
+        payload: dict = {"app_id": app_id or self._app_id}
+        if user_id:
+            payload["user_id"] = user_id
+        data = await self._post("/admin/mine-beliefs", payload)
+        return _parse_admin_response(data)
+
     async def health(self) -> HealthStatus:
         """
         Check server health.
@@ -345,6 +603,11 @@ class SmritikoshClient:
         response = await client.get(path, params=params)
         return self._raise_or_json(response)
 
+    async def _delete(self, path: str, params: dict | None = None) -> dict:
+        client = self._ensure_open()
+        response = await client.delete(path, params=params)
+        return self._raise_or_json(response)
+
     @staticmethod
     def _raise_or_json(response: httpx.Response) -> dict:
         if response.is_error:
@@ -354,3 +617,22 @@ class SmritikoshClient:
                 detail = response.text
             raise SmritikoshError(status_code=response.status_code, detail=detail)
         return response.json()
+
+
+# ── Module helpers ─────────────────────────────────────────────────────────────
+
+
+def _parse_admin_response(data: dict) -> AdminJobResponse:
+    return AdminJobResponse(
+        job=data["job"],
+        users_processed=data["users_processed"],
+        results=[
+            AdminJobResult(
+                user_id=r["user_id"],
+                app_id=r["app_id"],
+                skipped=r["skipped"],
+                detail=r.get("detail", ""),
+            )
+            for r in data["results"]
+        ],
+    )

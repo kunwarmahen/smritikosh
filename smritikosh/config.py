@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     app_env: str = "development"
     log_level: str = "INFO"
 
+    # ── Connectors ─────────────────────────────────────────────────────────
+    # Set SLACK_SIGNING_SECRET in .env to enable Slack event verification
+    slack_signing_secret: str | None = None
+
 
 # Single shared instance — import this everywhere
 settings = Settings()

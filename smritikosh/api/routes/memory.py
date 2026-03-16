@@ -6,6 +6,7 @@ GET  /memory/{user_id}  Return recent events for a user
 """
 
 import logging
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -13,7 +14,14 @@ from neo4j import AsyncSession as NeoSession
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from smritikosh.api.deps import get_hippocampus, get_episodic
-from smritikosh.api.schemas import EventRequest, EventResponse, RecentEventItem, RecentEventsResponse
+from smritikosh.api.schemas import (
+    DeleteEventResponse,
+    DeleteUserMemoryResponse,
+    EventRequest,
+    EventResponse,
+    RecentEventItem,
+    RecentEventsResponse,
+)
 from smritikosh.db.neo4j import get_neo4j_session
 from smritikosh.db.postgres import get_session
 from smritikosh.memory.episodic import EpisodicMemory
@@ -62,6 +70,48 @@ async def capture_event(
         facts_extracted=len(result.facts),
         extraction_failed=result.extraction_failed,
     )
+
+
+@router.delete("/event/{event_id}", response_model=DeleteEventResponse)
+async def delete_event(
+    event_id: str,
+    episodic: Annotated[EpisodicMemory, Depends(get_episodic)],
+    pg: Annotated[AsyncSession, Depends(get_session)],
+) -> DeleteEventResponse:
+    """
+    Delete a specific memory event by ID.
+
+    Returns ``deleted=true`` if the event existed and was removed,
+    ``deleted=false`` if no event with that ID was found.
+    """
+    try:
+        eid = uuid.UUID(event_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid event_id UUID format.")
+
+    deleted = await episodic.delete(pg, eid)
+    return DeleteEventResponse(deleted=deleted, event_id=event_id)
+
+
+@router.delete("/user/{user_id}", response_model=DeleteUserMemoryResponse)
+async def delete_user_memory(
+    user_id: str,
+    app_id: Annotated[str, Query(description="Application namespace")] = "default",
+    episodic: Annotated[EpisodicMemory, Depends(get_episodic)] = None,
+    pg: Annotated[AsyncSession, Depends(get_session)] = None,
+) -> DeleteUserMemoryResponse:
+    """
+    Delete all memory events for a user within an app namespace.
+
+    Use with care — this removes all episodic events for the user.
+    Semantic facts in Neo4j are not affected by this endpoint.
+    """
+    count = await episodic.delete_all_for_user(pg, user_id, app_id)
+    logger.info(
+        "Deleted all user memory",
+        extra={"user_id": user_id, "app_id": app_id, "events_deleted": count},
+    )
+    return DeleteUserMemoryResponse(events_deleted=count, user_id=user_id, app_id=app_id)
 
 
 @router.get("/{user_id}", response_model=RecentEventsResponse, tags=["memory"])

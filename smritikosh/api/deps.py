@@ -18,7 +18,9 @@ from smritikosh.memory.episodic import EpisodicMemory
 from smritikosh.memory.hippocampus import Hippocampus
 from smritikosh.memory.identity import IdentityBuilder
 from smritikosh.memory.narrative import NarrativeMemory
+from smritikosh.memory.procedural import ProceduralMemory
 from smritikosh.processing.belief_miner import BeliefMiner
+from smritikosh.processing.reconsolidation import ReconsolidationEngine
 from smritikosh.processing.memory_clusterer import MemoryClusterer
 from smritikosh.processing.reinforcement import ReinforcementLoop
 from smritikosh.memory.semantic import SemanticMemory
@@ -71,6 +73,11 @@ def get_intent_classifier() -> IntentClassifier:
 
 
 @lru_cache(maxsize=1)
+def get_procedural() -> ProceduralMemory:
+    return ProceduralMemory()
+
+
+@lru_cache(maxsize=1)
 def get_context_builder() -> ContextBuilder:
     return ContextBuilder(
         llm=get_llm(),
@@ -79,6 +86,7 @@ def get_context_builder() -> ContextBuilder:
         intent_classifier=get_intent_classifier(),
         narrative=get_narrative(),
         include_chains=True,
+        procedural=get_procedural(),
     )
 
 
@@ -115,3 +123,8 @@ def get_identity_builder() -> IdentityBuilder:
 @lru_cache(maxsize=1)
 def get_pruner() -> SynapticPruner:
     return SynapticPruner(episodic=get_episodic())
+
+
+@lru_cache(maxsize=1)
+def get_reconsolidation_engine() -> ReconsolidationEngine:
+    return ReconsolidationEngine(llm=get_llm(), episodic=get_episodic())
