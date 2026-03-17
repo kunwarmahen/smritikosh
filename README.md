@@ -8,6 +8,16 @@ Smritikosh gives any LLM application persistent, user-specific memory modelled o
 
 ---
 
+## Guides
+
+| Document | What it covers |
+|---|---|
+| [QUICKSTART.md](QUICKSTART.md) | Step-by-step setup from zero to a running server |
+| [FLOW.md](FLOW.md) | End-to-end walkthrough — how memory flows through the system with real examples |
+| [sample/README.md](sample/README.md) | Running the demo chatbot against a live server |
+
+---
+
 ## Table of Contents
 
 - [How it works](#how-it-works)
