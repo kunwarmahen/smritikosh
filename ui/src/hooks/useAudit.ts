@@ -20,7 +20,9 @@ export function useAuditTimeline(params?: {
   return useQuery<AuditEvent[]>({
     queryKey: ["audit", "timeline", userId, params],
     queryFn: () =>
-      createApiClient(token).getAuditTimeline(userId!, params) as Promise<AuditEvent[]>,
+      createApiClient(token).getAuditTimeline(userId!, params).then(
+        (res: any) => res?.records ?? res ?? []
+      ) as Promise<AuditEvent[]>,
     enabled: !!userId && !!token,
   });
 }
@@ -33,7 +35,9 @@ export function useAuditStats(userId?: string) {
   return useQuery<AuditStats>({
     queryKey: ["audit", "stats", targetUser],
     queryFn: () =>
-      createApiClient(token).getAuditStats(targetUser!) as Promise<AuditStats>,
+      createApiClient(token).getAuditStats(targetUser!).then(
+        (res: any) => res?.counts ?? res ?? {}
+      ) as Promise<AuditStats>,
     enabled: !!targetUser && !!token,
   });
 }

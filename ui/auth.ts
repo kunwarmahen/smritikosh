@@ -43,6 +43,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     async jwt({ token, user }) {
       // On first sign-in, user is populated; persist the fields into the token
       if (user) {
+        token.userId = user.id;
         token.accessToken = user.accessToken;
         token.role = user.role;
         token.appId = user.appId;
@@ -51,7 +52,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     },
     async session({ session, token }) {
       session.accessToken = token.accessToken as string;
-      session.user.id = token.sub!;
+      session.user.id = token.userId as string;
       session.user.role = token.role as "admin" | "user";
       session.user.appId = token.appId as string;
       return session;

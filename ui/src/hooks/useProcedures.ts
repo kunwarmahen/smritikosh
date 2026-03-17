@@ -13,7 +13,9 @@ export function useProcedures(activeOnly = false) {
   return useQuery<Procedure[]>({
     queryKey: ["procedures", userId, activeOnly],
     queryFn: () =>
-      createApiClient(token).getProcedures(userId!, "default", activeOnly) as Promise<Procedure[]>,
+      createApiClient(token).getProcedures(userId!, "default", activeOnly).then(
+        (res: any) => res?.procedures ?? res ?? []
+      ) as Promise<Procedure[]>,
     enabled: !!userId && !!token,
   });
 }

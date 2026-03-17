@@ -15,7 +15,7 @@
 const API_URL =
   typeof window === "undefined"
     ? (process.env.SMRITIKOSH_API_URL ?? "http://localhost:8080")
-    : ""; // client-side: use Next.js API routes as proxy (future)
+    : "/api/backend";
 
 class ApiError extends Error {
   constructor(

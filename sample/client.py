@@ -8,7 +8,7 @@ BASE_URL = os.getenv("SMRITIKOSH_URL", "http://localhost:8080")
 class SmritikoshClient:
     """Minimal sync client for the Smritikosh REST API."""
 
-    def __init__(self, username: str, password: str, app_id: str = "demo"):
+    def __init__(self, username: str, password: str, app_id: str = "default"):
         self.app_id = app_id
         self._token = self._login(username, password)
         self._headers = {
