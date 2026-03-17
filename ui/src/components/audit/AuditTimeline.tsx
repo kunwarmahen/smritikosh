@@ -153,7 +153,7 @@ export function AuditTimeline() {
 
       <div className="space-y-2">
         {events.map((event) => (
-          <AuditRow key={event.id} event={event} />
+          <AuditRow key={event.event_id ? `${event.event_id}-${event.event_type}-${event.timestamp}` : `${event.event_type}-${event.timestamp}`} event={event} />
         ))}
       </div>
 
