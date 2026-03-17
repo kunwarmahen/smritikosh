@@ -35,8 +35,15 @@ function PayloadRow({ label, value }: { label: string; value: unknown }) {
 
 function AuditRow({ event }: { event: AuditEvent }) {
   const [open, setOpen] = useState(false);
-  const ts = event.timestamp.endsWith("Z") ? event.timestamp : event.timestamp + "Z";
-  const timeAgo = formatDistanceToNow(new Date(ts), { addSuffix: true });
+  const timeAgo = (() => {
+    try {
+      if (!event.timestamp) return "unknown time";
+      const ts = event.timestamp.endsWith("Z") ? event.timestamp : event.timestamp + "Z";
+      return formatDistanceToNow(new Date(ts), { addSuffix: true });
+    } catch {
+      return "unknown time";
+    }
+  })();
   const payloadEntries = Object.entries(event.payload ?? {});
 
   return (

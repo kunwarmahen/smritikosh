@@ -52,7 +52,9 @@ class EventType:
 def _normalize_record(record: dict) -> dict:
     """Ensure the timestamp field is an ISO 8601 string with UTC offset."""
     ts = record.get("timestamp")
-    if isinstance(ts, datetime):
+    if ts is None:
+        record["timestamp"] = datetime.now(timezone.utc).isoformat()
+    elif isinstance(ts, datetime):
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
         record["timestamp"] = ts.isoformat()
