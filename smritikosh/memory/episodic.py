@@ -332,6 +332,25 @@ class EpisodicMemory:
         w = weights_override if weights_override is not None else self.weights
         vec_literal = _embedding_literal(query_embedding)
 
+        date_filter = ""
+        params: dict = {
+            "user_id": user_id,
+            "app_id": app_id,
+            "decay_days": w.decay_days,
+            "w_sim": w.similarity,
+            "w_rec": w.recency,
+            "w_imp": w.importance,
+            "w_freq": w.frequency,
+            "freq_cap": w.frequency_cap,
+            "top_k": top_k,
+        }
+        if from_date is not None:
+            date_filter += "\n                AND created_at >= :from_date"
+            params["from_date"] = from_date
+        if to_date is not None:
+            date_filter += "\n                AND created_at <= :to_date"
+            params["to_date"] = to_date
+
         sql = text(f"""
             SELECT
                 id,
@@ -346,9 +365,7 @@ class EpisodicMemory:
             WHERE
                 user_id = :user_id
                 AND app_id = :app_id
-                AND embedding IS NOT NULL
-                AND (:from_date IS NULL OR created_at >= :from_date)
-                AND (:to_date IS NULL OR created_at <= :to_date)
+                AND embedding IS NOT NULL{date_filter}
             ORDER BY
                 (
                     :w_sim  * (1.0 - (embedding <=> '{vec_literal}'))
@@ -359,22 +376,7 @@ class EpisodicMemory:
             LIMIT :top_k
         """)
 
-        rows = await session.execute(
-            sql,
-            {
-                "user_id": user_id,
-                "app_id": app_id,
-                "decay_days": w.decay_days,
-                "w_sim": w.similarity,
-                "w_rec": w.recency,
-                "w_imp": w.importance,
-                "w_freq": w.frequency,
-                "freq_cap": w.frequency_cap,
-                "top_k": top_k,
-                "from_date": from_date,
-                "to_date": to_date,
-            },
-        )
+        rows = await session.execute(sql, params)
 
         results: list[SearchResult] = []
         for row in rows:
