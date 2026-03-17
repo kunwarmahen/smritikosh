@@ -1,18 +1,16 @@
 """
 Auth utilities — password hashing and JWT creation/verification.
 
-Uses passlib[bcrypt] for passwords and PyJWT for tokens.
+Uses bcrypt directly for passwords and PyJWT for tokens.
 Both are stateless — no DB calls, safe to call from anywhere.
 """
 
 from datetime import datetime, timedelta, timezone
 
+import bcrypt
 import jwt
-from passlib.context import CryptContext
 
 from smritikosh.config import settings
-
-_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 # ── Passwords ─────────────────────────────────────────────────────────────────
@@ -20,12 +18,12 @@ _pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def hash_password(plain: str) -> str:
     """Return a bcrypt hash of the plain-text password."""
-    return _pwd_context.hash(plain)
+    return bcrypt.hashpw(plain.encode(), bcrypt.gensalt()).decode()
 
 
 def verify_password(plain: str, hashed: str) -> bool:
     """Return True if `plain` matches the stored `hashed` password."""
-    return _pwd_context.verify(plain, hashed)
+    return bcrypt.checkpw(plain.encode(), hashed.encode())
 
 
 # ── JWT ───────────────────────────────────────────────────────────────────────

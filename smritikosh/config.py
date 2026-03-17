@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expire_days: int = 30
 
+    # Set BOOTSTRAP_ADMIN=1 temporarily to allow the first admin registration
+    # without a token. Remove it immediately after creating the first account.
+    bootstrap_admin: bool = False
+
 
 # Single shared instance — import this everywhere
 settings = Settings()
