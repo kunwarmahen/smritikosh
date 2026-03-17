@@ -38,7 +38,9 @@ function AuditRow({ event }: { event: AuditEvent }) {
   const timeAgo = (() => {
     try {
       if (!event.timestamp) return "unknown time";
-      const ts = event.timestamp.endsWith("Z") ? event.timestamp : event.timestamp + "Z";
+      const ts = (event.timestamp.endsWith("Z") || event.timestamp.includes("+"))
+        ? event.timestamp
+        : event.timestamp + "Z";
       return formatDistanceToNow(new Date(ts), { addSuffix: true });
     } catch {
       return "unknown time";
