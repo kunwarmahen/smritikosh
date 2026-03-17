@@ -56,6 +56,7 @@ Smritikosh gives any LLM application persistent, user-specific memory modelled o
 - [Testing](#testing)
 - [LLM provider guide](#llm-provider-guide)
 - [Background jobs](#background-jobs)
+- [Data reset script](#data-reset-script)
 
 ---
 
@@ -2556,3 +2557,44 @@ MemoryScheduler(
     belief_mining_hours=24,   # mine beliefs once a day
 )
 ```
+
+---
+
+## Data reset script
+
+`scripts/reset_data.py` wipes user data across all three databases (PostgreSQL,
+Neo4j, MongoDB) in a single command. Useful for development, testing, or
+clearing a demo environment.
+
+### Usage
+
+```bash
+# Preview what would be deleted — no changes made
+python scripts/reset_data.py --dry-run
+
+# Wipe all data for one user (keeps their login account)
+python scripts/reset_data.py --user alice
+
+# Wipe all user data across all DBs (keeps app_users / login accounts)
+python scripts/reset_data.py
+
+# Full factory reset — wipes everything including user accounts
+python scripts/reset_data.py --include-users
+```
+
+All destructive modes prompt `Type 'yes' to confirm` before executing.
+
+### What gets cleared
+
+| Database | Tables / collections cleared |
+|---|---|
+| **PostgreSQL** | `events`, `memory_links`, `memory_feedback`, `user_facts`, `user_beliefs`, `user_procedures` |
+| **Neo4j** | All nodes and relationships (or only those belonging to `--user`) |
+| **MongoDB** | All collections in `smritikosh_audit` |
+
+`--user` mode filters PostgreSQL tables by `user_id` and Neo4j/MongoDB by
+`user_id` field. `memory_links` has no `user_id` column so it is cleaned via a
+subquery on the `events` table.
+
+`--include-users` additionally truncates `app_users` (PostgreSQL) — use this
+to reset a demo environment back to a completely blank state.
