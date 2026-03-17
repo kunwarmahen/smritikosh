@@ -6,7 +6,7 @@ store memories → search → inject context → LLM call.
 ## Prerequisites
 
 - Smritikosh server running on `http://localhost:8080`
-- User `alice` created (see [quickstart.md](../quickstart.md) Step 10)
+- User `alice` created (see [quickstart.md](../QUICKSTART.md) Step 10)
 - Memories seeded: run `python seed.py` once before the chatbot
 
 ## Setup
