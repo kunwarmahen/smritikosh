@@ -10,8 +10,8 @@ export default function ProceduresPage() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-xl font-semibold text-slate-100">Procedures</h1>
-        <p className="text-sm text-slate-500 mt-1">
+        <h1 className="text-base font-semibold text-zinc-100 tracking-tight">Procedures</h1>
+        <p className="text-sm text-zinc-500 mt-1">
           Triggered instructions injected during context building.
         </p>
       </div>

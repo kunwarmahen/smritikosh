@@ -37,7 +37,7 @@ export function MemorySearch({ onResults }: Props) {
 
   return (
     <div className="relative">
-      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
       <input
         type="text"
         className="input pl-9 pr-9"
@@ -47,9 +47,9 @@ export function MemorySearch({ onResults }: Props) {
       />
       <div className="absolute right-3 top-1/2 -translate-y-1/2">
         {search.isPending ? (
-          <Loader2 className="w-4 h-4 text-slate-500 animate-spin" />
+          <Loader2 className="w-4 h-4 text-zinc-500 animate-spin" />
         ) : query ? (
-          <button onClick={clear} className="text-slate-500 hover:text-slate-300">
+          <button onClick={clear} className="text-zinc-500 hover:text-zinc-300">
             <X className="w-4 h-4" />
           </button>
         ) : null}

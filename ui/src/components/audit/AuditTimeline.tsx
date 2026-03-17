@@ -25,8 +25,8 @@ const EVENT_TYPE_OPTIONS = [
 function PayloadRow({ label, value }: { label: string; value: unknown }) {
   return (
     <div className="flex gap-2 text-xs">
-      <span className="text-slate-600 min-w-[120px] flex-shrink-0">{label}</span>
-      <span className="text-slate-400 break-all">
+      <span className="text-zinc-600 min-w-[120px] flex-shrink-0">{label}</span>
+      <span className="text-zinc-400 break-all">
         {typeof value === "object" ? JSON.stringify(value) : String(value ?? "—")}
       </span>
     </div>
@@ -53,24 +53,24 @@ function AuditRow({ event }: { event: AuditEvent }) {
           <span
             className={clsx(
               "badge border text-xs",
-              EVENT_TYPE_COLORS[event.event_type] ?? "text-slate-400",
-              "bg-slate-800/50 border-slate-700/50",
+              EVENT_TYPE_COLORS[event.event_type] ?? "text-zinc-400",
+              "bg-zinc-800/50 border-zinc-700/50",
             )}
           >
             {EVENT_TYPE_LABELS[event.event_type] ?? event.event_type}
           </span>
           {event.event_id && (
-            <span className="text-xs text-slate-600 font-mono truncate max-w-[180px]">
+            <span className="text-xs text-zinc-600 font-mono truncate max-w-[180px]">
               {event.event_id}
             </span>
           )}
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
-          <span className="text-xs text-slate-500">{timeAgo}</span>
+          <span className="text-xs text-zinc-500">{timeAgo}</span>
           {payloadEntries.length > 0 && (
             <button
               onClick={() => setOpen((v) => !v)}
-              className="text-slate-600 hover:text-slate-300 transition-colors"
+              className="text-zinc-600 hover:text-zinc-300 transition-colors"
             >
               {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
             </button>
@@ -79,7 +79,7 @@ function AuditRow({ event }: { event: AuditEvent }) {
       </div>
 
       {open && payloadEntries.length > 0 && (
-        <div className="mt-3 pt-3 border-t border-slate-800 space-y-1">
+        <div className="mt-3 pt-3 border-t border-zinc-800 space-y-1">
           {payloadEntries.map(([k, v]) => (
             <PayloadRow key={k} label={k} value={v} />
           ))}
@@ -121,14 +121,14 @@ export function AuditTimeline() {
           {isFetching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Refresh"}
         </button>
         {events.length > 0 && (
-          <span className="text-xs text-slate-500 ml-auto">
+          <span className="text-xs text-zinc-500 ml-auto">
             {events.length} event{events.length !== 1 ? "s" : ""}
           </span>
         )}
       </div>
 
       {isLoading && (
-        <div className="flex items-center gap-2 text-slate-500 py-8 justify-center">
+        <div className="flex items-center gap-2 text-zinc-500 py-8 justify-center">
           <Loader2 className="w-5 h-5 animate-spin" />
           <span className="text-sm">Loading audit log…</span>
         </div>
@@ -143,9 +143,9 @@ export function AuditTimeline() {
 
       {!isLoading && !isError && events.length === 0 && (
         <div className="card text-center py-12">
-          <Inbox className="w-10 h-10 text-slate-700 mx-auto mb-3" />
-          <p className="text-slate-400 text-sm font-medium">No audit events found.</p>
-          <p className="text-slate-600 text-xs mt-1">
+          <Inbox className="w-10 h-10 text-zinc-700 mx-auto mb-3" />
+          <p className="text-zinc-400 text-sm font-medium">No audit events found.</p>
+          <p className="text-zinc-600 text-xs mt-1">
             {eventType ? "Try a different filter." : "Audit events appear as memory operations run."}
           </p>
         </div>

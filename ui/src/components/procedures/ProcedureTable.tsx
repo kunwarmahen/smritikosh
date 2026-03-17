@@ -31,21 +31,21 @@ function ProcedureRow({ proc }: { proc: Procedure }) {
             <span className="badge bg-violet-500/10 text-violet-400 border border-violet-500/20 text-xs">
               {proc.category || "general"}
             </span>
-            <span className="badge bg-slate-800 text-slate-500 border border-slate-700/50 text-xs">
+            <span className="badge bg-zinc-800 text-zinc-500 border border-zinc-700/50 text-xs">
               priority {proc.priority}
             </span>
-            <span className="text-xs text-slate-600">{proc.hit_count} hit{proc.hit_count !== 1 ? "s" : ""}</span>
+            <span className="text-xs text-zinc-600">{proc.hit_count} hit{proc.hit_count !== 1 ? "s" : ""}</span>
           </div>
-          <p className="text-xs text-slate-500 mb-1">
-            <span className="font-medium text-slate-400">Trigger:</span> {proc.trigger}
+          <p className="text-xs text-zinc-500 mb-1">
+            <span className="font-medium text-zinc-400">Trigger:</span> {proc.trigger}
           </p>
-          <p className="text-sm text-slate-300 leading-relaxed">{proc.instruction}</p>
+          <p className="text-sm text-zinc-300 leading-relaxed">{proc.instruction}</p>
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
           <button
             onClick={toggle}
             disabled={update.isPending}
-            className="text-slate-500 hover:text-violet-400 transition-colors"
+            className="text-zinc-500 hover:text-violet-400 transition-colors"
             title={proc.is_active ? "Deactivate" : "Activate"}
           >
             {proc.is_active
@@ -55,7 +55,7 @@ function ProcedureRow({ proc }: { proc: Procedure }) {
           <button
             onClick={handleDelete}
             disabled={del.isPending}
-            className="w-7 h-7 flex items-center justify-center rounded text-slate-600
+            className="w-7 h-7 flex items-center justify-center rounded text-zinc-600
                        hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
             title="Delete"
           >
@@ -74,7 +74,7 @@ export function ProcedureTable({ onNew }: Props) {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-zinc-500">
           {procedures.length} procedure{procedures.length !== 1 ? "s" : ""}
         </p>
         <button onClick={onNew} className="btn-primary flex items-center gap-1.5 text-xs px-3 py-1.5">
@@ -84,7 +84,7 @@ export function ProcedureTable({ onNew }: Props) {
       </div>
 
       {isLoading && (
-        <div className="flex items-center gap-2 text-slate-500 py-8 justify-center">
+        <div className="flex items-center gap-2 text-zinc-500 py-8 justify-center">
           <Loader2 className="w-5 h-5 animate-spin" />
           <span className="text-sm">Loading procedures…</span>
         </div>
@@ -99,9 +99,9 @@ export function ProcedureTable({ onNew }: Props) {
 
       {!isLoading && !isError && procedures.length === 0 && (
         <div className="card text-center py-12">
-          <Zap className="w-10 h-10 text-slate-700 mx-auto mb-3" />
-          <p className="text-slate-400 text-sm font-medium">No procedures yet.</p>
-          <p className="text-slate-600 text-xs mt-1">
+          <Zap className="w-10 h-10 text-zinc-700 mx-auto mb-3" />
+          <p className="text-zinc-400 text-sm font-medium">No procedures yet.</p>
+          <p className="text-zinc-600 text-xs mt-1">
             Procedures are triggered instructions that run during context building.
           </p>
         </div>

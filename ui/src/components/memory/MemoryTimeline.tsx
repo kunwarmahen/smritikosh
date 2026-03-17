@@ -48,18 +48,18 @@ export function MemoryTimeline() {
 
       {/* Status line */}
       {isSearching ? (
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-zinc-500">
           {searchResults!.length} result{searchResults!.length !== 1 ? "s" : ""} found
         </p>
       ) : data && (
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-zinc-500">
           Showing {data.events.length} most recent memories
         </p>
       )}
 
       {/* Loading */}
       {isLoading && (
-        <div className="flex items-center gap-2 text-slate-500 py-8 justify-center">
+        <div className="flex items-center gap-2 text-zinc-500 py-8 justify-center">
           <Loader2 className="w-5 h-5 animate-spin" />
           <span className="text-sm">Loading memories…</span>
         </div>
@@ -76,11 +76,11 @@ export function MemoryTimeline() {
       {/* Empty state */}
       {!isLoading && !isError && events.length === 0 && (
         <div className="card text-center py-12">
-          <Inbox className="w-10 h-10 text-slate-700 mx-auto mb-3" />
-          <p className="text-slate-400 text-sm font-medium">
+          <Inbox className="w-10 h-10 text-zinc-700 mx-auto mb-3" />
+          <p className="text-zinc-400 text-sm font-medium">
             {isSearching ? "No memories match your search." : "No memories yet."}
           </p>
-          <p className="text-slate-600 text-xs mt-1">
+          <p className="text-zinc-600 text-xs mt-1">
             {isSearching ? "Try a different query." : "Start a conversation to build your memory."}
           </p>
         </div>

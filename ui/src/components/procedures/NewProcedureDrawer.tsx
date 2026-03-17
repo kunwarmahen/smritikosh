@@ -42,16 +42,16 @@ export function NewProcedureDrawer({ open, onClose }: Props) {
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
+        className="absolute inset-0 bg-zinc-950/80 backdrop-blur-sm"
         onClick={onClose}
       />
 
       {/* Panel */}
-      <div className="relative z-10 w-full sm:max-w-lg bg-slate-900 border border-slate-700
+      <div className="relative z-10 w-full sm:max-w-lg bg-zinc-900 border border-zinc-700
                       rounded-t-2xl sm:rounded-2xl shadow-2xl p-6">
         <div className="flex items-center justify-between mb-5">
-          <h2 className="text-base font-semibold text-slate-100">New Procedure</h2>
-          <button onClick={onClose} className="text-slate-500 hover:text-slate-300">
+          <h2 className="text-base font-semibold text-zinc-100">New Procedure</h2>
+          <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -66,7 +66,7 @@ export function NewProcedureDrawer({ open, onClose }: Props) {
               value={trigger}
               onChange={(e) => setTrigger(e.target.value)}
             />
-            <p className="text-xs text-slate-600 mt-1">
+            <p className="text-xs text-zinc-600 mt-1">
               A short phrase or condition that activates this procedure.
             </p>
           </div>

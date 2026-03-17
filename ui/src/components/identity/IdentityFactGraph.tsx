@@ -146,16 +146,16 @@ function buildLayout(graph: FactGraph): { nodes: Node[]; edges: Edge[] } {
 function Legend() {
   const items = Object.entries(CATEGORY_STYLES).map(([cat, s]) => ({ cat, color: s.border }));
   return (
-    <div className="absolute bottom-3 left-3 z-10 bg-slate-900/90 border border-slate-700/50
+    <div className="absolute bottom-3 left-3 z-10 bg-zinc-900/90 border border-zinc-700/50
                     rounded-xl p-3 space-y-1 backdrop-blur-sm">
-      <p className="text-xs font-medium text-slate-500 mb-2 uppercase tracking-wide">Categories</p>
+      <p className="text-xs font-medium text-zinc-500 mb-2 uppercase tracking-wide">Categories</p>
       {items.map(({ cat, color }) => (
         <div key={cat} className="flex items-center gap-2">
           <span
             className="inline-block w-2.5 h-2.5 rounded-sm flex-shrink-0"
             style={{ background: color }}
           />
-          <span className="text-xs text-slate-400 capitalize">{cat}</span>
+          <span className="text-xs text-zinc-400 capitalize">{cat}</span>
         </div>
       ))}
     </div>
@@ -185,7 +185,7 @@ export function IdentityFactGraph() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center gap-2 text-slate-500 py-12 justify-center">
+      <div className="flex items-center gap-2 text-zinc-500 py-12 justify-center">
         <Loader2 className="w-5 h-5 animate-spin" />
         <span className="text-sm">Loading fact graph…</span>
       </div>
@@ -203,9 +203,9 @@ export function IdentityFactGraph() {
   if (!data || data.nodes.length <= 1) {
     return (
       <div className="card text-center py-12">
-        <Network className="w-10 h-10 text-slate-700 mx-auto mb-3" />
-        <p className="text-slate-400 text-sm font-medium">No fact graph yet.</p>
-        <p className="text-slate-600 text-xs mt-1">
+        <Network className="w-10 h-10 text-zinc-700 mx-auto mb-3" />
+        <p className="text-zinc-400 text-sm font-medium">No fact graph yet.</p>
+        <p className="text-zinc-600 text-xs mt-1">
           Facts are extracted as memories are ingested and consolidated.
         </p>
       </div>
@@ -213,7 +213,7 @@ export function IdentityFactGraph() {
   }
 
   return (
-    <div className="relative rounded-xl overflow-hidden border border-slate-700/50"
+    <div className="relative rounded-xl overflow-hidden border border-zinc-700/50"
          style={{ height: 560 }}>
       <ReactFlow
         nodes={nodes}
@@ -255,7 +255,7 @@ export function IdentityFactGraph() {
       </ReactFlow>
       <Legend />
       <div className="absolute top-3 right-3 z-10">
-        <span className="text-xs text-slate-500 bg-slate-900/80 border border-slate-700/50
+        <span className="text-xs text-zinc-500 bg-zinc-900/80 border border-zinc-700/50
                          rounded-lg px-2 py-1 backdrop-blur-sm">
           {data.nodes.length - 1} fact{data.nodes.length !== 2 ? "s" : ""} · {data.edges.length} link{data.edges.length !== 1 ? "s" : ""}
         </span>

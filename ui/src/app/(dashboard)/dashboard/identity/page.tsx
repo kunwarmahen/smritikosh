@@ -12,8 +12,8 @@ export default function IdentityPage() {
     <div>
       <div className="flex items-start justify-between mb-6 gap-4">
         <div>
-          <h1 className="text-xl font-semibold text-slate-100">Identity Model</h1>
-          <p className="text-sm text-slate-500 mt-1">
+          <h1 className="text-base font-semibold text-zinc-100 tracking-tight">Identity Model</h1>
+          <p className="text-sm text-zinc-500 mt-1">
             Your synthesised personality profile, beliefs, and core dimensions.
           </p>
         </div>
@@ -22,7 +22,7 @@ export default function IdentityPage() {
           className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border transition-colors flex-shrink-0 ${
             showGraph
               ? "bg-violet-600/20 border-violet-500/40 text-violet-300"
-              : "bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200"
+              : "bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200"
           }`}
         >
           <Network className="w-3.5 h-3.5" />

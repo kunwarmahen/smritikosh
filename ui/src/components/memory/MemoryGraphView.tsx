@@ -143,20 +143,20 @@ function buildGraph(
 // ── Legend ────────────────────────────────────────────────────────────────────
 function Legend() {
   return (
-    <div className="absolute bottom-3 left-3 z-10 bg-slate-900/90 border border-slate-700/50
+    <div className="absolute bottom-3 left-3 z-10 bg-zinc-900/90 border border-zinc-700/50
                     rounded-xl p-3 space-y-1.5 backdrop-blur-sm">
-      <p className="text-xs font-medium text-slate-500 mb-2 uppercase tracking-wide">Relations</p>
+      <p className="text-xs font-medium text-zinc-500 mb-2 uppercase tracking-wide">Relations</p>
       {Object.entries(RELATION_LABELS).map(([key, label]) => (
         <div key={key} className="flex items-center gap-2">
           <span
             className="inline-block w-6 h-0.5 flex-shrink-0"
             style={{ background: RELATION_COLORS[key] }}
           />
-          <span className="text-xs text-slate-400 capitalize">{label}</span>
+          <span className="text-xs text-zinc-400 capitalize">{label}</span>
         </div>
       ))}
-      <div className="pt-1 border-t border-slate-800">
-        <p className="text-xs text-slate-600">← predecessors · successors →</p>
+      <div className="pt-1 border-t border-zinc-800">
+        <p className="text-xs text-zinc-600">← predecessors · successors →</p>
       </div>
     </div>
   );
@@ -194,7 +194,7 @@ export function MemoryGraphView({ eventId }: { eventId: string }) {
 
   if (isLoading) {
     return (
-      <div className="flex items-center gap-2 text-slate-500 py-12 justify-center">
+      <div className="flex items-center gap-2 text-zinc-500 py-12 justify-center">
         <Loader2 className="w-5 h-5 animate-spin" />
         <span className="text-sm">Loading memory graph…</span>
       </div>
@@ -212,9 +212,9 @@ export function MemoryGraphView({ eventId }: { eventId: string }) {
   if (!linksData?.links.length) {
     return (
       <div className="card text-center py-12">
-        <Network className="w-10 h-10 text-slate-700 mx-auto mb-3" />
-        <p className="text-slate-400 text-sm font-medium">No narrative links yet.</p>
-        <p className="text-slate-600 text-xs mt-1">
+        <Network className="w-10 h-10 text-zinc-700 mx-auto mb-3" />
+        <p className="text-zinc-400 text-sm font-medium">No narrative links yet.</p>
+        <p className="text-zinc-600 text-xs mt-1">
           Links are created during consolidation when events are causally or temporally connected.
         </p>
       </div>
@@ -222,7 +222,7 @@ export function MemoryGraphView({ eventId }: { eventId: string }) {
   }
 
   return (
-    <div className="relative rounded-xl overflow-hidden border border-slate-700/50"
+    <div className="relative rounded-xl overflow-hidden border border-zinc-700/50"
          style={{ height: 500 }}>
       <ReactFlow
         nodes={nodes}
@@ -260,7 +260,7 @@ export function MemoryGraphView({ eventId }: { eventId: string }) {
       </ReactFlow>
       <Legend />
       <div className="absolute top-3 right-3 z-10">
-        <span className="text-xs text-slate-500 bg-slate-900/80 border border-slate-700/50
+        <span className="text-xs text-zinc-500 bg-zinc-900/80 border border-zinc-700/50
                          rounded-lg px-2 py-1 backdrop-blur-sm">
           {linksData.links.length} link{linksData.links.length !== 1 ? "s" : ""}
            · click a node to navigate

@@ -12,37 +12,48 @@ import {
 
 type JobStatus = "idle" | "running" | "ok" | "error";
 
-interface JobCardProps {
+function JobRow({
+  title,
+  description,
+  status,
+  onRun,
+}: {
   title: string;
   description: string;
   status: JobStatus;
   onRun: () => void;
-}
-
-function JobCard({ title, description, status, onRun }: JobCardProps) {
+}) {
   return (
-    <div className="card flex items-center gap-4">
+    <div className="flex items-center gap-4 py-3.5 border-b border-zinc-800/60 last:border-0">
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-slate-200">{title}</p>
-        <p className="text-xs text-slate-500 mt-0.5">{description}</p>
+        <p className="text-sm font-medium text-zinc-200">{title}</p>
+        <p className="text-xs text-zinc-600 mt-0.5">{description}</p>
       </div>
-      <div className="flex items-center gap-2 flex-shrink-0">
-        {status === "ok"    && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
-        {status === "error" && <XCircle className="w-4 h-4 text-rose-400" />}
+      <div className="flex items-center gap-2.5 flex-shrink-0">
+        {status === "ok" && (
+          <span className="flex items-center gap-1 text-xs text-emerald-400">
+            <CheckCircle2 className="w-3.5 h-3.5" /> done
+          </span>
+        )}
+        {status === "error" && (
+          <span className="flex items-center gap-1 text-xs text-rose-400">
+            <XCircle className="w-3.5 h-3.5" /> failed
+          </span>
+        )}
         <button
           onClick={onRun}
           disabled={status === "running"}
           className={clsx(
-            "w-8 h-8 flex items-center justify-center rounded-lg transition-colors",
+            "w-7 h-7 flex items-center justify-center rounded-lg transition-colors",
             status === "running"
-              ? "bg-slate-800 text-slate-500 cursor-not-allowed"
+              ? "bg-zinc-800 text-zinc-600 cursor-not-allowed"
               : "bg-violet-600 hover:bg-violet-500 text-white",
           )}
           title={`Run ${title}`}
         >
           {status === "running"
             ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            : <Play className="w-3.5 h-3.5" />}
+            : <Play    className="w-3 h-3 ml-0.5" />}
         </button>
       </div>
     </div>
@@ -50,17 +61,17 @@ function JobCard({ title, description, status, onRun }: JobCardProps) {
 }
 
 export function JobTriggerPanel({ userId }: { userId: string }) {
-  const consolidate  = useAdminConsolidate();
-  const prune        = useAdminPrune();
-  const cluster      = useAdminCluster();
-  const mineBeliefs  = useAdminMineBeliefs();
+  const consolidate = useAdminConsolidate();
+  const prune       = useAdminPrune();
+  const cluster     = useAdminCluster();
+  const mineBeliefs = useAdminMineBeliefs();
 
   type JobKey = "consolidate" | "prune" | "cluster" | "mine";
   const [statuses, setStatuses] = useState<Record<JobKey, JobStatus>>({
     consolidate: "idle",
-    prune: "idle",
-    cluster: "idle",
-    mine: "idle",
+    prune:       "idle",
+    cluster:     "idle",
+    mine:        "idle",
   });
 
   async function runJob(key: JobKey, fn: () => Promise<unknown>) {
@@ -77,7 +88,7 @@ export function JobTriggerPanel({ userId }: { userId: string }) {
     {
       key: "consolidate",
       title: "Consolidate",
-      description: "Merge semantically similar memories and extract facts.",
+      description: "Merge raw events into summaries and extract facts into Neo4j.",
       fn: () => consolidate.mutateAsync({ userId }),
     },
     {
@@ -94,23 +105,28 @@ export function JobTriggerPanel({ userId }: { userId: string }) {
     },
     {
       key: "mine",
-      title: "Mine Beliefs",
+      title: "Mine beliefs",
       description: "Infer higher-order beliefs and values from memory patterns.",
       fn: () => mineBeliefs.mutateAsync({ userId }),
     },
   ];
 
   return (
-    <div className="space-y-3">
-      {jobs.map(({ key, title, description, fn }) => (
-        <JobCard
-          key={key}
-          title={title}
-          description={description}
-          status={statuses[key]}
-          onRun={() => runJob(key, fn)}
-        />
-      ))}
+    <div className="card p-0">
+      <div className="px-4 pt-3.5 pb-1">
+        <p className="section-heading">Pipeline jobs · {userId}</p>
+      </div>
+      <div className="px-4">
+        {jobs.map(({ key, title, description, fn }) => (
+          <JobRow
+            key={key}
+            title={title}
+            description={description}
+            status={statuses[key]}
+            onRun={() => runJob(key, fn)}
+          />
+        ))}
+      </div>
     </div>
   );
 }

@@ -21,15 +21,8 @@ function LoginForm() {
     e.preventDefault();
     setError("");
     setLoading(true);
-
-    const result = await signIn("credentials", {
-      username,
-      password,
-      redirect: false,
-    });
-
+    const result = await signIn("credentials", { username, password, redirect: false });
     setLoading(false);
-
     if (result?.error) {
       setError("Incorrect username or password.");
     } else {
@@ -38,10 +31,7 @@ function LoginForm() {
   }
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4"
-    >
+    <form onSubmit={handleSubmit} className="space-y-4">
       <div>
         <label className="label" htmlFor="username">Username</label>
         <input
@@ -73,7 +63,7 @@ function LoginForm() {
           <button
             type="button"
             onClick={() => setShowPassword(!showPassword)}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-600 hover:text-zinc-400 transition-colors"
           >
             {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
           </button>
@@ -81,7 +71,7 @@ function LoginForm() {
       </div>
 
       {error && (
-        <p className="text-rose-400 text-sm bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2">
+        <p className="text-rose-400 text-xs bg-rose-500/8 border border-rose-500/20 rounded-lg px-3 py-2">
           {error}
         </p>
       )}
@@ -89,12 +79,12 @@ function LoginForm() {
       <button
         type="submit"
         disabled={loading || !username || !password}
-        className="btn-primary w-full justify-center mt-2"
+        className="btn-primary w-full justify-center mt-1"
       >
         {loading ? (
           <><Loader2 className="w-4 h-4 animate-spin" /> Signing in…</>
         ) : (
-          "Sign in"
+          "Continue"
         )}
       </button>
     </form>
@@ -103,34 +93,41 @@ function LoginForm() {
 
 export default function LoginPage() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-950 px-4">
-      {/* Background glow */}
+    <div className="min-h-screen flex items-center justify-center bg-zinc-950 px-4">
+      {/* Ambient glow */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2
-                        w-96 h-96 bg-violet-600/10 rounded-full blur-3xl" />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2
+                        w-[600px] h-[600px] rounded-full"
+          style={{
+            background: "radial-gradient(circle, rgba(109,40,217,0.06) 0%, transparent 70%)",
+          }}
+        />
       </div>
 
-      <div className="relative w-full max-w-sm">
-        {/* Logo */}
+      <div className="relative w-full max-w-[340px]">
+        {/* Header */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14
-                          bg-violet-600/20 border border-violet-500/30 rounded-2xl mb-4">
-            <Brain className="w-7 h-7 text-violet-400" />
+          <div className="inline-flex items-center justify-center w-12 h-12
+                          bg-violet-600 rounded-2xl mb-5 shadow-lg shadow-violet-950">
+            <Brain className="w-6 h-6 text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-slate-100">Smritikosh</h1>
-          <p className="text-slate-500 text-sm mt-1">स्मृतिकोश · Memory Dashboard</p>
+          <h1 className="text-xl font-semibold text-zinc-100 tracking-tight">Smritikosh</h1>
+          <p className="text-zinc-600 text-sm mt-1">Memory Dashboard</p>
         </div>
 
-        <Suspense fallback={
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 flex justify-center py-12">
-            <Loader2 className="w-5 h-5 animate-spin text-slate-500" />
-          </div>
-        }>
-          <LoginForm />
-        </Suspense>
+        {/* Form card */}
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
+          <Suspense fallback={
+            <div className="flex justify-center py-10">
+              <Loader2 className="w-5 h-5 animate-spin text-zinc-600" />
+            </div>
+          }>
+            <LoginForm />
+          </Suspense>
+        </div>
 
-        <p className="text-center text-slate-600 text-xs mt-6">
-          Ask your administrator for access.
+        <p className="text-center text-zinc-700 text-xs mt-5">
+          Contact your administrator for access
         </p>
       </div>
     </div>

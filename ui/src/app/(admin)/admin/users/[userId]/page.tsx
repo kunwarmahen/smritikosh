@@ -3,7 +3,7 @@
 import { use, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  ArrowLeft, User, ShieldCheck, Shield, ToggleLeft, ToggleRight,
+  ArrowLeft, ShieldCheck, Shield, ToggleLeft, ToggleRight,
   Loader2, Trash2, ExternalLink,
 } from "lucide-react";
 import { clsx } from "clsx";
@@ -29,94 +29,78 @@ export default function AdminUserDetailPage({
   const deleteMemory = useMutation({
     mutationFn: () => createApiClient(token).deleteUserMemory(username),
   });
-
   const [deleteConfirm, setDeleteConfirm] = useState(false);
-
-  function handleDeleteMemory() {
-    deleteMemory.mutate(undefined, {
-      onSuccess: () => setDeleteConfirm(false),
-    });
-  }
 
   function toggleActive() {
     if (!user) return;
-    patch.mutate({ username, body: { is_active: !user.is_active } }, {
-      onSuccess: () => refetch(),
-    });
+    patch.mutate({ username, body: { is_active: !user.is_active } }, { onSuccess: () => refetch() });
   }
 
   function toggleRole() {
     if (!user) return;
-    const newRole = user.role === "admin" ? "user" : "admin";
-    patch.mutate({ username, body: { role: newRole } }, {
-      onSuccess: () => refetch(),
-    });
+    patch.mutate(
+      { username, body: { role: user.role === "admin" ? "user" : "admin" } },
+      { onSuccess: () => refetch() },
+    );
   }
 
   return (
-    <div>
-      {/* Header */}
+    <div className="max-w-xl">
+      {/* Back + title */}
       <div className="flex items-center gap-3 mb-6">
-        <button
-          onClick={() => router.back()}
-          className="btn-ghost flex items-center gap-1.5 text-sm"
-        >
+        <button onClick={() => router.back()} className="btn-ghost px-2 py-1.5">
           <ArrowLeft className="w-4 h-4" />
-          Back
         </button>
         <div>
-          <h1 className="text-xl font-semibold text-slate-100 flex items-center gap-2">
-            <User className="w-5 h-5 text-amber-400" />
-            {username}
-          </h1>
-          <p className="text-xs text-slate-500 mt-0.5">User detail</p>
+          <h1 className="text-base font-semibold text-zinc-100 tracking-tight">{username}</h1>
+          <p className="text-xs text-zinc-600 mt-0.5">User detail</p>
         </div>
       </div>
 
       {isLoading && (
-        <div className="flex items-center gap-2 text-slate-500 py-12 justify-center">
-          <Loader2 className="w-5 h-5 animate-spin" />
+        <div className="flex items-center gap-2 text-zinc-600 py-12 justify-center">
+          <Loader2 className="w-4 h-4 animate-spin" />
         </div>
       )}
 
       {isError && (
-        <div className="card border-rose-500/30 bg-rose-500/5 text-center py-8">
+        <div className="card border-rose-500/20 bg-rose-500/5 text-center py-8">
           <p className="text-rose-400 text-sm">Failed to load user.</p>
           <button onClick={() => refetch()} className="btn-secondary mt-3">Retry</button>
         </div>
       )}
 
       {user && (
-        <div className="space-y-4">
-          {/* Info card */}
+        <div className="space-y-3">
+          {/* Account info */}
           <div className="card">
-            <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-4">
-              Account info
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-              <InfoRow label="Username"   value={<span className="font-mono">{user.username}</span>} />
-              <InfoRow label="Email"      value={user.email ?? "—"} />
-              <InfoRow label="App ID"     value={<span className="font-mono">{user.app_id}</span>} />
-              <InfoRow label="Created"
-                value={formatDistanceToNow(new Date(user.created_at), { addSuffix: true })} />
-              <InfoRow label="Updated"
-                value={formatDistanceToNow(new Date(user.updated_at), { addSuffix: true })} />
+            <p className="section-heading mb-3">Account</p>
+            <div className="space-y-0">
+              <InfoRow label="Username"><span className="mono text-zinc-300">{user.username}</span></InfoRow>
+              <InfoRow label="Email"><span className="text-zinc-400">{user.email ?? "—"}</span></InfoRow>
+              <InfoRow label="App ID"><span className="mono text-zinc-400">{user.app_id}</span></InfoRow>
+              <InfoRow label="Created">
+                <span className="text-zinc-500 text-xs">
+                  {formatDistanceToNow(new Date(user.created_at), { addSuffix: true })}
+                </span>
+              </InfoRow>
+              <InfoRow label="Updated" last>
+                <span className="text-zinc-500 text-xs">
+                  {formatDistanceToNow(new Date(user.updated_at), { addSuffix: true })}
+                </span>
+              </InfoRow>
             </div>
           </div>
 
-          {/* Controls */}
+          {/* Access control */}
           <div className="card">
-            <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-4">
-              Access control
-            </p>
-            <div className="space-y-3">
-              {/* Active toggle */}
-              <div className="flex items-center justify-between">
+            <p className="section-heading mb-3">Access control</p>
+            <div className="space-y-0">
+              {/* Active */}
+              <div className="flex items-center justify-between py-3 border-b border-zinc-800/60">
                 <div>
-                  <p className="text-sm text-slate-300">Account active</p>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Inactive users cannot log in.
-                  </p>
+                  <p className="text-sm text-zinc-300">Account active</p>
+                  <p className="text-xs text-zinc-600 mt-0.5">Inactive users cannot sign in.</p>
                 </div>
                 <button
                   onClick={toggleActive}
@@ -124,33 +108,31 @@ export default function AdminUserDetailPage({
                   className="flex items-center gap-2 transition-colors"
                 >
                   {user.is_active
-                    ? <ToggleRight className="w-7 h-7 text-emerald-400" />
-                    : <ToggleLeft  className="w-7 h-7 text-slate-600"  />}
+                    ? <ToggleRight className="w-7 h-7 text-emerald-500" />
+                    : <ToggleLeft  className="w-7 h-7 text-zinc-700" />}
                   <span className={clsx(
-                    "text-sm font-medium",
-                    user.is_active ? "text-emerald-400" : "text-slate-500",
+                    "text-xs font-medium w-14",
+                    user.is_active ? "text-emerald-500" : "text-zinc-600",
                   )}>
                     {user.is_active ? "Active" : "Inactive"}
                   </span>
                 </button>
               </div>
 
-              {/* Role toggle */}
-              <div className="flex items-center justify-between pt-3 border-t border-slate-800">
+              {/* Role */}
+              <div className="flex items-center justify-between py-3">
                 <div>
-                  <p className="text-sm text-slate-300">Role</p>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Admin users can access the admin panel.
-                  </p>
+                  <p className="text-sm text-zinc-300">Role</p>
+                  <p className="text-xs text-zinc-600 mt-0.5">Admin users access the admin panel.</p>
                 </div>
                 <button
                   onClick={toggleRole}
                   disabled={patch.isPending}
                   className={clsx(
-                    "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border transition-colors",
+                    "flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition-colors",
                     user.role === "admin"
-                      ? "bg-amber-500/10 border-amber-500/30 text-amber-400"
-                      : "bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200",
+                      ? "bg-amber-500/10 border-amber-500/20 text-amber-400"
+                      : "bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200",
                   )}
                 >
                   {user.role === "admin"
@@ -162,11 +144,9 @@ export default function AdminUserDetailPage({
             </div>
           </div>
 
-          {/* Memories link */}
+          {/* Audit link */}
           <div className="card">
-            <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">
-              Memories
-            </p>
+            <p className="section-heading mb-3">Data</p>
             <button
               onClick={() => router.push(`/admin/audit?user=${username}`)}
               className="flex items-center gap-1.5 text-sm text-violet-400 hover:text-violet-300 transition-colors"
@@ -178,24 +158,20 @@ export default function AdminUserDetailPage({
 
           {/* Danger zone */}
           <div className="card border-rose-500/20 bg-rose-500/5">
-            <p className="text-xs font-medium text-rose-400 uppercase tracking-wide mb-4">
-              Danger zone
-            </p>
-
+            <p className="section-heading text-rose-500 mb-3">Danger zone</p>
             {!deleteConfirm ? (
-              <div className="flex items-center justify-between gap-4">
+              <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="text-sm text-slate-300">Delete all memories</p>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Permanently removes every episodic event for this user.
-                    Semantic facts in Neo4j are not affected.
+                  <p className="text-sm text-zinc-300">Delete all memories</p>
+                  <p className="text-xs text-zinc-600 mt-0.5">
+                    Permanently removes every episodic event. Neo4j facts are not affected.
                   </p>
                 </div>
                 <button
                   onClick={() => setDeleteConfirm(true)}
-                  className="btn-danger flex items-center gap-1.5 text-sm flex-shrink-0"
+                  className="btn-danger flex-shrink-0 text-xs"
                 >
-                  <Trash2 className="w-3.5 h-3.5" /> Delete memories
+                  <Trash2 className="w-3.5 h-3.5" /> Delete
                 </button>
               </div>
             ) : (
@@ -203,17 +179,14 @@ export default function AdminUserDetailPage({
                 <p className="text-sm text-rose-300">
                   Delete all memories for <strong>{username}</strong>? This cannot be undone.
                 </p>
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => setDeleteConfirm(false)}
-                    className="btn-secondary flex-1"
-                  >
+                <div className="flex gap-2">
+                  <button onClick={() => setDeleteConfirm(false)} className="btn-secondary flex-1">
                     Cancel
                   </button>
                   <button
-                    onClick={handleDeleteMemory}
+                    onClick={() => deleteMemory.mutate(undefined, { onSuccess: () => setDeleteConfirm(false) })}
                     disabled={deleteMemory.isPending}
-                    className="btn-danger flex-1 flex items-center justify-center gap-2"
+                    className="btn-danger flex-1 justify-center"
                   >
                     {deleteMemory.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                     Confirm delete
@@ -228,11 +201,22 @@ export default function AdminUserDetailPage({
   );
 }
 
-function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
+function InfoRow({
+  label,
+  children,
+  last = false,
+}: {
+  label: string;
+  children: React.ReactNode;
+  last?: boolean;
+}) {
   return (
-    <div className="flex gap-2">
-      <span className="text-slate-500 w-24 flex-shrink-0">{label}</span>
-      <span className="text-slate-300">{value}</span>
+    <div className={clsx(
+      "flex items-center justify-between py-2.5",
+      !last && "border-b border-zinc-800/60",
+    )}>
+      <span className="text-xs text-zinc-600 w-20 flex-shrink-0">{label}</span>
+      <span className="text-sm flex-1 text-right">{children}</span>
     </div>
   );
 }

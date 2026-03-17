@@ -2,10 +2,7 @@
 
 import { useState } from "react";
 import { formatDistanceToNow } from "date-fns";
-import {
-  GitMerge, Network, ThumbsUp, ThumbsDown, Minus,
-  Trash2, ChevronDown, ChevronUp, Tag,
-} from "lucide-react";
+import { Network, ThumbsUp, ThumbsDown, Trash2, Tag, GitMerge } from "lucide-react";
 import { clsx } from "clsx";
 import { useDeleteEvent, useSubmitFeedback } from "@/hooks/useMemory";
 import type { MemoryEvent } from "@/types";
@@ -16,10 +13,16 @@ interface Props {
   onViewGraph?: (eventId: string) => void;
 }
 
-const IMPORTANCE_COLORS = {
-  high:   "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
-  medium: "bg-amber-500/20 text-amber-300 border-amber-500/30",
-  low:    "bg-rose-500/20 text-rose-300 border-rose-500/30",
+const IMPORTANCE_BORDER: Record<string, string> = {
+  high:   "border-l-emerald-500/70",
+  medium: "border-l-amber-500/70",
+  low:    "border-l-zinc-700",
+};
+
+const IMPORTANCE_DOT: Record<string, string> = {
+  high:   "bg-emerald-500",
+  medium: "bg-amber-500",
+  low:    "bg-zinc-600",
 };
 
 export function MemoryCard({ event, onViewGraph }: Props) {
@@ -29,13 +32,17 @@ export function MemoryCard({ event, onViewGraph }: Props) {
   const deleteEvent = useDeleteEvent();
 
   const level = importanceLevel(event.importance_score);
-  const isLong = event.raw_text.length > 200;
+  const isLong = event.raw_text.length > 220;
   const displayText = expanded || !isLong
     ? event.raw_text
-    : event.raw_text.slice(0, 200) + "…";
+    : event.raw_text.slice(0, 220) + "…";
 
-  const createdAt = new Date(event.created_at);
-  const timeAgo = formatDistanceToNow(createdAt, { addSuffix: true });
+  const timeAgo = (() => {
+    try {
+      const ts = event.created_at.endsWith("Z") ? event.created_at : event.created_at + "Z";
+      return formatDistanceToNow(new Date(ts), { addSuffix: true });
+    } catch { return ""; }
+  })();
 
   async function handleFeedback(type: "positive" | "negative" | "neutral") {
     if (feedbackGiven) return;
@@ -49,27 +56,30 @@ export function MemoryCard({ event, onViewGraph }: Props) {
   }
 
   return (
-    <div className={clsx(
-      "card group relative transition-all duration-150",
-      "hover:border-slate-700",
-    )}>
-      {/* Header row */}
-      <div className="flex items-start justify-between gap-3 mb-3">
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Importance badge */}
-          <span className={clsx("badge border", IMPORTANCE_COLORS[level])}>
+    <div
+      className={clsx(
+        "group relative bg-zinc-900 border border-zinc-800 rounded-xl",
+        "border-l-2 pl-4 pr-4 py-3.5",
+        "hover:border-zinc-700 transition-colors duration-100",
+        IMPORTANCE_BORDER[level],
+      )}
+    >
+      {/* Top row: meta + timestamp */}
+      <div className="flex items-center justify-between gap-3 mb-2.5">
+        <div className="flex items-center gap-2.5 min-w-0 flex-wrap">
+          <span
+            className={clsx("w-1.5 h-1.5 rounded-full flex-shrink-0", IMPORTANCE_DOT[level])}
+            title={`Importance: ${(event.importance_score * 100).toFixed(0)}%`}
+          />
+          <span className="mono text-zinc-600">
             {(event.importance_score * 100).toFixed(0)}%
           </span>
-
-          {/* Consolidated badge */}
           {event.consolidated && (
-            <span className="badge bg-slate-700/50 text-slate-400 border border-slate-600/50">
+            <span className="badge bg-zinc-800 text-zinc-500 border border-zinc-700/60">
               <GitMerge className="w-3 h-3" />
-              Consolidated
+              consolidated
             </span>
           )}
-
-          {/* Cluster label */}
           {event.cluster_label && (
             <span className="badge bg-violet-500/10 text-violet-400 border border-violet-500/20">
               <Tag className="w-3 h-3" />
@@ -77,41 +87,35 @@ export function MemoryCard({ event, onViewGraph }: Props) {
             </span>
           )}
         </div>
-
-        {/* Time */}
-        <span className="text-xs text-slate-500 flex-shrink-0" title={createdAt.toISOString()}>
-          {timeAgo}
-        </span>
+        <span className="text-xs text-zinc-600 flex-shrink-0">{timeAgo}</span>
       </div>
 
-      {/* Text */}
-      <p className="text-sm text-slate-300 leading-relaxed mb-3">{displayText}</p>
-
-      {/* Summary (if consolidated and has summary) */}
-      {event.summary && event.consolidated && (
-        <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg px-3 py-2 mb-3">
-          <p className="text-xs text-slate-500 mb-0.5 font-medium">Summary</p>
-          <p className="text-xs text-slate-400 leading-relaxed">{event.summary}</p>
-        </div>
-      )}
-
-      {/* Expand / collapse */}
+      {/* Text body */}
+      <p className="text-sm text-zinc-300 leading-relaxed">{displayText}</p>
       {isLong && (
         <button
           onClick={() => setExpanded(!expanded)}
-          className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-300 mb-3"
+          className="mt-1.5 text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
         >
-          {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
           {expanded ? "Show less" : "Show more"}
         </button>
       )}
 
-      {/* Footer: actions */}
-      <div className="flex items-center justify-between pt-2 border-t border-slate-800">
-        {/* Feedback */}
-        <div className="flex items-center gap-1">
-          <span className="text-xs text-slate-600 mr-1">Was this relevant?</span>
-          {(["positive", "neutral", "negative"] as const).map((type) => (
+      {/* Summary */}
+      {event.summary && event.consolidated && (
+        <div className="mt-3 pt-3 border-t border-zinc-800">
+          <p className="section-heading mb-1">Summary</p>
+          <p className="text-xs text-zinc-500 leading-relaxed">{event.summary}</p>
+        </div>
+      )}
+
+      {/* Actions — visible on hover */}
+      <div
+        className="flex items-center justify-between mt-3 pt-2.5 border-t border-zinc-800/60
+                   opacity-0 group-hover:opacity-100 transition-opacity duration-150"
+      >
+        <div className="flex items-center gap-0.5">
+          {(["positive", "negative"] as const).map((type) => (
             <button
               key={type}
               onClick={() => handleFeedback(type)}
@@ -119,24 +123,23 @@ export function MemoryCard({ event, onViewGraph }: Props) {
               className={clsx(
                 "w-6 h-6 flex items-center justify-center rounded transition-colors",
                 feedbackGiven === type
-                  ? type === "positive" ? "text-emerald-400" : type === "negative" ? "text-rose-400" : "text-slate-400"
-                  : "text-slate-600 hover:text-slate-300 hover:bg-slate-800",
+                  ? type === "positive" ? "text-emerald-400" : "text-rose-400"
+                  : "text-zinc-700 hover:text-zinc-400 hover:bg-zinc-800",
               )}
               title={type}
             >
-              {type === "positive" ? <ThumbsUp className="w-3.5 h-3.5" /> :
-               type === "negative" ? <ThumbsDown className="w-3.5 h-3.5" /> :
-               <Minus className="w-3.5 h-3.5" />}
+              {type === "positive"
+                ? <ThumbsUp className="w-3.5 h-3.5" />
+                : <ThumbsDown className="w-3.5 h-3.5" />}
             </button>
           ))}
         </div>
 
-        {/* Right actions */}
         <div className="flex items-center gap-1">
           {onViewGraph && (
             <button
               onClick={() => onViewGraph(event.event_id)}
-              className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-violet-400
+              className="flex items-center gap-1.5 text-xs text-zinc-600 hover:text-violet-400
                          px-2 py-1 rounded hover:bg-violet-500/10 transition-colors"
             >
               <Network className="w-3.5 h-3.5" />
@@ -146,9 +149,9 @@ export function MemoryCard({ event, onViewGraph }: Props) {
           <button
             onClick={handleDelete}
             disabled={deleteEvent.isPending}
-            className="w-7 h-7 flex items-center justify-center rounded text-slate-600
+            className="w-6 h-6 flex items-center justify-center rounded text-zinc-700
                        hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
-            title="Delete memory"
+            title="Delete"
           >
             <Trash2 className="w-3.5 h-3.5" />
           </button>

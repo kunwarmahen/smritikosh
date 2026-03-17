@@ -40,11 +40,11 @@ export default function MemoryGraphPage({
           Back
         </button>
         <div className="min-w-0">
-          <h1 className="text-xl font-semibold text-slate-100 flex items-center gap-2">
+          <h1 className="text-base font-semibold text-zinc-100 tracking-tight flex items-center gap-2">
             <Network className="w-5 h-5 text-violet-400 flex-shrink-0" />
             Memory Graph
           </h1>
-          <p className="text-xs text-slate-500 mt-0.5 font-mono truncate">{id}</p>
+          <p className="text-xs text-zinc-500 mt-0.5 font-mono truncate">{id}</p>
         </div>
       </div>
 
@@ -58,7 +58,7 @@ export default function MemoryGraphPage({
               </span>
             )}
             {event.consolidated && (
-              <span className="badge bg-slate-700/50 text-slate-400 border border-slate-600/50 text-xs">
+              <span className="badge bg-slate-700/50 text-zinc-400 border border-slate-600/50 text-xs">
                 Consolidated
               </span>
             )}
@@ -67,15 +67,15 @@ export default function MemoryGraphPage({
                 {event.cluster_label}
               </span>
             )}
-            <span className="text-xs text-slate-500 ml-auto">
+            <span className="text-xs text-zinc-500 ml-auto">
               {formatDistanceToNow(new Date(event.created_at), { addSuffix: true })}
             </span>
           </div>
-          <p className="text-sm text-slate-300 leading-relaxed">{event.raw_text}</p>
+          <p className="text-sm text-zinc-300 leading-relaxed">{event.raw_text}</p>
           {event.summary && (
-            <div className="mt-3 pt-3 border-t border-slate-800">
-              <p className="text-xs text-slate-500 mb-1 font-medium">Summary</p>
-              <p className="text-xs text-slate-400 leading-relaxed">{event.summary}</p>
+            <div className="mt-3 pt-3 border-t border-zinc-800">
+              <p className="text-xs text-zinc-500 mb-1 font-medium">Summary</p>
+              <p className="text-xs text-zinc-400 leading-relaxed">{event.summary}</p>
             </div>
           )}
         </div>
@@ -83,24 +83,24 @@ export default function MemoryGraphPage({
 
       {/* Narrative graph */}
       <div className="mb-6">
-        <h2 className="text-sm font-medium text-slate-400 mb-3">Narrative Links</h2>
+        <h2 className="text-sm font-medium text-zinc-400 mb-3">Narrative Links</h2>
         <MemoryGraphView eventId={id} />
       </div>
 
       {/* Audit lineage */}
       {auditEvents.length > 0 && (
         <div>
-          <h2 className="text-sm font-medium text-slate-400 mb-3">Audit Lineage</h2>
+          <h2 className="text-sm font-medium text-zinc-400 mb-3">Audit Lineage</h2>
           <div className="space-y-2">
             {auditEvents.map((evt) => (
               <div key={evt.id} className="card py-2.5 px-4 flex items-center gap-3">
                 <span className={clsx(
-                  "badge border text-xs bg-slate-800/50 border-slate-700/50",
-                  EVENT_TYPE_COLORS[evt.event_type] ?? "text-slate-400",
+                  "badge border text-xs bg-zinc-800/50 border-zinc-700/50",
+                  EVENT_TYPE_COLORS[evt.event_type] ?? "text-zinc-400",
                 )}>
                   {EVENT_TYPE_LABELS[evt.event_type] ?? evt.event_type}
                 </span>
-                <span className="text-xs text-slate-500 ml-auto">
+                <span className="text-xs text-zinc-500 ml-auto">
                   {formatDistanceToNow(new Date(evt.timestamp), { addSuffix: true })}
                 </span>
               </div>

@@ -4,19 +4,30 @@ import { clsx } from "clsx";
 import { CheckCircle2, XCircle, AlertTriangle, Loader2, RefreshCw } from "lucide-react";
 import { useHealth } from "@/hooks/useAdmin";
 
-function StatusDot({ status }: { status: "ok" | "error" | "degraded" }) {
+type Status = "ok" | "error" | "degraded";
+
+function StatusChip({ status }: { status: Status }) {
   return (
     <span className={clsx(
-      "inline-flex items-center gap-1.5 text-sm font-medium",
-      status === "ok"      && "text-emerald-400",
-      status === "degraded" && "text-amber-400",
-      status === "error"   && "text-rose-400",
+      "inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-md border",
+      status === "ok"       && "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+      status === "degraded" && "bg-amber-500/10   text-amber-400   border-amber-500/20",
+      status === "error"    && "bg-rose-500/10    text-rose-400    border-rose-500/20",
     )}>
-      {status === "ok"       && <CheckCircle2 className="w-4 h-4" />}
-      {status === "degraded" && <AlertTriangle className="w-4 h-4" />}
-      {status === "error"    && <XCircle className="w-4 h-4" />}
+      {status === "ok"       && <CheckCircle2   className="w-3 h-3" />}
+      {status === "degraded" && <AlertTriangle  className="w-3 h-3" />}
+      {status === "error"    && <XCircle        className="w-3 h-3" />}
       {status}
     </span>
+  );
+}
+
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between py-3 border-b border-zinc-800/60 last:border-0">
+      <span className="text-sm text-zinc-500">{label}</span>
+      {children}
+    </div>
   );
 }
 
@@ -25,44 +36,34 @@ export function HealthPanel() {
 
   return (
     <div className="card">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-sm font-medium text-slate-400">System Health</h2>
+      <div className="flex items-center justify-between mb-1">
+        <p className="section-heading">System status</p>
         <button
           onClick={() => refetch()}
           disabled={isFetching}
-          className="text-slate-500 hover:text-slate-300 transition-colors"
+          className="text-zinc-600 hover:text-zinc-400 transition-colors"
           title="Refresh"
         >
-          <RefreshCw className={clsx("w-4 h-4", isFetching && "animate-spin")} />
+          <RefreshCw className={clsx("w-3.5 h-3.5", isFetching && "animate-spin")} />
         </button>
       </div>
 
       {isLoading ? (
-        <div className="flex items-center gap-2 text-slate-500 py-4">
+        <div className="flex items-center gap-2 text-zinc-600 py-6">
           <Loader2 className="w-4 h-4 animate-spin" />
-          <span className="text-sm">Checking health…</span>
+          <span className="text-sm">Checking…</span>
         </div>
       ) : data ? (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between py-2 border-b border-slate-800">
-            <span className="text-sm text-slate-400">Overall</span>
-            <StatusDot status={data.status} />
-          </div>
-          <div className="flex items-center justify-between py-2 border-b border-slate-800">
-            <span className="text-sm text-slate-400">PostgreSQL</span>
-            <StatusDot status={data.postgres} />
-          </div>
-          <div className="flex items-center justify-between py-2 border-b border-slate-800">
-            <span className="text-sm text-slate-400">Neo4j</span>
-            <StatusDot status={data.neo4j} />
-          </div>
-          <div className="flex items-center justify-between py-2">
-            <span className="text-sm text-slate-400">Version</span>
-            <span className="text-sm text-slate-300 font-mono">{data.version}</span>
-          </div>
+        <div>
+          <Row label="Overall">    <StatusChip status={data.status}   /> </Row>
+          <Row label="PostgreSQL"> <StatusChip status={data.postgres} /> </Row>
+          <Row label="Neo4j">      <StatusChip status={data.neo4j}    /> </Row>
+          <Row label="Version">
+            <span className="mono text-zinc-400">{data.version}</span>
+          </Row>
         </div>
       ) : (
-        <p className="text-sm text-slate-500 py-4">Could not reach the API.</p>
+        <p className="text-sm text-zinc-600 py-4">Could not reach the API.</p>
       )}
     </div>
   );
