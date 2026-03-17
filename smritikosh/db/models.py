@@ -79,6 +79,12 @@ class BeliefCategory(StrEnum):
     ASSUMPTION = "assumption"  # things the user takes for granted
 
 
+class UserRole(StrEnum):
+    """Roles for UI authentication."""
+    ADMIN = "admin"   # can access all users' data and admin operations
+    USER  = "user"    # can only access their own data
+
+
 class FeedbackType(StrEnum):
     """User signal on whether a recalled memory was useful."""
     POSITIVE = "positive"   # memory was helpful / relevant
@@ -388,3 +394,46 @@ class UserBelief(Base):
 
     def __repr__(self) -> str:
         return f"<UserBelief {self.category}: {self.statement[:60]!r}>"
+
+
+class AppUser(Base):
+    """
+    Authentication — users who can log into the Smritikosh UI.
+
+    The `username` doubles as the `user_id` used throughout the memory
+    system. When Alice logs in, her JWT carries `user_id="alice"` and all
+    memory API calls are scoped to that identifier.
+
+    Roles:
+        admin  — can view and manage any user's data, trigger admin jobs
+        user   — can only view and manage their own memory data
+
+    The `app_id` field links this account to one memory namespace.
+    An admin account typically uses app_id="default" to span all namespaces.
+    """
+
+    __tablename__ = "app_users"
+    __table_args__ = (
+        Index("ix_app_users_username", "username", unique=True),
+        Index("ix_app_users_email", "email"),
+        Index("ix_app_users_role", "role"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    username: Mapped[str] = mapped_column(String(255), unique=True)
+    email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, default=None)
+    password_hash: Mapped[str] = mapped_column(Text)
+    role: Mapped[str] = mapped_column(String(20), default=UserRole.USER)
+    app_id: Mapped[str] = mapped_column(String(255), default="default")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+    def __repr__(self) -> str:
+        return f"<AppUser username={self.username!r} role={self.role}>"

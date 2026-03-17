@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     mongodb_url: str | None = None
     mongodb_db_name: str = "smritikosh_audit"
 
+    # ── Auth (UI login) ─────────────────────────────────────────────────────
+    # Generate a strong secret: python -c "import secrets; print(secrets.token_hex(32))"
+    jwt_secret: str = "change-me-in-production"
+    jwt_algorithm: str = "HS256"
+    jwt_expire_days: int = 30
+
 
 # Single shared instance — import this everywhere
 settings = Settings()

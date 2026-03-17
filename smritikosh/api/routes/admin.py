@@ -11,18 +11,26 @@ useful for debugging, testing, or forcing an immediate maintenance cycle.
 """
 
 import logging
-from typing import Annotated
+from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from smritikosh.api.deps import get_reconsolidation_engine
 from smritikosh.api.schemas import (
     AdminJobRequest,
     AdminJobResponse,
     AdminJobResult,
+    AdminUserItem,
+    AdminUserPatch,
+    AdminUsersResponse,
     ReconsolidateRequest,
     ReconsolidateResponse,
 )
+from smritikosh.auth.deps import require_admin
+from smritikosh.db.models import AppUser
+from smritikosh.db.postgres import get_session
 from smritikosh.processing.reconsolidation import ReconsolidationEngine
 from smritikosh.processing.scheduler import MemoryScheduler
 
@@ -220,4 +228,110 @@ async def trigger_belief_mining(
             )
             for r in results
         ],
+    )
+
+
+# ── User management ────────────────────────────────────────────────────────────
+
+
+@router.get("/users", response_model=AdminUsersResponse)
+async def list_users(
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    role: Optional[str] = None,
+    pg: AsyncSession = Depends(get_session),
+    _admin: dict = Depends(require_admin),
+) -> AdminUsersResponse:
+    """
+    Return a paginated list of all registered users.
+
+    Requires admin role.
+    """
+    q = select(AppUser).order_by(AppUser.created_at.desc())
+    if role:
+        q = q.where(AppUser.role == role)
+
+    total_result = await pg.execute(select(func.count()).select_from(q.subquery()))
+    total = total_result.scalar_one()
+
+    users_result = await pg.execute(q.limit(limit).offset(offset))
+    users = users_result.scalars().all()
+
+    return AdminUsersResponse(
+        users=[
+            AdminUserItem(
+                username=u.username,
+                email=u.email,
+                role=u.role,
+                app_id=u.app_id,
+                is_active=u.is_active,
+                created_at=u.created_at.isoformat() if u.created_at else "",
+                updated_at=u.updated_at.isoformat() if u.updated_at else "",
+            )
+            for u in users
+        ],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/users/{username}", response_model=AdminUserItem)
+async def get_user(
+    username: str,
+    pg: AsyncSession = Depends(get_session),
+    _admin: dict = Depends(require_admin),
+) -> AdminUserItem:
+    """Return a single user by username. Requires admin role."""
+    result = await pg.execute(select(AppUser).where(AppUser.username == username))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    return AdminUserItem(
+        username=user.username,
+        email=user.email,
+        role=user.role,
+        app_id=user.app_id,
+        is_active=user.is_active,
+        created_at=user.created_at.isoformat() if user.created_at else "",
+        updated_at=user.updated_at.isoformat() if user.updated_at else "",
+    )
+
+
+@router.patch("/users/{username}", response_model=AdminUserItem)
+async def patch_user(
+    username: str,
+    body: AdminUserPatch,
+    pg: AsyncSession = Depends(get_session),
+    _admin: dict = Depends(require_admin),
+) -> AdminUserItem:
+    """
+    Update a user's ``is_active`` flag or ``role``.
+
+    Only the fields included in the request body are updated.
+    Requires admin role.
+    """
+    result = await pg.execute(select(AppUser).where(AppUser.username == username))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    if body.is_active is not None:
+        user.is_active = body.is_active
+    if body.role is not None:
+        if body.role not in ("admin", "user"):
+            raise HTTPException(status_code=422, detail="role must be 'admin' or 'user'.")
+        user.role = body.role
+
+    await pg.flush()
+
+    return AdminUserItem(
+        username=user.username,
+        email=user.email,
+        role=user.role,
+        app_id=user.app_id,
+        is_active=user.is_active,
+        created_at=user.created_at.isoformat() if user.created_at else "",
+        updated_at=user.updated_at.isoformat() if user.updated_at else "",
     )

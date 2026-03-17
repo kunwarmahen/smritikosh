@@ -12,6 +12,8 @@ Smritikosh gives any LLM application persistent, user-specific memory modelled o
 
 - [How it works](#how-it-works)
 - [Architecture](#architecture)
+- [Quick start (from scratch)](#quick-start-from-scratch)
+- [Sample project](#sample-project)
 - [Project structure](#project-structure)
 - [Prerequisites](#prerequisites)
 - [Database setup](#database-setup)
@@ -19,15 +21,23 @@ Smritikosh gives any LLM application persistent, user-specific memory modelled o
   - [Neo4j](#neo4j)
   - [MongoDB (audit trail)](#mongodb-audit-trail)
 - [Setup](#setup)
+  - [Backend setup](#backend-setup)
+  - [Dashboard UI setup](#dashboard-ui-setup)
 - [Configuration](#configuration)
+  - [Backend environment variables](#backend-environment-variables)
+  - [UI environment variables](#ui-environment-variables)
 - [Running the server](#running-the-server)
+- [Dashboard UI](#dashboard-ui)
 - [API reference](#api-reference)
+  - [Authentication](#authentication-api)
   - [Memory](#memory)
+  - [Graph](#graph-api)
   - [Context](#context)
   - [Identity](#identity)
   - [Feedback](#feedback)
   - [Procedural memory](#procedural-memory-api)
   - [Admin jobs](#admin-jobs)
+  - [Admin users](#admin-users-api)
   - [External ingest](#external-ingest)
   - [Audit trail](#audit-trail-api)
 - [Audit trail](#audit-trail)
@@ -165,6 +175,688 @@ Your application
 
 ---
 
+## Quick start (from scratch)
+
+This section walks a complete beginner through every step — from a blank machine to a running Smritikosh server with the dashboard. Nothing is assumed except that you have a terminal.
+
+> **What you will have at the end:** a local Smritikosh server, a working dashboard at `http://localhost:3000`, and your first admin account.
+
+---
+
+### Step 1 — Install system requirements
+
+You need three things on your machine before anything else.
+
+#### Python 3.11+
+
+```bash
+# Check if you already have it:
+python3 --version    # should print 3.11 or higher
+
+# macOS (Homebrew):
+brew install python@3.11
+
+# Ubuntu / Debian:
+sudo apt update && sudo apt install python3.11 python3.11-venv python3-pip
+
+# Windows:
+# Download the installer from https://www.python.org/downloads/
+# Make sure to tick "Add python.exe to PATH" during installation.
+```
+
+#### Node.js 18+
+
+```bash
+# Check if you already have it:
+node --version    # should print v18 or higher
+
+# macOS (Homebrew):
+brew install node
+
+# Ubuntu / Debian:
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+
+# Windows:
+# Download the LTS installer from https://nodejs.org/
+```
+
+#### Docker Desktop
+
+Docker is used to run PostgreSQL, Neo4j, and MongoDB locally. You do not need to know how Docker works — just install it and leave it running.
+
+- **macOS / Windows:** Download from [https://www.docker.com/products/docker-desktop/](https://www.docker.com/products/docker-desktop/) and install. Open it once so the Docker engine starts.
+- **Ubuntu:** Follow the [official guide](https://docs.docker.com/engine/install/ubuntu/) then run `sudo usermod -aG docker $USER` and log out/in.
+
+Verify Docker is running:
+
+```bash
+docker --version       # Docker version 24.x.x or similar
+docker compose version # Docker Compose version v2.x.x
+```
+
+---
+
+### Step 2 — Get an LLM API key
+
+Smritikosh uses an LLM for:
+- extracting semantic facts from memories
+- generating narrative summaries
+- scoring event importance
+
+You need **at least one** of these keys:
+
+| Provider | Where to get it | Cheapest model to start with |
+|---|---|---|
+| **Anthropic (Claude)** | [console.anthropic.com](https://console.anthropic.com) | `claude-haiku-4-5-20251001` |
+| **OpenAI** | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) | `gpt-4o-mini` |
+| **Gemini** | [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey) | `gemini-1.5-flash` |
+| **Ollama (free, local)** | [ollama.com](https://ollama.com) | `llama3.2` |
+
+You also need an **embedding model**. The easiest option is to reuse OpenAI's `text-embedding-3-small` (it is very cheap — a few cents per million tokens). If you prefer to run fully offline, see the [LLM provider guide](#llm-provider-guide) for Ollama embeddings.
+
+---
+
+### Step 3 — Clone the repository
+
+```bash
+git clone https://github.com/your-org/smritikosh.git
+cd smritikosh
+```
+
+---
+
+### Step 4 — Create a Python virtual environment
+
+A virtual environment keeps Smritikosh's dependencies isolated from the rest of your system.
+
+```bash
+python3 -m venv .venv
+
+# Activate it — you must do this every time you open a new terminal:
+source .venv/bin/activate          # macOS / Linux
+# or on Windows:
+# .venv\Scripts\activate
+```
+
+When the environment is active your prompt will show `(.venv)`.
+
+```bash
+# Install Smritikosh and all its dependencies:
+pip install -e ".[dev]"
+```
+
+This will take a minute or two on first run.
+
+---
+
+### Step 5 — Configure the backend
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` in any text editor and fill in **at minimum** these four lines (everything else can stay as the default for local development):
+
+```dotenv
+# Which LLM to use for fact extraction and summarisation
+LLM_PROVIDER=claude                          # or: openai / gemini / ollama
+LLM_MODEL=claude-haiku-4-5-20251001          # or your chosen model
+LLM_API_KEY=sk-ant-...                       # paste your API key here
+
+# Which model to use for turning text into vectors
+EMBEDDING_PROVIDER=openai
+EMBEDDING_MODEL=text-embedding-3-small
+EMBEDDING_API_KEY=sk-...                     # your OpenAI key (even if you use Claude above)
+
+# Secret key for signing login tokens — change this to any long random string
+JWT_SECRET=replace-this-with-something-random-and-long
+```
+
+> **Tip:** If you want to run 100% locally with no API costs, see the [Ollama section](#ollama--local-models) in the LLM provider guide. You can use Ollama for both the LLM and the embeddings.
+
+---
+
+### Step 6 — Start the databases
+
+```bash
+docker compose up -d
+```
+
+This starts three containers in the background:
+- **PostgreSQL 17** (stores memory events and vectors) — port `5432`
+- **Neo4j 5.26** (stores the knowledge graph) — port `7687`, browser at `http://localhost:7474`
+- **MongoDB 7** (stores the audit trail) — port `27017`
+
+Wait about 15–20 seconds for all three to become healthy, then check:
+
+```bash
+docker compose ps
+```
+
+All three services should show `running (healthy)`. If any shows `starting`, wait a few more seconds and re-run the command.
+
+---
+
+### Step 7 — Create the database tables
+
+```bash
+alembic upgrade head
+```
+
+This runs all the database migrations — it creates every table, enables the pgvector extension, and sets up the vector index. You should see output ending with something like:
+
+```
+INFO  [alembic.runtime.migration] Running upgrade ... -> 0008_add_app_users, add app_users table
+```
+
+---
+
+### Step 8 — Create your first admin account
+
+On a fresh install there are no users, so you need to bootstrap the first admin account. Set `BOOTSTRAP_ADMIN=1` in your `.env` to allow the first registration without needing an existing token:
+
+```bash
+# Add this line to .env temporarily:
+echo "BOOTSTRAP_ADMIN=1" >> .env
+```
+
+Now start the server (in a separate terminal, with your venv active):
+
+```bash
+uvicorn smritikosh.api.main:app --reload --port 8080
+```
+
+You should see:
+
+```
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8080
+```
+
+Register the admin account:
+
+```bash
+curl -s -X POST http://localhost:8080/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "changeme123", "role": "admin"}' | python3 -m json.tool
+```
+
+Expected response:
+
+```json
+{
+  "user_id": "admin",
+  "username": "admin",
+  "role": "admin",
+  "app_id": "default",
+  "is_active": true,
+  "created_at": "..."
+}
+```
+
+**Important:** remove `BOOTSTRAP_ADMIN=1` from `.env` now, then restart the server.
+
+```bash
+# Remove the line from .env (Linux/macOS):
+sed -i '/BOOTSTRAP_ADMIN/d' .env
+
+# Or just open .env and delete that line manually, then Ctrl+C the server and restart:
+uvicorn smritikosh.api.main:app --reload --port 8080
+```
+
+Verify everything is working:
+
+```bash
+curl http://localhost:8080/health
+```
+
+```json
+{"status": "ok", "postgres": "ok", "neo4j": "ok"}
+```
+
+---
+
+### Step 9 — Set up the dashboard UI
+
+Open a **new terminal** (keep the server running in the first one).
+
+```bash
+cd ui
+npm install          # downloads all frontend dependencies (~1–2 minutes)
+```
+
+Create the UI config file:
+
+```bash
+cp .env.local.example .env.local 2>/dev/null || \
+  printf "SMRITIKOSH_API_URL=http://localhost:8080\nAUTH_SECRET=$(openssl rand -hex 32)\n" > .env.local
+```
+
+Start the dashboard:
+
+```bash
+npm run dev
+```
+
+Open **http://localhost:3000** in your browser. You should see the Smritikosh login page. Sign in with `admin` / `changeme123`.
+
+---
+
+### Step 10 — Create a regular user for testing
+
+From the dashboard, go to **Admin → Users → New user** and create a test account (e.g. `alice`, role: `user`).
+
+Or via the API:
+
+```bash
+# First, get an admin token:
+TOKEN=$(curl -s -X POST http://localhost:8080/auth/token \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "changeme123"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+
+# Create alice:
+curl -s -X POST http://localhost:8080/auth/register \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"username": "alice", "password": "alicepass", "role": "user"}' | python3 -m json.tool
+```
+
+You are now fully set up. Continue to the [Sample project](#sample-project) to see Smritikosh in action.
+
+---
+
+## Sample project
+
+This section builds a small but complete **memory-aware chatbot** in Python — step by step. The bot remembers what users tell it across separate sessions and uses those memories to give personalised answers.
+
+By the end you will have seen:
+1. How to store memories (the intake pipeline)
+2. How to search memories
+3. How to retrieve context and inject it into an LLM call
+4. How those memories turn into a knowledge graph over time
+
+> **Prerequisite:** the Smritikosh server must be running (`uvicorn smritikosh.api.main:app --reload --port 8080`). If you followed the Quick Start, it already is.
+
+---
+
+### Project layout
+
+Create a new directory for the sample:
+
+```bash
+mkdir smritikosh-demo
+cd smritikosh-demo
+```
+
+We will create three files:
+
+```
+smritikosh-demo/
+├── client.py      # thin wrapper around the Smritikosh REST API
+├── chatbot.py     # the memory-aware chatbot loop
+└── seed.py        # script to pre-load some memories so the demo is interesting
+```
+
+---
+
+### File 1 — `client.py`
+
+This is a minimal API client. It handles authentication and exposes the three methods the chatbot needs: store a memory, get context, and search.
+
+```python
+# client.py
+import httpx
+import os
+
+BASE_URL = os.getenv("SMRITIKOSH_URL", "http://localhost:8080")
+
+
+class SmritikoshClient:
+    """Minimal sync client for the Smritikosh REST API."""
+
+    def __init__(self, username: str, password: str, app_id: str = "demo"):
+        self.app_id = app_id
+        self._token = self._login(username, password)
+        self._headers = {
+            "Authorization": f"Bearer {self._token}",
+            "Content-Type": "application/json",
+        }
+
+    # ── Auth ──────────────────────────────────────────────────────────────────
+
+    def _login(self, username: str, password: str) -> str:
+        resp = httpx.post(
+            f"{BASE_URL}/auth/token",
+            json={"username": username, "password": password},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()["access_token"]
+
+    # ── Core API ──────────────────────────────────────────────────────────────
+
+    def remember(self, user_id: str, text: str) -> dict:
+        """Store a piece of text as a memory event."""
+        resp = httpx.post(
+            f"{BASE_URL}/memory/event",
+            headers=self._headers,
+            json={"user_id": user_id, "content": text, "app_id": self.app_id},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_context(self, user_id: str, query: str) -> str:
+        """Retrieve the memory context block for an LLM call."""
+        resp = httpx.post(
+            f"{BASE_URL}/context",
+            headers=self._headers,
+            json={"user_id": user_id, "query": query, "app_id": self.app_id},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("context_text", "")
+
+    def search(self, user_id: str, query: str, limit: int = 5) -> list[dict]:
+        """Search a user's memories and return scored results."""
+        resp = httpx.post(
+            f"{BASE_URL}/memory/search",
+            headers=self._headers,
+            json={
+                "user_id": user_id,
+                "query": query,
+                "app_id": self.app_id,
+                "limit": limit,
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json().get("results", [])
+```
+
+---
+
+### File 2 — `seed.py`
+
+Before running the chatbot we will seed Alice's memory with a few facts so the demo shows personalised answers straight away.
+
+```python
+# seed.py
+"""
+Pre-load some memories for 'alice' so the chatbot has something to recall.
+Run once:  python seed.py
+"""
+
+from client import SmritikoshClient
+
+# Sign in as the admin account (which can store memories for any user)
+client = SmritikoshClient(username="admin", password="changeme123")
+
+USER = "alice"
+
+memories = [
+    "My name is Alice and I work as a machine learning engineer at a Series B startup.",
+    "I prefer Python over other languages, especially for data pipelines and ML work.",
+    "My favourite editor is Neovim with the lazy.nvim plugin manager.",
+    "I am learning Rust in my spare time. I find the borrow checker confusing but rewarding.",
+    "I use a MacBook Pro M3 Max for local development.",
+    "My team is migrating from PyTorch to JAX for our training infrastructure.",
+    "I dislike meetings before 10 am. My most productive hours are 9 pm to midnight.",
+    "I recently read 'The Pragmatic Programmer' and found the chapter on orthogonality very useful.",
+    "I deployed a RAG pipeline last week using pgvector and LangChain. Latency was higher than expected.",
+    "My manager asked me to evaluate Smritikosh as a memory layer for our internal LLM assistant.",
+]
+
+print(f"Seeding {len(memories)} memories for user '{USER}'...\n")
+
+for i, text in enumerate(memories, 1):
+    result = client.remember(USER, text)
+    importance = result.get("importance_score", 0)
+    facts = result.get("facts_extracted", 0)
+    print(f"  [{i:2d}] importance={importance:.2f}  facts={facts}  "{text[:60]}..."")
+
+print("\nDone. Run 'python chatbot.py' to start the chatbot.")
+```
+
+Run it:
+
+```bash
+python seed.py
+```
+
+You should see output like:
+
+```
+Seeding 10 memories for user 'alice'...
+
+  [ 1] importance=0.68  facts=3  "My name is Alice and I work as a machine learning engine..."
+  [ 2] importance=0.61  facts=2  "I prefer Python over other languages, especially for dat..."
+  ...
+
+Done. Run 'python chatbot.py' to start the chatbot.
+```
+
+Each line shows the importance score Smritikosh assigned to that memory and how many semantic facts it extracted into the Neo4j knowledge graph.
+
+---
+
+### File 3 — `chatbot.py`
+
+This is the chatbot itself. For simplicity it uses the Anthropic SDK directly — swap in OpenAI or any other provider if you prefer.
+
+```bash
+pip install anthropic   # or: pip install openai
+```
+
+```python
+# chatbot.py
+"""
+Memory-aware chatbot using Smritikosh for persistent user memory.
+
+Usage:
+    python chatbot.py
+
+Commands during the chat:
+    /remember <text>    — Manually store something as a memory
+    /search <query>     — Search Alice's memories and show scored results
+    /quit               — Exit
+"""
+
+import os
+import anthropic
+from client import SmritikoshClient
+
+# ── Configuration ────────────────────────────────────────────────────────────
+
+SMRITIKOSH_USER = "alice"           # the user whose memories we read/write
+SMRITIKOSH_USER_PASS = "alicepass"  # alice's login password
+
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")   # or hardcode for local testing
+LLM_MODEL = "claude-haiku-4-5-20251001"              # fast and cheap for demos
+
+# ── Clients ───────────────────────────────────────────────────────────────────
+
+memory = SmritikoshClient(username=SMRITIKOSH_USER, password=SMRITIKOSH_USER_PASS)
+llm = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+# Conversation history (kept in RAM — resets when the script restarts,
+# but *memories* persist across restarts because they live in Smritikosh)
+conversation: list[dict] = []
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def chat(user_message: str) -> str:
+    """
+    Send a message to the LLM, injecting the user's memory context first.
+    The LLM response is also stored back into Smritikosh so it can be
+    recalled in future sessions.
+    """
+    # 1. Retrieve the memory context relevant to this message
+    context = memory.get_context(SMRITIKOSH_USER, user_message)
+
+    # 2. Build the system prompt — memory context goes first
+    system_prompt = (
+        "You are a helpful personal assistant. "
+        "Use the memory context below to give personalised, accurate answers. "
+        "If the context contains relevant information, use it naturally — "
+        "do not say 'according to your memory'. Just answer as if you know the user well.\n\n"
+        + context
+    )
+
+    # 3. Add the new user message to the conversation history
+    conversation.append({"role": "user", "content": user_message})
+
+    # 4. Call the LLM
+    response = llm.messages.create(
+        model=LLM_MODEL,
+        max_tokens=1024,
+        system=system_prompt,
+        messages=conversation,
+    )
+    assistant_message = response.content[0].text
+
+    # 5. Add the assistant reply to conversation history
+    conversation.append({"role": "assistant", "content": assistant_message})
+
+    # 6. Store the exchange as a new memory so future sessions can recall it
+    memory.remember(
+        SMRITIKOSH_USER,
+        f"User asked: {user_message}\nAssistant replied: {assistant_message}",
+    )
+
+    return assistant_message
+
+
+def show_search(query: str) -> None:
+    """Print scored memory search results for a query."""
+    results = memory.search(SMRITIKOSH_USER, query)
+    if not results:
+        print("  (no results)")
+        return
+    for r in results:
+        score = r.get("hybrid_score", 0)
+        text = r.get("raw_text", "")[:90]
+        consolidated = "✓" if r.get("consolidated") else "·"
+        print(f"  [{score:.3f}] {consolidated} {text}...")
+
+
+# ── Main loop ─────────────────────────────────────────────────────────────────
+
+def main() -> None:
+    print("=" * 60)
+    print("  Smritikosh demo chatbot  (user: alice)")
+    print("  Commands: /remember <text>  /search <query>  /quit")
+    print("=" * 60)
+    print()
+
+    while True:
+        try:
+            user_input = input("You: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nGoodbye!")
+            break
+
+        if not user_input:
+            continue
+
+        # ── Slash commands ────────────────────────────────────────────────────
+
+        if user_input.startswith("/quit"):
+            print("Goodbye!")
+            break
+
+        if user_input.startswith("/remember "):
+            text = user_input[len("/remember "):]
+            result = memory.remember(SMRITIKOSH_USER, text)
+            print(f"  Stored. importance={result['importance_score']:.2f}  "
+                  f"facts_extracted={result['facts_extracted']}")
+            continue
+
+        if user_input.startswith("/search "):
+            query = user_input[len("/search "):]
+            print(f"  Search results for: '{query}'")
+            show_search(query)
+            continue
+
+        # ── Normal chat ───────────────────────────────────────────────────────
+
+        reply = chat(user_input)
+        print(f"\nAssistant: {reply}\n")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+### Running the chatbot
+
+Make sure the Smritikosh server is still running in another terminal, then:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...   # or set OPENAI_API_KEY if you adapted chatbot.py
+python chatbot.py
+```
+
+#### Example session
+
+```
+============================================================
+  Smritikosh demo chatbot  (user: alice)
+  Commands: /remember <text>  /search <query>  /quit
+============================================================
+
+You: What editor do I use?
+
+Assistant: You use Neovim with the lazy.nvim plugin manager — it's what you've set up for your development environment.
+
+You: Do I know Rust?
+
+Assistant: You're learning Rust in your spare time. You mentioned finding the borrow checker confusing but also rewarding — sounds like it's starting to click.
+
+You: /search JAX
+
+  Search results for: 'JAX'
+  [0.834] · Your team is migrating from PyTorch to JAX for your training infrastructure...
+  [0.612] · I deployed a RAG pipeline last week using pgvector and LangChain. Latency was...
+
+You: /remember I finished the Rust ownership chapter today — it finally clicked!
+
+  Stored. importance=0.72  facts_extracted=1
+
+You: What am I learning these days?
+
+Assistant: You're learning Rust in your spare time, and you just told me the ownership chapter finally clicked today. On the work side, your team is also migrating from PyTorch to JAX for your ML training infrastructure.
+
+/quit
+Goodbye!
+```
+
+Notice that on the last message, the bot knows about the Rust milestone stored via `/remember` in the same session. Each time you use `/remember` or have a normal chat exchange, the content is persisted — so the next time you start `chatbot.py`, Alice's bot will still know everything from this session.
+
+### What just happened under the hood
+
+| Step | What Smritikosh did |
+|---|---|
+| `seed.py` ran | 10 texts → Hippocampus → importance scored → embedded → stored in PostgreSQL → facts extracted → written to Neo4j |
+| `chat()` called | `GET /context` retrieved the 3 most relevant memories + Alice's Neo4j profile → injected as system prompt |
+| LLM responded | Claude answered using the injected context |
+| Exchange stored | The full Q&A was stored as a new memory event for future sessions |
+| `/remember` ran | `POST /memory/event` stored the Rust milestone immediately |
+
+### Where to look next
+
+- **Dashboard** (`http://localhost:3000`) — log in as `alice` and browse the memory timeline, see the fact graph, check the audit trail
+- **Identity page** — click "Show fact graph" to see the Neo4j knowledge graph visualised as a React Flow canvas
+- **Memory detail** — click any event in the timeline to see its narrative links graph
+- **Admin panel** — log in as `admin` to see all users, trigger consolidation (`/admin/jobs`), or check system health
+- **Run consolidation** — `curl -X POST "http://localhost:8080/admin/consolidate?user_id=alice"` to compress Alice's memories into summaries and extract more facts into Neo4j
+
+---
+
 ## Project structure
 
 ```
@@ -175,14 +867,24 @@ smritikosh/
 │   ├── schemas.py           # Pydantic request/response models
 │   └── routes/
 │       ├── health.py        # GET /health
-│       ├── memory.py        # POST /memory/event, GET /memory/{user_id},
+│       ├── memory.py        # POST /memory/event, GET /memory/event/{id},
+│       │                    #   GET /memory/event/{id}/links, GET /memory/{user_id},
 │       │                    #   DELETE /memory/event/{id}, DELETE /memory/user/{id}
+│       ├── graph.py         # GET /graph/facts/{user_id}
 │       ├── context.py       # POST /context
 │       ├── identity.py      # GET /identity/{user_id}
 │       ├── feedback.py      # POST /feedback
 │       ├── procedures.py    # CRUD /procedures + DELETE /procedures/user/{id}
 │       ├── admin.py         # POST /admin/{consolidate,prune,cluster,mine-beliefs,reconsolidate}
+│       │                    #   GET /admin/users, GET /admin/users/{username},
+│       │                    #   PATCH /admin/users/{username}
 │       └── ingest.py        # POST /ingest/{push,file,slack/events,email/sync,calendar}
+├── auth/
+│   ├── __init__.py          # Re-exports router, require_admin, require_auth
+│   ├── deps.py              # require_auth / require_admin FastAPI dependencies
+│   ├── models.py            # AppUser ORM model, UserRole StrEnum
+│   ├── routes.py            # POST /auth/token, POST /auth/register, GET /auth/me
+│   └── utils.py             # hash_password, verify_password, create_access_token
 ├── config.py                # Pydantic Settings (reads .env)
 ├── connectors/
 │   ├── __init__.py          # Re-exports ConnectorEvent, SourceConnector
@@ -194,7 +896,7 @@ smritikosh/
 │   └── calendar.py          # CalendarConnector: RFC 5545 iCal stdlib parser
 ├── db/
 │   ├── models.py            # SQLAlchemy 2.0 ORM: Event, UserFact, MemoryLink,
-│   │                        #   MemoryFeedback, UserBelief, UserProcedure
+│   │                        #   MemoryFeedback, UserBelief, UserProcedure, AppUser
 │   ├── postgres.py          # Async engine, session helpers
 │   └── neo4j.py             # Driver singleton, session helpers, schema init
 ├── llm/
@@ -235,6 +937,58 @@ sdk-node/                    # TypeScript / Node.js SDK
 ├── package.json
 └── tsconfig*.json
 
+ui/                          # Next.js 16 dashboard (App Router)
+├── auth.ts                  # NextAuth v5 config (CredentialsProvider → /auth/token)
+├── middleware.ts             # Route protection: auth → /dashboard, admin → /admin
+├── next.config.ts
+├── tailwind.config.ts
+├── src/
+│   ├── app/
+│   │   ├── (auth)/login/    # Sign-in page with error handling
+│   │   ├── (dashboard)/dashboard/
+│   │   │   ├── page.tsx            # Redirect → /dashboard/memories
+│   │   │   ├── memories/           # Memory timeline list
+│   │   │   │   └── [id]/           # Memory detail: importance card + narrative graph
+│   │   │   ├── search/             # Hybrid search with score breakdown
+│   │   │   ├── identity/           # Identity profile + React Flow fact graph toggle
+│   │   │   ├── clusters/           # Events grouped by topic cluster
+│   │   │   ├── audit/              # Personal audit timeline + stats
+│   │   │   └── procedures/         # Procedural rules CRUD
+│   │   └── (admin)/admin/
+│   │       ├── page.tsx            # Redirect → /admin/users
+│   │       ├── users/              # Paginated user list
+│   │       │   └── [userId]/       # User detail: toggle active/role, danger zone
+│   │       ├── jobs/               # Trigger background jobs per user
+│   │       ├── health/             # System health panel
+│   │       └── audit/              # Global audit log (all users)
+│   ├── components/
+│   │   ├── memory/
+│   │   │   ├── MemoryTimeline.tsx  # Virtualised event list with importance badges
+│   │   │   └── MemoryGraphView.tsx # React Flow: narrative links (caused/preceded/…)
+│   │   ├── identity/
+│   │   │   ├── IdentityProfile.tsx # Dimension grid + confidence bars + beliefs
+│   │   │   └── IdentityFactGraph.tsx # React Flow: radial fact knowledge graph
+│   │   ├── search/SearchPanel.tsx
+│   │   ├── audit/
+│   │   │   ├── AuditTimeline.tsx   # Filterable audit log with payload expand
+│   │   │   └── AuditStatsBar.tsx   # Event-type count cards
+│   │   ├── procedures/
+│   │   │   ├── ProcedureTable.tsx
+│   │   │   └── NewProcedureDrawer.tsx
+│   │   └── admin/
+│   │       ├── UserTable.tsx       # Paginated table, inline active toggle
+│   │       ├── NewUserDrawer.tsx   # Create user modal
+│   │       ├── JobTriggerPanel.tsx # Trigger jobs by user ID
+│   │       └── HealthPanel.tsx
+│   ├── hooks/
+│   │   ├── useMemoryGraph.ts       # useMemoryEvent, useMemoryLinks
+│   │   ├── useFactGraph.ts         # useFactGraph
+│   │   ├── useAdmin.ts             # useAdminUsers, useAdminUser, useAdminPatchUser
+│   │   └── useProcedures.ts        # CRUD hooks for procedural rules
+│   ├── lib/api-client.ts           # Typed API client (wraps fetch with auth token)
+│   └── types/index.ts              # Shared TypeScript types (MemoryEvent, FactGraph, …)
+└── package.json
+
 tests/
 ├── conftest.py              # pytest marks: live, ollama, db
 ├── test_llm_adapter.py
@@ -268,7 +1022,8 @@ alembic/
     ├── 0004_add_memory_feedback.py   # memory_feedback table
     ├── 0005_add_user_beliefs.py      # user_beliefs table
     ├── 0006_add_user_procedures.py   # user_procedures table + priority/active indexes
-    └── 0007_add_reconsolidation_fields.py  # reconsolidation_count, last_reconsolidated_at
+    ├── 0007_add_reconsolidation_fields.py  # reconsolidation_count, last_reconsolidated_at
+    └── 0008_add_app_users.py         # app_users table (username, role, is_active, app_id)
 ```
 
 ---
@@ -278,6 +1033,7 @@ alembic/
 | Tool | Version | Purpose |
 |---|---|---|
 | Python | ≥ 3.11 | StrEnum, `match`, type syntax |
+| Node.js | ≥ 18 | Dashboard UI (Next.js 16) |
 | Docker + Compose | any recent | PostgreSQL + Neo4j + MongoDB (recommended) |
 | An LLM API key | — | Claude / OpenAI / Gemini (or Ollama locally) |
 | MongoDB 6+ | optional | Audit trail / provenance log (disabled if `MONGODB_URL` unset) |
@@ -356,12 +1112,6 @@ Regardless of which option you chose, run Alembic migrations to create tables an
 ```bash
 alembic upgrade head
 ```
-
-What the migration does:
-- Enables the `pgvector` extension (`CREATE EXTENSION IF NOT EXISTS vector`)
-- Creates the `events` table with a `vector(1536)` embedding column
-- Adds an IVFFlat index on `embedding` for fast cosine-distance search
-- Creates `user_facts` and `memory_links` tables
 
 > **Changing embedding dimensions?** If you switch to a model with different output dimensions (e.g. Gemini's 768), set `EMBEDDING_DIMENSIONS=768` in `.env`, then re-run migrations: `alembic downgrade base && alembic upgrade head`.
 
@@ -496,7 +1246,9 @@ Smritikosh automatically creates the `audit_events` collection and its indexes o
 
 ## Setup
 
-### 1. Clone and create a virtual environment
+### Backend setup
+
+#### 1. Clone and create a virtual environment
 
 ```bash
 git clone https://github.com/your-org/smritikosh.git
@@ -506,14 +1258,14 @@ python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 ```
 
-### 2. Install the package
+#### 2. Install the package
 
 ```bash
 # Runtime + dev dependencies
 pip install -e ".[dev]"
 ```
 
-### 3. Configure environment
+#### 3. Configure environment
 
 ```bash
 cp .env.example .env
@@ -533,7 +1285,7 @@ EMBEDDING_API_KEY=sk-...
 
 See [Configuration](#configuration) for all options and [LLM provider guide](#llm-provider-guide) for provider-specific examples.
 
-### 4. Start the databases
+#### 4. Start the databases
 
 ```bash
 docker compose up -d
@@ -544,25 +1296,81 @@ This starts:
 - **Neo4j 5.26** on ports `7474` (browser) and `7687` (bolt)
 - **MongoDB 7** on port `27017` (audit trail — optional, safe to omit)
 
-Wait for both to be healthy:
+Wait for all services to be healthy:
 
 ```bash
-docker compose ps   # both should show "healthy"
+docker compose ps   # all should show "healthy"
 ```
 
-### 5. Run database migrations
+#### 5. Run database migrations
 
 ```bash
 alembic upgrade head
 ```
 
-This creates the `events`, `user_facts`, and `memory_links` tables, enables the `vector` extension, and adds an IVFFlat index for fast similarity search.
+This creates all tables (`events`, `user_facts`, `memory_links`, `app_users`, `procedures`, `user_beliefs`, `feedbacks`), enables the `vector` extension, and adds an IVFFlat index for fast similarity search.
+
+#### 6. Create the first admin user
+
+```bash
+curl -X POST http://localhost:8080/auth/register \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <admin-token>" \
+  -d '{"username": "admin", "password": "changeme123", "role": "admin"}'
+```
+
+> **Bootstrapping:** On a fresh install with no users, register the first admin account by temporarily setting `BOOTSTRAP_ADMIN=1` in `.env`. This disables the auth requirement on `POST /auth/register` for one call. Remove it afterwards.
+
+---
+
+### Dashboard UI setup
+
+The UI is a standalone Next.js 16 application in the `ui/` directory.
+
+#### 1. Install dependencies
+
+```bash
+cd ui
+npm install
+```
+
+#### 2. Configure environment
+
+```bash
+cp .env.local.example .env.local
+```
+
+Edit `.env.local`:
+
+```dotenv
+# URL of the Smritikosh FastAPI backend (server-side only, never exposed to browser)
+SMRITIKOSH_API_URL=http://localhost:8080
+
+# NextAuth.js secret — generate a strong value:
+# node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+AUTH_SECRET=your-secret-here
+
+# Optional: required in production for CSRF protection
+# AUTH_URL=https://your-domain.com
+```
+
+#### 3. Start the dev server
+
+```bash
+npm run dev
+```
+
+The dashboard is available at **http://localhost:3000**.
+
+> The backend must be running before logging in. Start it with `uvicorn smritikosh.api.main:app --reload --port 8080`.
 
 ---
 
 ## Configuration
 
-All settings are read from the environment (or `.env`). Every field has a default so only the keys you need to change are required.
+### Backend environment variables
+
+All backend settings are read from the environment (or `.env`). Every field has a default so only the keys you need to change are required.
 
 | Variable | Default | Description |
 |---|---|---|
@@ -583,6 +1391,19 @@ All settings are read from the environment (or `.env`). Every field has a defaul
 | `SLACK_SIGNING_SECRET` | — | Signing secret for Slack Events API signature verification (required only for `POST /ingest/slack/events`) |
 | `MONGODB_URL` | — | MongoDB connection string. If unset, audit trail is disabled (no-op) |
 | `MONGODB_DB_NAME` | `smritikosh_audit` | MongoDB database to store audit events in |
+| `JWT_SECRET` | `change-me-in-production` | Secret key for signing JWT tokens — **change this in production** |
+| `JWT_ALGORITHM` | `HS256` | JWT signing algorithm |
+| `JWT_EXPIRE_DAYS` | `30` | Token lifetime in days |
+
+### UI environment variables
+
+These go in `ui/.env.local` (never committed to git):
+
+| Variable | Required | Description |
+|---|---|---|
+| `AUTH_SECRET` | ✅ | NextAuth.js secret — generate with `openssl rand -hex 32` |
+| `SMRITIKOSH_API_URL` | ✅ | Backend URL used server-side only (e.g. `http://localhost:8080`) |
+| `AUTH_URL` | Production only | Public base URL of the UI (e.g. `https://app.example.com`) — required for CSRF in production |
 
 ---
 
@@ -602,7 +1423,139 @@ Interactive API docs are available at `http://localhost:8080/docs`.
 
 ---
 
+## Dashboard UI
+
+The dashboard is a standalone Next.js 16 application that connects to the FastAPI backend.
+
+```bash
+cd ui
+npm run dev      # development (http://localhost:3000)
+npm run build    # production build
+npm start        # serve the production build
+```
+
+### Pages
+
+| Route | Role | Description |
+|---|---|---|
+| `/login` | All | Sign in with username + password |
+| `/dashboard/memories` | User | Memory timeline — search, feedback, delete |
+| `/dashboard/memories/[id]` | User | Narrative link graph + audit lineage for one event |
+| `/dashboard/identity` | User | Identity model: summary, dimensions, inferred beliefs, fact graph |
+| `/dashboard/clusters` | User | Memories grouped by topic cluster |
+| `/dashboard/audit` | User | Personal audit trail with event-type filter |
+| `/dashboard/procedures` | User | Procedural rules — create, toggle, delete |
+| `/admin/health` | Admin | Live status of all backend services |
+| `/admin/jobs` | Admin | Manually trigger pipeline jobs (consolidate / prune / cluster / mine) for any user |
+| `/admin/audit` | Admin | System-wide audit log |
+| `/admin/users` | Admin | Paginated user list — create, activate/deactivate, change role |
+| `/admin/users/[userId]` | Admin | Per-user detail, role toggle, memory wipe |
+
+### Authentication
+
+The UI uses **NextAuth.js v5** with a Credentials provider that exchanges a username + password for a JWT issued by `POST /auth/token`. The token is stored in a server-side session cookie and forwarded as a `Bearer` header to all API calls.
+
+- Regular users can only access `/dashboard/**`
+- Admin users also have access to `/admin/**`
+- Middleware redirects unauthenticated requests to `/login`
+
+### Fact graph (Identity page)
+
+The Identity page includes an interactive **React Flow** visualisation of the Neo4j fact graph:
+
+- The logged-in user appears as the central node
+- Facts are clustered radially by category (preference, interest, role, project, skill, goal, relationship)
+- `RELATED_TO` edges between facts are shown as animated orange lines
+- Each category has its own colour; a legend is shown in the bottom-left corner
+
+### Memory graph (Memory detail page)
+
+Each memory event has a dedicated graph view at `/dashboard/memories/[id]`:
+
+- The focal event is centred
+- Predecessor events (what caused this memory) appear on the left
+- Successor events (what this led to) appear on the right
+- Edge colours encode relation type: rose=caused, amber=preceded, violet=related, cyan=contradicts
+- Clicking any node navigates to that event's own graph
+
+---
+
 ## API reference
+
+### Authentication API
+
+Smritikosh has a built-in user system. Most write endpoints require a Bearer JWT; the auth endpoints themselves are public.
+
+#### `POST /auth/token`
+
+Exchange a username + password for a JWT access token.
+
+```bash
+curl -X POST http://localhost:8080/auth/token \
+  -H "Content-Type: application/json" \
+  -d '{"username": "alice", "password": "secret123"}'
+```
+
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "bearer",
+  "user_id": "alice",
+  "role": "user",
+  "app_id": "default"
+}
+```
+
+Use the token in subsequent requests:
+
+```bash
+curl http://localhost:8080/auth/me \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+Returns `401 Unauthorized` if credentials are wrong or the account is inactive.
+
+#### `POST /auth/register`
+
+Register a new user. **Requires admin JWT.**
+
+```bash
+curl -X POST http://localhost:8080/auth/register \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <admin-token>" \
+  -d '{
+    "username": "bob",
+    "password": "securepass",
+    "role": "user",
+    "app_id": "default",
+    "email": "bob@example.com"
+  }'
+```
+
+```json
+{
+  "user_id": "bob",
+  "username": "bob",
+  "role": "user",
+  "app_id": "default",
+  "email": "bob@example.com",
+  "is_active": true,
+  "created_at": "2026-01-01T00:00:00+00:00"
+}
+```
+
+Returns `409 Conflict` if the username is already taken. Returns `422` if `role` is invalid or password is shorter than 8 characters.
+
+#### `GET /auth/me`
+
+Return the currently authenticated user's profile.
+
+```bash
+curl http://localhost:8080/auth/me \
+  -H "Authorization: Bearer <token>"
+```
+
+---
 
 ### `GET /health`
 
@@ -682,299 +1635,6 @@ curl -X POST http://localhost:8080/memory/search \
 
 ### `POST /memory/event`
 
-Store a user interaction in episodic memory. Runs the full Hippocampus pipeline: importance scoring → embedding → fact extraction → PostgreSQL + Neo4j writes.
-
-```bash
-curl -X POST http://localhost:8080/memory/event \
-  -H "Content-Type: application/json" \
-  -d '{
-    "user_id": "alice",
-    "content": "I prefer dark mode and use Neovim as my editor.",
-    "app_id": "myapp",
-    "metadata": {"source": "chat"}
-  }'
-```
-
-```json
-{
-  "event_id": "3f7a1b2c-...",
-  "user_id": "alice",
-  "importance_score": 0.72,
-  "facts_extracted": 2,
-  "extraction_failed": false
-}
-```
-
-| Field | Type | Description |
-|---|---|---|
-| `user_id` | string | **Required.** Unique user identifier |
-| `content` | string | **Required.** Raw text to encode |
-| `app_id` | string | Application namespace (default: `"default"`) |
-| `metadata` | object | Optional extra context |
-
----
-
-### `POST /context`
-
-Retrieve a memory context block for a user query. Uses hybrid search (vector similarity + recency decay + importance score) and the user's semantic profile from Neo4j.
-
-```bash
-curl -X POST http://localhost:8080/context \
-  -H "Content-Type: application/json" \
-  -d '{
-    "user_id": "alice",
-    "query": "What editor and theme does Alice prefer?",
-    "app_id": "myapp"
-  }'
-```
-
-```json
-{
-  "user_id": "alice",
-  "query": "What editor and theme does Alice prefer?",
-  "context_text": "## User Memory Context\n### Who this user is:\n...",
-  "messages": [{"role": "system", "content": "## User Memory Context\n..."}],
-  "total_memories": 4,
-  "embedding_failed": false
-}
-```
-
-Inject `messages` directly before your LLM call:
-
-```python
-memory_messages = context.messages          # [{"role": "system", ...}]
-user_messages   = [{"role": "user", "content": "What editor should I use?"}]
-response = await llm.complete(memory_messages + user_messages)
-```
-
----
-
-### `GET /memory/{user_id}`
-
-Browse recent events for a user.
-
-```bash
-curl "http://localhost:8080/memory/alice?app_id=myapp&limit=5"
-```
-
-```json
-{
-  "user_id": "alice",
-  "app_id": "myapp",
-  "events": [
-    {
-      "event_id": "3f7a1b2c-...",
-      "raw_text": "I prefer dark mode and use Neovim.",
-      "importance_score": 0.72,
-      "consolidated": false,
-      "created_at": "2024-06-01T12:00:00+00:00"
-    }
-  ]
-}
-```
-
-| Query param | Default | Description |
-|---|---|---|
-| `app_id` | `"default"` | Application namespace |
-| `limit` | `10` | Events to return (1–50) |
-
----
-
-### `GET /identity/{user_id}`
-
-Retrieve the synthesized identity model for a user. Aggregates semantic facts from Neo4j into per-category dimensions, generates a narrative summary via LLM, and includes any inferred beliefs from the `user_beliefs` table.
-
-```bash
-curl "http://localhost:8080/identity/alice?app_id=myapp"
-```
-
-```json
-{
-  "user_id": "alice",
-  "app_id": "myapp",
-  "summary": "Alice is an AI entrepreneur who values speed and iterative development...",
-  "dimensions": [
-    {
-      "category": "role",
-      "dominant_value": "founder",
-      "confidence": 0.95,
-      "fact_count": 3
-    }
-  ],
-  "beliefs": [
-    {
-      "statement": "values iterative development over big-bang launches",
-      "category": "value",
-      "confidence": 0.88,
-      "evidence_count": 4
-    }
-  ],
-  "total_facts": 12,
-  "computed_at": "2026-03-15T10:00:00+00:00",
-  "is_empty": false
-}
-```
-
-| Query param | Default | Description |
-|---|---|---|
-| `app_id` | `"default"` | Application namespace |
-
----
-
-### `POST /feedback`
-
-Submit feedback on a recalled memory event. Immediately adjusts the event's `importance_score`, influencing future hybrid search rankings.
-
-```bash
-curl -X POST http://localhost:8080/feedback \
-  -H "Content-Type: application/json" \
-  -d '{
-    "event_id": "3f7a1b2c-...",
-    "user_id": "alice",
-    "feedback_type": "positive",
-    "comment": "Exactly what I was looking for"
-  }'
-```
-
-```json
-{
-  "feedback_id": "9a2c4e1f-...",
-  "event_id": "3f7a1b2c-...",
-  "new_importance_score": 0.82
-}
-```
-
-| Field | Type | Description |
-|---|---|---|
-| `event_id` | string | **Required.** UUID of the recalled event |
-| `user_id` | string | **Required.** User submitting the feedback |
-| `feedback_type` | string | **Required.** `"positive"`, `"negative"`, or `"neutral"` |
-| `app_id` | string | Application namespace (default: `"default"`) |
-| `comment` | string | Optional free-text note |
-
-Score adjustments: `positive` → +0.10, `negative` → −0.10, `neutral` → no change (signal is stored but score is unchanged). Score is always clamped to [0.0, 1.0].
-
----
-
-### `DELETE /memory/event/{event_id}`
-
-Delete a single event from episodic memory (PostgreSQL only — Neo4j facts distilled from this event are retained).
-
-```bash
-curl -X DELETE "http://localhost:8080/memory/event/3f7a1b2c-..."
-```
-
-```json
-{"deleted": true}
-```
-
----
-
-### `DELETE /memory/user/{user_id}`
-
-Delete **all** episodic events for a user. Useful for GDPR/right-to-erasure workflows.
-
-```bash
-curl -X DELETE "http://localhost:8080/memory/user/alice?app_id=myapp"
-```
-
-```json
-{"deleted_count": 42}
-```
-
-| Query param | Default | Description |
-|---|---|---|
-| `app_id` | `"default"` | Scope deletion to one application namespace |
-
----
-
-## Procedural memory API
-
-Procedural memories are persistent **trigger → instruction** rules attached to a user. On every `/context` call they are fuzzy-matched against the current query and injected into the context block, so the LLM automatically adjusts its behaviour without the application needing to track this separately.
-
-Matching uses three escalating strategies:
-1. **Substring match** — trigger phrase appears inside the query → score 1.0
-2. **Token match** — any query token (> 3 chars) appears inside the trigger → score 0.5
-3. **Jaccard overlap** — token overlap between query and trigger ≥ threshold → score varies
-
-### `POST /procedures`
-
-```bash
-curl -X POST http://localhost:8080/procedures \
-  -H "Content-Type: application/json" \
-  -d '{
-    "user_id": "alice",
-    "trigger": "LLM deployment",
-    "instruction": "Always mention GPU memory requirements and batching strategies.",
-    "priority": 8,
-    "category": "topic_response"
-  }'
-```
-
-```json
-{
-  "procedure_id": "7c3d9f...",
-  "user_id": "alice",
-  "trigger": "LLM deployment",
-  "instruction": "Always mention GPU memory requirements...",
-  "priority": 8,
-  "category": "topic_response",
-  "is_active": true,
-  "hit_count": 0
-}
-```
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `user_id` | string | **Required** | User this rule applies to |
-| `trigger` | string | **Required** | Topic/phrase that activates this rule |
-| `instruction` | string | **Required** | Instruction injected into the system prompt |
-| `app_id` | string | `"default"` | Application namespace |
-| `priority` | int | `5` | 1–10, higher = appears first in context |
-| `category` | string | `"topic_response"` | Free-form label (e.g. `communication`, `format`) |
-
-### `GET /procedures/{user_id}`
-
-```bash
-curl "http://localhost:8080/procedures/alice?app_id=myapp&active_only=true"
-```
-
-Returns a JSON array of the user's procedures ordered by priority descending.
-
-### `PATCH /procedures/{procedure_id}`
-
-Update any field on an existing procedure. Useful for deactivating (`is_active: false`) or adjusting priority.
-
-```bash
-curl -X PATCH "http://localhost:8080/procedures/7c3d9f..." \
-  -H "Content-Type: application/json" \
-  -d '{"priority": 10, "is_active": true}'
-```
-
-### `DELETE /procedures/{procedure_id}`
-
-```bash
-curl -X DELETE "http://localhost:8080/procedures/7c3d9f..."
-```
-
-```json
-{"deleted": true}
-```
-
-### `DELETE /procedures/user/{user_id}`
-
-Delete all procedures for a user.
-
-```bash
-curl -X DELETE "http://localhost:8080/procedures/user/alice?app_id=myapp"
-```
-
-```json
-{"deleted_count": 5}
-```
-
----
-
 ## Admin jobs
 
 Manual triggers for background jobs. Useful during development, testing, or forced re-processing.
@@ -1030,7 +1690,78 @@ curl -X POST http://localhost:8080/admin/reconsolidate \
 }
 ```
 
-All admin routes return `503 Service Unavailable` if the background scheduler has not been started (e.g. bare ASGI without `lifespan`).
+All admin job routes return `503 Service Unavailable` if the background scheduler has not been started (e.g. bare ASGI without `lifespan`).
+
+---
+
+## Admin users API
+
+Manage registered users. All endpoints require an **admin JWT**.
+
+### `GET /admin/users`
+
+Return a paginated list of all registered accounts.
+
+```bash
+curl "http://localhost:8080/admin/users?limit=20&offset=0" \
+  -H "Authorization: Bearer <admin-token>"
+```
+
+```json
+{
+  "users": [
+    {
+      "username": "alice",
+      "email": "alice@example.com",
+      "role": "user",
+      "app_id": "default",
+      "is_active": true,
+      "created_at": "2026-01-01T00:00:00+00:00",
+      "updated_at": "2026-01-01T00:00:00+00:00"
+    }
+  ],
+  "total": 1,
+  "limit": 20,
+  "offset": 0
+}
+```
+
+| Query param | Default | Description |
+|---|---|---|
+| `limit` | `50` | Results per page (1–200) |
+| `offset` | `0` | Pagination offset |
+| `role` | — | Filter by role (`user` or `admin`) |
+
+### `GET /admin/users/{username}`
+
+Fetch a single user by username.
+
+```bash
+curl http://localhost:8080/admin/users/alice \
+  -H "Authorization: Bearer <admin-token>"
+```
+
+Returns `404` if the username does not exist.
+
+### `PATCH /admin/users/{username}`
+
+Update a user's `is_active` flag or `role`. Only the fields you send are changed.
+
+```bash
+# Deactivate a user
+curl -X PATCH http://localhost:8080/admin/users/alice \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <admin-token>" \
+  -d '{"is_active": false}'
+
+# Promote to admin
+curl -X PATCH http://localhost:8080/admin/users/alice \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <admin-token>" \
+  -d '{"role": "admin"}'
+```
+
+Returns the updated user object. Returns `422` if `role` is not `"user"` or `"admin"`.
 
 ---
 

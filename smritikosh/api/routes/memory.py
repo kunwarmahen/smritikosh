@@ -11,6 +11,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import or_, select
 from neo4j import AsyncSession as NeoSession
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +21,9 @@ from smritikosh.api.schemas import (
     DeleteUserMemoryResponse,
     EventRequest,
     EventResponse,
+    MemoryEventDetail,
+    MemoryLinkItem,
+    MemoryLinksResponse,
     RecentEventItem,
     RecentEventsResponse,
     SearchRequest,
@@ -27,6 +31,7 @@ from smritikosh.api.schemas import (
     SearchResultItem,
 )
 from smritikosh.llm.adapter import LLMAdapter
+from smritikosh.db.models import Event, MemoryLink
 from smritikosh.db.neo4j import get_neo4j_session
 from smritikosh.db.postgres import get_session
 from smritikosh.memory.episodic import EpisodicMemory
@@ -202,11 +207,120 @@ async def search_memory(
     )
 
 
+@router.get("/event/{event_id}", response_model=MemoryEventDetail)
+async def get_event(
+    event_id: str,
+    pg: Annotated[AsyncSession, Depends(get_session)],
+) -> MemoryEventDetail:
+    """Return a single memory event by ID."""
+    try:
+        eid = uuid.UUID(event_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid event_id UUID format.")
+
+    result = await pg.execute(select(Event).where(Event.id == eid))  # noqa: E501
+    event = result.scalar_one_or_none()
+    if event is None:
+        raise HTTPException(status_code=404, detail="Event not found.")
+
+    return MemoryEventDetail(
+        event_id=str(event.id),
+        user_id=event.user_id,
+        app_id=event.app_id,
+        raw_text=event.raw_text,
+        summary=event.summary,
+        importance_score=event.importance_score,
+        recall_count=event.recall_count or 0,
+        reconsolidation_count=event.reconsolidation_count or 0,
+        consolidated=event.consolidated,
+        cluster_id=event.cluster_id,
+        cluster_label=event.cluster_label,
+        created_at=event.created_at.isoformat() if event.created_at else "",
+        updated_at=event.updated_at.isoformat() if event.updated_at else "",
+        last_reconsolidated_at=(
+            event.last_reconsolidated_at.isoformat()
+            if event.last_reconsolidated_at else None
+        ),
+    )
+
+
+@router.get("/event/{event_id}/links", response_model=MemoryLinksResponse)
+async def get_event_links(
+    event_id: str,
+    pg: Annotated[AsyncSession, Depends(get_session)],
+) -> MemoryLinksResponse:
+    """
+    Return all narrative links touching this event (both directions).
+
+    Each link includes a short preview of the connected event's text
+    so callers can render the graph without a second round-trip.
+    """
+    try:
+        eid = uuid.UUID(event_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid event_id UUID format.")
+
+    # Load all links where this event is either source or target
+    links_result = await pg.execute(
+        select(MemoryLink).where(
+            or_(MemoryLink.from_event_id == eid, MemoryLink.to_event_id == eid)
+        ).limit(100)
+    )
+    links = links_result.scalars().all()
+
+    if not links:
+        return MemoryLinksResponse(event_id=event_id, links=[])
+
+    # Collect the IDs of the *other* side of each link
+    related_ids = {
+        link.to_event_id if link.from_event_id == eid else link.from_event_id
+        for link in links
+    }
+    events_result = await pg.execute(
+        select(Event).where(Event.id.in_(related_ids))
+    )
+    event_map: dict[uuid.UUID, Event] = {
+        e.id: e for e in events_result.scalars().all()
+    }
+
+    def preview(e: Event | None) -> str:
+        if e is None:
+            return ""
+        return e.raw_text[:100] + ("…" if len(e.raw_text) > 100 else "")
+
+    items = []
+    for link in links:
+        from_event = event_map.get(link.from_event_id) if link.from_event_id != eid else None
+        to_event   = event_map.get(link.to_event_id)   if link.to_event_id   != eid else None
+
+        # Reconstruct full preview pair: anchor event has an empty preview slot
+        if link.from_event_id == eid:
+            from_preview = ""          # this is the anchor itself
+            to_preview   = preview(event_map.get(link.to_event_id))
+        else:
+            from_preview = preview(event_map.get(link.from_event_id))
+            to_preview   = ""          # this is the anchor itself
+
+        items.append(
+            MemoryLinkItem(
+                link_id=str(link.id),
+                from_event_id=str(link.from_event_id),
+                from_event_preview=from_preview,
+                to_event_id=str(link.to_event_id),
+                to_event_preview=to_preview,
+                relation_type=link.relation_type,
+                created_at=link.created_at.isoformat() if link.created_at else "",
+            )
+        )
+
+    return MemoryLinksResponse(event_id=event_id, links=items)
+
+
 @router.get("/{user_id}", response_model=RecentEventsResponse, tags=["memory"])
 async def get_recent_events(
     user_id: str,
     app_id: Annotated[str, Query(description="Application namespace")] = "default",
-    limit: Annotated[int, Query(ge=1, le=50, description="Number of events to return")] = 10,
+    limit: Annotated[int, Query(ge=1, le=500, description="Number of events to return")] = 10,
     episodic: Annotated[EpisodicMemory, Depends(get_episodic)] = None,
     pg: Annotated[AsyncSession, Depends(get_session)] = None,
 ) -> RecentEventsResponse:

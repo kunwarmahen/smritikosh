@@ -36,6 +36,8 @@ dependencies = [
     "structlog>=24.4.0",        # structured logging
     "python-multipart>=0.0.9",  # file upload support (FastAPI UploadFile)
     "motor>=3.6.0",             # async MongoDB driver (audit trail)
+    "passlib[bcrypt]>=1.7.4",   # password hashing
+    "PyJWT>=2.9.0",             # JWT creation and verification
 ]
 
 [project.optional-dependencies]

@@ -11,6 +11,42 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 
+# ── POST /auth/token  POST /auth/register  GET /auth/me ───────────────────────
+
+
+class TokenRequest(BaseModel):
+    username: str
+    password: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user_id: str
+    role: str
+    app_id: str
+
+
+class RegisterRequest(BaseModel):
+    username: str = Field(..., min_length=3, max_length=255)
+    password: str = Field(..., min_length=8)
+    role: str = Field("user", description="'user' or 'admin'")
+    app_id: str = Field("default")
+    email: Optional[str] = None
+
+
+class UserResponse(BaseModel):
+    user_id: str
+    username: str
+    role: str
+    app_id: str
+    email: Optional[str]
+    is_active: bool
+    created_at: str
+
+    model_config = {"from_attributes": True}
+
+
 # ── POST /memory/event ────────────────────────────────────────────────────────
 
 
@@ -72,6 +108,43 @@ class RecentEventsResponse(BaseModel):
     events: list[RecentEventItem]
 
 
+# ── GET /memory/event/{event_id}  GET /memory/event/{event_id}/links ──────────
+
+
+class MemoryEventDetail(BaseModel):
+    event_id: str
+    user_id: str
+    app_id: str
+    raw_text: str
+    summary: Optional[str] = None
+    importance_score: float
+    recall_count: int = 0
+    reconsolidation_count: int = 0
+    consolidated: bool
+    cluster_id: Optional[int] = None
+    cluster_label: Optional[str] = None
+    created_at: str
+    updated_at: str
+    last_reconsolidated_at: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class MemoryLinkItem(BaseModel):
+    link_id: str
+    from_event_id: str
+    from_event_preview: str
+    to_event_id: str
+    to_event_preview: str
+    relation_type: str          # caused | preceded | related | contradicts
+    created_at: str
+
+
+class MemoryLinksResponse(BaseModel):
+    event_id: str
+    links: list[MemoryLinkItem]
+
+
 # ── POST /feedback ────────────────────────────────────────────────────────────
 
 
@@ -117,6 +190,33 @@ class IdentityResponse(BaseModel):
     total_facts: int
     computed_at: str
     is_empty: bool
+
+
+# ── GET /graph/facts/{user_id} ────────────────────────────────────────────────
+
+
+class FactGraphNode(BaseModel):
+    id: str
+    label: str
+    node_type: str          # "user" | "fact"
+    category: str | None = None
+    confidence: float | None = None
+    frequency_count: int | None = None
+
+
+class FactGraphEdge(BaseModel):
+    id: str
+    source: str
+    target: str
+    relation: str           # e.g. HAS_PREFERENCE, RELATED_TO
+    strength: float | None = None
+
+
+class FactGraphResponse(BaseModel):
+    user_id: str
+    app_id: str
+    nodes: list[FactGraphNode]
+    edges: list[FactGraphEdge]
 
 
 # ── POST /procedures ──────────────────────────────────────────────────────────
@@ -287,3 +387,30 @@ class SearchResponse(BaseModel):
     results: list[SearchResultItem]
     total: int
     embedding_failed: bool
+
+
+# ── GET /admin/users  GET /admin/users/{username}  PATCH /admin/users/{username} ─
+
+
+class AdminUserItem(BaseModel):
+    username: str
+    email: Optional[str] = None
+    role: str
+    app_id: str
+    is_active: bool
+    created_at: str
+    updated_at: str
+
+    model_config = {"from_attributes": True}
+
+
+class AdminUsersResponse(BaseModel):
+    users: list[AdminUserItem]
+    total: int
+    limit: int
+    offset: int
+
+
+class AdminUserPatch(BaseModel):
+    is_active: Optional[bool] = None
+    role: Optional[str] = None
