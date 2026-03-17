@@ -189,16 +189,16 @@ export function createApiClient(token?: string) {
 
     // ── Admin — jobs ──────────────────────────────────────────────────────
     adminConsolidate: (userId: string, appId = "default") =>
-      request(`/admin/consolidate?user_id=${userId}&app_id=${appId}`, opts({ method: "POST" })),
+      request(`/admin/consolidate`, opts({ method: "POST", body: JSON.stringify({ user_id: userId, app_id: appId }) })),
 
     adminPrune: (userId: string, appId = "default") =>
-      request(`/admin/prune?user_id=${userId}&app_id=${appId}`, opts({ method: "POST" })),
+      request(`/admin/prune`, opts({ method: "POST", body: JSON.stringify({ user_id: userId, app_id: appId }) })),
 
     adminCluster: (userId: string, appId = "default") =>
-      request(`/admin/cluster?user_id=${userId}&app_id=${appId}`, opts({ method: "POST" })),
+      request(`/admin/cluster`, opts({ method: "POST", body: JSON.stringify({ user_id: userId, app_id: appId }) })),
 
     adminMineBeliefs: (userId: string, appId = "default") =>
-      request(`/admin/mine-beliefs?user_id=${userId}&app_id=${appId}`, opts({ method: "POST" })),
+      request(`/admin/mine-beliefs`, opts({ method: "POST", body: JSON.stringify({ user_id: userId, app_id: appId }) })),
   };
 }
 

@@ -47,6 +47,18 @@ class EventType:
     SEARCH_PERFORMED       = "search.performed"
 
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _normalize_record(record: dict) -> dict:
+    """Ensure the timestamp field is an ISO 8601 string with UTC offset."""
+    ts = record.get("timestamp")
+    if isinstance(ts, datetime):
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        record["timestamp"] = ts.isoformat()
+    return record
+
+
 # ── Audit record ──────────────────────────────────────────────────────────────
 
 @dataclass
@@ -178,7 +190,7 @@ class AuditLogger:
             .skip(offset)
             .limit(limit)
         )
-        return await cursor.to_list(length=limit)
+        return [_normalize_record(r) for r in await cursor.to_list(length=limit)]
 
     async def get_event_lineage(self, event_id: str) -> list[dict]:
         """Return all audit records linked to one episodic event_id."""
@@ -186,7 +198,7 @@ class AuditLogger:
             self._col.find({"event_id": event_id}, {"_id": 0})
             .sort("timestamp", 1)
         )
-        return await cursor.to_list(length=200)
+        return [_normalize_record(r) for r in await cursor.to_list(length=200)]
 
     async def get_stats(
         self, user_id: str, app_id: str = "default"

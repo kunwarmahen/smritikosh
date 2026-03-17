@@ -98,6 +98,8 @@ class RecentEventItem(BaseModel):
     importance_score: float
     consolidated: bool
     created_at: str
+    cluster_id: Optional[int] = None
+    cluster_label: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

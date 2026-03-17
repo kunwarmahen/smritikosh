@@ -337,6 +337,8 @@ async def get_recent_events(
                 importance_score=e.importance_score,
                 consolidated=e.consolidated,
                 created_at=e.created_at.isoformat() if e.created_at else "",
+                cluster_id=e.cluster_id,
+                cluster_label=e.cluster_label,
             )
             for e in events
         ],
