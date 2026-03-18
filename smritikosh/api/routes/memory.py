@@ -15,7 +15,7 @@ from sqlalchemy import or_, select
 from neo4j import AsyncSession as NeoSession
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from smritikosh.auth.deps import assert_self_or_admin, get_current_user
+from smritikosh.auth.deps import assert_app_access, assert_self_or_admin, get_current_user
 from smritikosh.api.deps import get_audit_logger, get_hippocampus, get_episodic, get_llm
 from smritikosh.api.schemas import (
     DeleteEventResponse,
@@ -63,6 +63,7 @@ async def capture_event(
     If fact extraction fails the event is still stored (extraction_failed=True).
     """
     assert_self_or_admin(current_user, request.user_id)
+    assert_app_access(current_user, request.app_id)
     try:
         result = await hippocampus.encode(
             pg,
@@ -128,6 +129,7 @@ async def delete_user_memory(
     Semantic facts in Neo4j are not affected by this endpoint.
     """
     assert_self_or_admin(current_user, user_id)
+    assert_app_access(current_user, app_id)
     count = await episodic.delete_all_for_user(pg, user_id, app_id)
     logger.info(
         "Deleted all user memory",
@@ -155,6 +157,7 @@ async def search_memory(
     or procedural rules — it returns event rows with their score breakdown.
     """
     assert_self_or_admin(current_user, request.user_id)
+    resolved_app_ids = request.app_ids or current_user.get("app_ids")
     embedding_failed = False
     query_embedding: list[float] | None = None
 
@@ -177,7 +180,7 @@ async def search_memory(
         pg,
         request.user_id,
         query_embedding,
-        app_id=request.app_id,
+        app_ids=resolved_app_ids,
         top_k=request.limit,
         from_date=request.from_date,
         to_date=request.to_date,
@@ -203,7 +206,7 @@ async def search_memory(
         await audit.emit(AuditEvent(
             event_type=EventType.SEARCH_PERFORMED,
             user_id=request.user_id,
-            app_id=request.app_id,
+            app_id=(resolved_app_ids[0] if resolved_app_ids else "default"),
             payload={
                 "query_preview": request.query[:200],
                 "results_count": len(items),
@@ -341,7 +344,7 @@ async def get_event_links(
 @router.get("/{user_id}", response_model=RecentEventsResponse, tags=["memory"])
 async def get_recent_events(
     user_id: str,
-    app_id: Annotated[str, Query(description="Application namespace")] = "default",
+    app_ids: Annotated[list[str] | None, Query(description="App namespaces to filter by")] = None,
     limit: Annotated[int, Query(ge=1, le=500, description="Number of events to return")] = 10,
     episodic: Annotated[EpisodicMemory, Depends(get_episodic)] = None,
     pg: Annotated[AsyncSession, Depends(get_session)] = None,
@@ -349,11 +352,12 @@ async def get_recent_events(
 ) -> RecentEventsResponse:
     """Return the most recent memory events for a user, newest first."""
     assert_self_or_admin(current_user, user_id)
-    events = await episodic.get_recent(pg, user_id, app_id=app_id, limit=limit)
+    resolved_app_ids = app_ids or current_user.get("app_ids")
+    events = await episodic.get_recent(pg, user_id, resolved_app_ids, limit=limit)
 
     return RecentEventsResponse(
         user_id=user_id,
-        app_id=app_id,
+        app_ids=resolved_app_ids or [],
         events=[
             RecentEventItem(
                 event_id=str(e.id),

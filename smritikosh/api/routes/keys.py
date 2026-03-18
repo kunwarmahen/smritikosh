@@ -12,11 +12,11 @@ from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from smritikosh.auth.deps import get_current_user
+from smritikosh.auth.deps import assert_app_access, get_current_user
 from smritikosh.auth.utils import generate_api_key
 from smritikosh.db.models import ApiKey
 from smritikosh.db.postgres import get_session
@@ -29,7 +29,7 @@ router = APIRouter(prefix="/keys", tags=["api-keys"])
 
 class CreateKeyRequest(BaseModel):
     name: str
-    app_id: str = "default"
+    app_ids: list[str] = Field(default_factory=lambda: ["default"])
 
 
 class CreateKeyResponse(BaseModel):
@@ -37,7 +37,7 @@ class CreateKeyResponse(BaseModel):
     name: str
     key: str          # full key — shown ONCE
     key_prefix: str
-    app_id: str
+    app_ids: list[str]
     created_at: str
 
 
@@ -45,7 +45,7 @@ class KeyItem(BaseModel):
     id: str
     name: str
     key_prefix: str
-    app_id: str
+    app_ids: list[str]
     last_used_at: str | None
     created_at: str
 
@@ -77,11 +77,21 @@ async def create_key(
     if not name:
         raise HTTPException(status_code=422, detail="Key name cannot be empty.")
 
+    # Validate all requested app_ids are within the caller's allowed app_ids
+    caller_app_ids = current_user.get("app_ids", [])
+    if current_user.get("role") != "admin":
+        for aid in request.app_ids:
+            if aid not in caller_app_ids:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Access to app '{aid}' denied.",
+                )
+
     full_key, key_hash, key_prefix = generate_api_key()
 
     api_key = ApiKey(
         user_id=current_user["sub"],
-        app_id=request.app_id,
+        app_ids=request.app_ids,
         name=name,
         key_prefix=key_prefix,
         key_hash=key_hash,
@@ -96,7 +106,7 @@ async def create_key(
         name=api_key.name,
         key=full_key,
         key_prefix=key_prefix,
-        app_id=api_key.app_id,
+        app_ids=api_key.app_ids,
         created_at=api_key.created_at.isoformat(),
     )
 
@@ -121,7 +131,7 @@ async def list_keys(
                 id=str(k.id),
                 name=k.name,
                 key_prefix=k.key_prefix,
-                app_id=k.app_id,
+                app_ids=k.app_ids,
                 last_used_at=k.last_used_at.isoformat() if k.last_used_at else None,
                 created_at=k.created_at.isoformat(),
             )

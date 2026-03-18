@@ -359,7 +359,7 @@ alembic upgrade head
 This runs all the database migrations — it creates every table, enables the pgvector extension, and sets up the vector index. You should see output ending with something like:
 
 ```
-INFO  [alembic.runtime.migration] Running upgrade ... -> 0008_add_app_users, add app_users table
+INFO  [alembic.runtime.migration] Running upgrade ... -> 0009, multi-app access: app_ids array on app_users; create api_keys table
 ```
 
 ---
@@ -401,7 +401,7 @@ Expected response:
   "user_id": "admin",
   "username": "admin",
   "role": "admin",
-  "app_id": "default",
+  "app_ids": ["default"],
   "is_active": true,
   "created_at": "..."
 }
@@ -591,7 +591,7 @@ class SmritikoshClient:
         resp = httpx.post(
             f"{BASE_URL}/context",
             headers=self._headers,
-            json={"user_id": user_id, "query": query, "app_id": self.app_id},
+            json={"user_id": user_id, "query": query, "app_ids": [self.app_id]},
             timeout=30,
         )
         resp.raise_for_status()
@@ -606,7 +606,7 @@ class SmritikoshClient:
             json={
                 "user_id": user_id,
                 "query": query,
-                "app_id": self.app_id,
+                "app_ids": [self.app_id],
                 "limit": limit,
             },
             timeout=30,
@@ -1062,7 +1062,8 @@ alembic/
     ├── 0005_add_user_beliefs.py      # user_beliefs table
     ├── 0006_add_user_procedures.py   # user_procedures table + priority/active indexes
     ├── 0007_add_reconsolidation_fields.py  # reconsolidation_count, last_reconsolidated_at
-    └── 0008_add_app_users.py         # app_users table (username, role, is_active, app_id)
+    ├── 0008_add_app_users.py         # app_users table (username, role, is_active, app_id)
+    └── 0009_multi_app_ids.py         # app_ids TEXT[] on app_users and api_keys; create api_keys table
 ```
 
 ---
@@ -1541,7 +1542,7 @@ curl -X POST http://localhost:8080/auth/token \
   "token_type": "bearer",
   "user_id": "alice",
   "role": "user",
-  "app_id": "default"
+  "app_ids": ["default"]
 }
 ```
 
@@ -1566,7 +1567,7 @@ curl -X POST http://localhost:8080/auth/register \
     "username": "bob",
     "password": "securepass",
     "role": "user",
-    "app_id": "default",
+    "app_ids": ["default"],
     "email": "bob@example.com"
   }'
 ```
@@ -1576,7 +1577,7 @@ curl -X POST http://localhost:8080/auth/register \
   "user_id": "bob",
   "username": "bob",
   "role": "user",
-  "app_id": "default",
+  "app_ids": ["default"],
   "email": "bob@example.com",
   "is_active": true,
   "created_at": "2026-01-01T00:00:00+00:00"
@@ -1753,7 +1754,7 @@ curl "http://localhost:8080/admin/users?limit=20&offset=0" \
       "username": "alice",
       "email": "alice@example.com",
       "role": "user",
-      "app_id": "default",
+      "app_ids": ["default"],
       "is_active": true,
       "created_at": "2026-01-01T00:00:00+00:00",
       "updated_at": "2026-01-01T00:00:00+00:00"
@@ -2138,7 +2139,7 @@ TOKEN=$(curl -s -X POST http://localhost:8080/auth/token \
 curl -s -X POST http://localhost:8080/keys \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name": "My integration", "app_id": "default"}' \
+  -d '{"name": "My integration", "app_ids": ["default"]}' \
   | python3 -m json.tool
 # Returns: { "id": "...", "key": "sk-smriti-abc123...", "key_prefix": "abc123ab", ... }
 # The full key is returned ONCE — store it immediately.
@@ -2267,16 +2268,21 @@ asyncio.run(main())
 
 ### Multi-tenant / multi-app isolation
 
-Use `app_id` to isolate memory between different applications or tenants sharing one server:
+Each memory event is stored under a single `app_id` namespace. Tokens (JWTs and API keys) carry an `app_ids` list that controls which namespaces can be read. This means:
+
+- **Write**: always to one `app_id` (where the memory lives)
+- **Read**: across any subset of `app_ids` your token has access to
 
 ```python
-# Two apps, same user — memories are fully isolated
-chat_client = SmritikoshClient(base_url="...", app_id="chat-app")
-docs_client = SmritikoshClient(base_url="...", app_id="docs-app")
+# Store memories in two separate namespaces
+chat_client  = SmritikoshClient(base_url="...", app_id="chat-app")
+docs_client  = SmritikoshClient(base_url="...", app_id="docs-app")
 
-# Override per-call
-await client.encode(user_id="alice", content="...", app_id="special-context")
+# An API key scoped to both namespaces can read across them in a single context call
+curl -X POST /context -d '{"user_id": "alice", "query": "...", "app_ids": ["chat-app", "docs-app"]}'
 ```
+
+Generate API keys scoped to specific app namespaces from the dashboard under **Settings → API Keys**.
 
 ### Error handling
 

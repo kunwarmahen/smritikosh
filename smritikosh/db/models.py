@@ -29,7 +29,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY, JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from smritikosh.config import settings
@@ -408,8 +408,8 @@ class AppUser(Base):
         admin  — can view and manage any user's data, trigger admin jobs
         user   — can only view and manage their own memory data
 
-    The `app_id` field links this account to one memory namespace.
-    An admin account typically uses app_id="default" to span all namespaces.
+    The `app_ids` field links this account to one or more memory namespaces.
+    An admin account typically uses app_ids=["default"] to span all namespaces.
     """
 
     __tablename__ = "app_users"
@@ -426,7 +426,7 @@ class AppUser(Base):
     email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, default=None)
     password_hash: Mapped[str] = mapped_column(Text)
     role: Mapped[str] = mapped_column(String(20), default=UserRole.USER)
-    app_id: Mapped[str] = mapped_column(String(255), default="default")
+    app_ids: Mapped[list[str]] = mapped_column(PG_ARRAY(String(255)), default=lambda: ["default"])
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now
@@ -463,7 +463,7 @@ class ApiKey(Base):
     user_id: Mapped[str] = mapped_column(
         String(255), ForeignKey("app_users.username", ondelete="CASCADE")
     )
-    app_id: Mapped[str] = mapped_column(String(255), default="default")
+    app_ids: Mapped[list[str]] = mapped_column(PG_ARRAY(String(255)), default=lambda: ["default"])
     name: Mapped[str] = mapped_column(String(255))
     key_prefix: Mapped[str] = mapped_column(String(16))   # first 8 hex chars of random part
     key_hash: Mapped[str] = mapped_column(String(64), unique=True)  # SHA-256 hex

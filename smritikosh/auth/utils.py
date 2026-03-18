@@ -36,12 +36,12 @@ def verify_password(plain: str, hashed: str) -> bool:
 def create_access_token(
     user_id: str,
     role: str,
-    app_id: str,
+    app_ids: list[str],
     *,
     expire_days: int | None = None,
 ) -> str:
     """
-    Create a signed JWT carrying { sub, role, app_id, exp }.
+    Create a signed JWT carrying { sub, role, app_ids, exp }.
 
     The `sub` claim is the username, which is also the `user_id` used
     throughout the memory system.
@@ -51,7 +51,7 @@ def create_access_token(
     payload = {
         "sub": user_id,
         "role": role,
-        "app_id": app_id,
+        "app_ids": app_ids,
         "exp": exp,
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)

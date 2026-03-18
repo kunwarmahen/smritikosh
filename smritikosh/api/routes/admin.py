@@ -263,7 +263,7 @@ async def list_users(
                 username=u.username,
                 email=u.email,
                 role=u.role,
-                app_id=u.app_id,
+                app_ids=u.app_ids,
                 is_active=u.is_active,
                 created_at=u.created_at.isoformat() if u.created_at else "",
                 updated_at=u.updated_at.isoformat() if u.updated_at else "",
@@ -292,7 +292,7 @@ async def get_user(
         username=user.username,
         email=user.email,
         role=user.role,
-        app_id=user.app_id,
+        app_ids=user.app_ids,
         is_active=user.is_active,
         created_at=user.created_at.isoformat() if user.created_at else "",
         updated_at=user.updated_at.isoformat() if user.updated_at else "",
@@ -323,6 +323,8 @@ async def patch_user(
         if body.role not in ("admin", "user"):
             raise HTTPException(status_code=422, detail="role must be 'admin' or 'user'.")
         user.role = body.role
+    if body.app_ids is not None:
+        user.app_ids = body.app_ids
 
     await pg.flush()
 
@@ -330,7 +332,7 @@ async def patch_user(
         username=user.username,
         email=user.email,
         role=user.role,
-        app_id=user.app_id,
+        app_ids=user.app_ids,
         is_active=user.is_active,
         created_at=user.created_at.isoformat() if user.created_at else "",
         updated_at=user.updated_at.isoformat() if user.updated_at else "",

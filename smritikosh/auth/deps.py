@@ -35,7 +35,7 @@ from smritikosh.db.postgres import get_session
 
 _bearer = HTTPBearer(auto_error=False)
 
-_BOOTSTRAP_PAYLOAD = {"sub": "__bootstrap__", "role": "admin", "app_id": "default"}
+_BOOTSTRAP_PAYLOAD = {"sub": "__bootstrap__", "role": "admin", "app_ids": ["default"]}
 
 
 async def get_current_user(
@@ -50,7 +50,7 @@ async def get_current_user(
       • API key (sk-smriti-…) — hashed and looked up in api_keys table.
 
     Raises 401 if missing, expired, invalid, or revoked.
-    The returned dict always contains: sub (username), role, app_id.
+    The returned dict always contains: sub (username), role, app_ids.
     """
     if credentials is None:
         raise HTTPException(
@@ -89,7 +89,7 @@ async def get_current_user(
             .values(last_used_at=datetime.now(timezone.utc))
         )
 
-        return {"sub": app_user.username, "role": app_user.role, "app_id": api_key.app_id}
+        return {"sub": app_user.username, "role": app_user.role, "app_ids": api_key.app_ids}
 
     # ── JWT path ──────────────────────────────────────────────────────────────
     try:
@@ -152,4 +152,16 @@ def assert_self_or_admin(current_user: dict, requested_user_id: str) -> None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied.",
+        )
+
+
+def assert_app_access(current_user: dict, app_id: str) -> None:
+    """Raise 403 if the token does not have access to app_id (admin bypasses)."""
+    if current_user["role"] == "admin":
+        return
+    app_ids = current_user.get("app_ids", [])
+    if app_id not in app_ids:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Access to app '{app_id}' denied.",
         )

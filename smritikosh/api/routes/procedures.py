@@ -15,7 +15,7 @@ from typing import Annotated, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from smritikosh.auth.deps import assert_self_or_admin, get_current_user
+from smritikosh.auth.deps import assert_app_access, assert_self_or_admin, get_current_user
 from smritikosh.api.deps import get_procedural
 from smritikosh.api.schemas import (
     DeleteProcedureResponse,
@@ -52,6 +52,7 @@ async def create_procedure(
         instruction="mention GPU optimization, batching, and quantization"
     """
     assert_self_or_admin(current_user, request.user_id)
+    assert_app_access(current_user, request.app_id)
     proc = await procedural.store(
         pg,
         user_id=request.user_id,
@@ -81,7 +82,7 @@ async def create_procedure(
 @router.get("/{user_id}", response_model=ProcedureListResponse)
 async def list_procedures(
     user_id: str,
-    app_id: Annotated[str, Query(description="Application namespace")] = "default",
+    app_ids: Annotated[list[str] | None, Query(description="App namespaces to filter by")] = None,
     active_only: Annotated[bool, Query(description="Only return active rules")] = True,
     category: Annotated[Optional[str], Query(description="Filter by category")] = None,
     procedural: Annotated[ProceduralMemory, Depends(get_procedural)] = None,
@@ -90,12 +91,13 @@ async def list_procedures(
 ) -> ProcedureListResponse:
     """Return all behavioral rules for a user, ordered by priority descending."""
     assert_self_or_admin(current_user, user_id)
+    resolved_app_ids = app_ids or current_user.get("app_ids")
     procs = await procedural.get_all(
-        pg, user_id, app_id, active_only=active_only, category=category
+        pg, user_id, resolved_app_ids, active_only=active_only, category=category
     )
     return ProcedureListResponse(
         user_id=user_id,
-        app_id=app_id,
+        app_id=(resolved_app_ids[0] if resolved_app_ids else "default"),
         procedures=[
             ProcedureItem(
                 procedure_id=str(p.id),
@@ -173,6 +175,7 @@ async def delete_user_procedures(
 ) -> DeleteUserProceduresResponse:
     """Delete all behavioral rules for a user within an app namespace."""
     assert_self_or_admin(current_user, user_id)
+    assert_app_access(current_user, app_id)
     count = await procedural.delete_all_for_user(pg, user_id, app_id)
     logger.info(
         "Deleted all user procedures",

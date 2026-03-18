@@ -199,7 +199,7 @@ class ProceduralMemory:
         self,
         session: AsyncSession,
         user_id: str,
-        app_id: str = "default",
+        app_ids: list[str] | None = None,
         *,
         active_only: bool = True,
         category: str | None = None,
@@ -208,17 +208,17 @@ class ProceduralMemory:
         Fetch all procedures for a user, ordered by priority descending.
 
         Args:
+            app_ids:     If provided, restrict to procedures in these app namespaces.
             active_only: If True (default), only return is_active=True procedures.
             category:    If set, filter to only this category.
         """
         q = (
             select(UserProcedure)
-            .where(
-                UserProcedure.user_id == user_id,
-                UserProcedure.app_id == app_id,
-            )
+            .where(UserProcedure.user_id == user_id)
             .order_by(UserProcedure.priority.desc(), UserProcedure.hit_count.desc())
         )
+        if app_ids is not None:
+            q = q.where(UserProcedure.app_id.in_(app_ids))
         if active_only:
             q = q.where(UserProcedure.is_active.is_(True))
         if category is not None:
@@ -232,7 +232,7 @@ class ProceduralMemory:
         session: AsyncSession,
         user_id: str,
         query: str,
-        app_id: str = "default",
+        app_ids: list[str] | None = None,
         top_k: int = 5,
     ) -> list[UserProcedure]:
         """
@@ -249,7 +249,7 @@ class ProceduralMemory:
         Returns the top_k matches (list of UserProcedure, not ProcedureMatch,
         for simplicity — use get_matches_with_scores if you need scores).
         """
-        matches = await self._score_matches(session, user_id, query, app_id)
+        matches = await self._score_matches(session, user_id, query, app_ids)
         matches.sort(
             key=lambda m: (m.match_score, m.procedure.priority, m.procedure.hit_count),
             reverse=True,
@@ -261,11 +261,11 @@ class ProceduralMemory:
         session: AsyncSession,
         user_id: str,
         query: str,
-        app_id: str = "default",
+        app_ids: list[str] | None = None,
         top_k: int = 5,
     ) -> list[ProcedureMatch]:
         """Like search_by_query but returns ProcedureMatch with scores."""
-        matches = await self._score_matches(session, user_id, query, app_id)
+        matches = await self._score_matches(session, user_id, query, app_ids)
         matches.sort(
             key=lambda m: (m.match_score, m.procedure.priority, m.procedure.hit_count),
             reverse=True,
@@ -279,7 +279,7 @@ class ProceduralMemory:
         session: AsyncSession,
         user_id: str,
         query: str,
-        app_id: str,
+        app_ids: list[str] | None,
     ) -> list[ProcedureMatch]:
         """
         Fetch all active procedures for the user and score each against the query.
@@ -287,7 +287,7 @@ class ProceduralMemory:
         Returns a flat list of ProcedureMatch objects (unordered).
         Procedures with a score of 0.0 (no match) are excluded.
         """
-        all_procedures = await self.get_all(session, user_id, app_id, active_only=True)
+        all_procedures = await self.get_all(session, user_id, app_ids, active_only=True)
         if not all_procedures:
             return []
 

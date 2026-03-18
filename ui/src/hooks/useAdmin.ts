@@ -33,7 +33,7 @@ export function useAdminPatchUser() {
   const token = session?.accessToken;
 
   return useMutation({
-    mutationFn: ({ username, body }: { username: string; body: { is_active?: boolean; role?: string } }) =>
+    mutationFn: ({ username, body }: { username: string; body: { is_active?: boolean; role?: string; app_ids?: string[] } }) =>
       createApiClient(token).adminPatchUser(username, body),
     onSuccess: (_, { username }) => {
       qc.invalidateQueries({ queryKey: ["admin-users"] });

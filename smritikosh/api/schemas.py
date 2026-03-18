@@ -24,14 +24,14 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     user_id: str
     role: str
-    app_id: str
+    app_ids: list[str]
 
 
 class RegisterRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=255)
     password: str = Field(..., min_length=8)
     role: str = Field("user", description="'user' or 'admin'")
-    app_id: str = Field("default")
+    app_ids: list[str] = Field(default_factory=lambda: ["default"])
     email: Optional[str] = None
 
 
@@ -39,7 +39,7 @@ class UserResponse(BaseModel):
     user_id: str
     username: str
     role: str
-    app_id: str
+    app_ids: list[str]
     email: Optional[str]
     is_active: bool
     created_at: str
@@ -73,7 +73,7 @@ class EventResponse(BaseModel):
 class ContextRequest(BaseModel):
     user_id: str = Field(..., description="User to retrieve memory for")
     query: str = Field(..., description="Current user query or topic to retrieve context around")
-    app_id: str = Field("default", description="Application namespace")
+    app_ids: list[str] | None = Field(None, description="App namespaces to search. Defaults to all apps in your token.")
     from_date: Optional[datetime] = Field(None, description="Only include events on or after this datetime (ISO 8601)")
     to_date: Optional[datetime] = Field(None, description="Only include events on or before this datetime (ISO 8601)")
 
@@ -106,7 +106,7 @@ class RecentEventItem(BaseModel):
 
 class RecentEventsResponse(BaseModel):
     user_id: str
-    app_id: str
+    app_ids: list[str]
     events: list[RecentEventItem]
 
 
@@ -366,7 +366,7 @@ class HealthResponse(BaseModel):
 class SearchRequest(BaseModel):
     user_id: str = Field(..., description="User to search memories for")
     query: str = Field(..., description="Natural-language query to search against")
-    app_id: str = Field("default", description="Application namespace")
+    app_ids: list[str] | None = Field(None, description="App namespaces to search. Defaults to all apps in your token.")
     limit: int = Field(10, ge=1, le=50, description="Maximum results to return")
     from_date: Optional[datetime] = Field(None, description="Only include events on or after this datetime")
     to_date: Optional[datetime] = Field(None, description="Only include events on or before this datetime")
@@ -398,7 +398,7 @@ class AdminUserItem(BaseModel):
     username: str
     email: Optional[str] = None
     role: str
-    app_id: str
+    app_ids: list[str]
     is_active: bool
     created_at: str
     updated_at: str
@@ -416,3 +416,4 @@ class AdminUsersResponse(BaseModel):
 class AdminUserPatch(BaseModel):
     is_active: Optional[bool] = None
     role: Optional[str] = None
+    app_ids: Optional[list[str]] = None

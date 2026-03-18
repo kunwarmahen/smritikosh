@@ -8,7 +8,7 @@ export interface ApiKeyItem {
   id: string;
   name: string;
   key_prefix: string;
-  app_id: string;
+  app_ids: string[];
   last_used_at: string | null;
   created_at: string;
 }
@@ -34,7 +34,7 @@ export function useCreateApiKey() {
   const token = session?.accessToken;
   const qc = useQueryClient();
 
-  return useMutation<CreatedApiKey, Error, { name: string; app_id?: string }>({
+  return useMutation<CreatedApiKey, Error, { name: string; app_ids?: string[] }>({
     mutationFn: (body) => createApiClient(token).createApiKey(body) as Promise<CreatedApiKey>,
     onSuccess: () => qc.invalidateQueries({ queryKey: ["api-keys"] }),
   });

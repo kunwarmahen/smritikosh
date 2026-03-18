@@ -179,7 +179,7 @@ alembic upgrade head
 
 You should see output ending with something like:
 ```
-INFO  [alembic.runtime.migration] Running upgrade ... -> 0008_add_app_users
+INFO  [alembic.runtime.migration] Running upgrade ... -> 0009, multi-app access: app_ids array on app_users; create api_keys table
 ```
 
 ---
@@ -255,7 +255,7 @@ TOKEN=$(curl -s -X POST http://localhost:8080/auth/token \
 curl -s -X POST http://localhost:8080/auth/register \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
-  -d '{"username": "alice", "password": "alicepass", "role": "user"}' \
+  -d '{"username": "alice", "password": "alicepass", "role": "user", "app_ids": ["default"]}' \
   | python3 -m json.tool
 ```
 
@@ -282,7 +282,7 @@ TOKEN=$(curl -s -X POST http://localhost:8080/auth/token \
 curl -s -X POST http://localhost:8080/keys \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name": "local dev", "app_id": "default"}' \
+  -d '{"name": "local dev", "app_ids": ["default"]}' \
   | python3 -m json.tool
 ```
 

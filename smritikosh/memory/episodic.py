@@ -216,7 +216,7 @@ class EpisodicMemory:
         self,
         session: AsyncSession,
         user_id: str,
-        app_id: str = "default",
+        app_ids: list[str] | None = None,
         limit: int = 10,
         include_consolidated: bool = True,
         from_date: Optional[datetime] = None,
@@ -225,15 +225,14 @@ class EpisodicMemory:
         """Return the most recent events for a user, newest first.
 
         Args:
+            app_ids:   If provided, restrict to events in these app namespaces.
             from_date: If provided, only return events created on or after this datetime.
             to_date:   If provided, only return events created on or before this datetime.
         """
-        q = (
-            select(Event)
-            .where(Event.user_id == user_id, Event.app_id == app_id)
-            .order_by(Event.created_at.desc())
-            .limit(limit)
-        )
+        q = select(Event).where(Event.user_id == user_id)
+        if app_ids is not None:
+            q = q.where(Event.app_id.in_(app_ids))
+        q = q.order_by(Event.created_at.desc()).limit(limit)
         if not include_consolidated:
             q = q.where(Event.consolidated.is_(False))
         if from_date is not None:
@@ -248,20 +247,22 @@ class EpisodicMemory:
         self,
         session: AsyncSession,
         user_id: str,
-        app_id: str = "default",
+        app_ids: list[str] | None = None,
         limit: int = 100,
     ) -> list[Event]:
         """Return events not yet processed by the Consolidator (oldest first)."""
-        result = await session.execute(
+        q = (
             select(Event)
             .where(
                 Event.user_id == user_id,
-                Event.app_id == app_id,
                 Event.consolidated.is_(False),
             )
             .order_by(Event.created_at.asc())
             .limit(limit)
         )
+        if app_ids is not None:
+            q = q.where(Event.app_id.in_(app_ids))
+        result = await session.execute(q)
         return list(result.scalars().all())
 
     async def search_similar(
@@ -269,7 +270,7 @@ class EpisodicMemory:
         session: AsyncSession,
         user_id: str,
         query_embedding: list[float],
-        app_id: str = "default",
+        app_ids: list[str] | None = None,
         top_k: int = 5,
     ) -> list[Event]:
         """
@@ -279,16 +280,18 @@ class EpisodicMemory:
         cases where you want raw similarity ranking only.
         """
         vec_literal = _embedding_literal(query_embedding)
-        result = await session.execute(
+        q = (
             select(Event)
             .where(
                 Event.user_id == user_id,
-                Event.app_id == app_id,
                 Event.embedding.is_not(None),
             )
             .order_by(text(f"embedding <=> '{vec_literal}'"))
             .limit(top_k)
         )
+        if app_ids is not None:
+            q = q.where(Event.app_id.in_(app_ids))
+        result = await session.execute(q)
         return list(result.scalars().all())
 
     async def delete_all_for_user(
@@ -310,7 +313,7 @@ class EpisodicMemory:
         session: AsyncSession,
         user_id: str,
         query_embedding: list[float],
-        app_id: str = "default",
+        app_ids: list[str] | None = None,
         top_k: int = 5,
         weights_override: "HybridWeights | None" = None,
         from_date: Optional[datetime] = None,
@@ -332,10 +335,10 @@ class EpisodicMemory:
         w = weights_override if weights_override is not None else self.weights
         vec_literal = _embedding_literal(query_embedding)
 
+        app_id_filter = ""
         date_filter = ""
         params: dict = {
             "user_id": user_id,
-            "app_id": app_id,
             "decay_days": w.decay_days,
             "w_sim": w.similarity,
             "w_rec": w.recency,
@@ -344,6 +347,9 @@ class EpisodicMemory:
             "freq_cap": w.frequency_cap,
             "top_k": top_k,
         }
+        if app_ids is not None:
+            app_id_filter = "\n                AND app_id = ANY(:app_ids)"
+            params["app_ids"] = app_ids
         if from_date is not None:
             date_filter += "\n                AND created_at >= :from_date"
             params["from_date"] = from_date
@@ -364,8 +370,7 @@ class EpisodicMemory:
             FROM events
             WHERE
                 user_id = :user_id
-                AND app_id = :app_id
-                AND embedding IS NOT NULL{date_filter}
+                AND embedding IS NOT NULL{app_id_filter}{date_filter}
             ORDER BY
                 (
                     :w_sim  * (1.0 - (embedding <=> '{vec_literal}'))

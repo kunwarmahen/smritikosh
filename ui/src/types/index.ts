@@ -19,7 +19,7 @@ export interface MemoryEvent {
 
 export interface RecentEventsResponse {
   user_id: string;
-  app_id: string;
+  app_ids: string[];
   events: MemoryEvent[];
 }
 
@@ -106,7 +106,7 @@ export interface AdminUser {
   username: string;
   email?: string | null;
   role: string;
-  app_id: string;
+  app_ids: string[];
   is_active: boolean;
   created_at: string;
   updated_at: string;

@@ -130,7 +130,7 @@ class Consolidator:
 
         # ── 1. Fetch unconsolidated events ────────────────────────────────
         events = await self.episodic.get_unconsolidated(
-            pg_session, user_id, app_id=app_id, limit=self.batch_size * 10
+            pg_session, user_id, app_ids=[app_id], limit=self.batch_size * 10
         )
         result.events_processed = len(events)
 

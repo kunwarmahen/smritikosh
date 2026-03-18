@@ -31,7 +31,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             name: data.user_id,
             accessToken: data.access_token,
             role: data.role,
-            appId: data.app_id,
+            appIds: data.app_ids ?? ["default"],
           };
         } catch {
           return null;
@@ -46,7 +46,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         token.userId = user.id;
         token.accessToken = user.accessToken;
         token.role = user.role;
-        token.appId = user.appId;
+        token.appIds = user.appIds;
       }
       return token;
     },
@@ -54,7 +54,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       session.accessToken = token.accessToken as string;
       session.user.id = token.userId as string;
       session.user.role = token.role as "admin" | "user";
-      session.user.appId = token.appId as string;
+      session.user.appIds = token.appIds as string[];
       return session;
     },
   },

@@ -1,28 +1,39 @@
 "use client";
 
 import { useState } from "react";
-import { Key, Plus, Trash2, Copy, Check, Loader2, Eye, EyeOff } from "lucide-react";
+import { Key, Plus, Trash2, Copy, Check, Loader2 } from "lucide-react";
 import { clsx } from "clsx";
 import { formatDistanceToNow } from "date-fns";
+import { useSession } from "next-auth/react";
 import { useApiKeys, useCreateApiKey, useRevokeApiKey, type ApiKeyItem } from "@/hooks/useApiKeys";
 
 // ── New key modal ──────────────────────────────────────────────────────────────
 
 function NewKeyModal({ onClose }: { onClose: () => void }) {
+  const { data: session } = useSession();
+  const availableAppIds: string[] = session?.user?.appIds ?? ["default"];
+
   const [name, setName] = useState("");
-  const [appId, setAppId] = useState("default");
+  const [selectedAppIds, setSelectedAppIds] = useState<string[]>(availableAppIds);
   const [createdKey, setCreatedKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
 
   const create = useCreateApiKey();
 
+  function toggleAppId(id: string) {
+    setSelectedAppIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
     if (!name.trim()) { setError("Name is required."); return; }
+    if (selectedAppIds.length === 0) { setError("Select at least one app."); return; }
     create.mutate(
-      { name: name.trim(), app_id: appId },
+      { name: name.trim(), app_ids: selectedAppIds },
       {
         onSuccess: (data) => setCreatedKey(data.key),
         onError: (err) => setError(err.message ?? "Failed to create key."),
@@ -82,14 +93,27 @@ function NewKeyModal({ onClose }: { onClose: () => void }) {
               />
             </div>
             <div>
-              <label className="label">App ID</label>
-              <input
-                type="text"
-                className="input"
-                placeholder="default"
-                value={appId}
-                onChange={(e) => setAppId(e.target.value)}
-              />
+              <label className="label">App access</label>
+              <div className="flex flex-wrap gap-2 mt-1">
+                {availableAppIds.map((id) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => toggleAppId(id)}
+                    className={clsx(
+                      "px-2.5 py-1 rounded-md text-xs font-mono border transition-colors",
+                      selectedAppIds.includes(id)
+                        ? "bg-violet-500/15 border-violet-500/40 text-violet-300"
+                        : "bg-zinc-800 border-zinc-700 text-zinc-500 hover:text-zinc-300",
+                    )}
+                  >
+                    {id}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-zinc-700 mt-1.5">
+                Scope this key to a subset of your apps.
+              </p>
             </div>
 
             {error && (
@@ -131,7 +155,7 @@ function KeyRow({ apiKey }: { apiKey: ApiKeyItem }) {
               sk-smriti-{apiKey.key_prefix}…
             </code>
             <span className="text-zinc-700">·</span>
-            <span className="text-xs text-zinc-600">{apiKey.app_id}</span>
+            <span className="text-xs text-zinc-600">{apiKey.app_ids.join(", ")}</span>
             <span className="text-zinc-700">·</span>
             <span className="text-xs text-zinc-600">
               {apiKey.last_used_at

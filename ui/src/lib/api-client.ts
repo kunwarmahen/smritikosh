@@ -66,13 +66,14 @@ export function createApiClient(token?: string) {
       username: string;
       password: string;
       role: string;
-      app_id?: string;
+      app_ids?: string[];
       email?: string;
     }) => request("/auth/register", opts({ method: "POST", body: JSON.stringify(body) })),
 
     // ── Memory ───────────────────────────────────────────────────────────
-    getRecentEvents: (userId: string, params?: { app_id?: string; limit?: number }) => {
-      const q = new URLSearchParams({ app_id: params?.app_id ?? "default" });
+    getRecentEvents: (userId: string, params?: { app_ids?: string[]; limit?: number }) => {
+      const q = new URLSearchParams();
+      if (params?.app_ids) params.app_ids.forEach((id) => q.append("app_ids", id));
       if (params?.limit) q.set("limit", String(params.limit));
       return request(`/memory/${userId}?${q}`, opts());
     },
@@ -80,7 +81,7 @@ export function createApiClient(token?: string) {
     searchMemory: (body: {
       user_id: string;
       query: string;
-      app_id?: string;
+      app_ids?: string[];
       limit?: number;
       from_date?: string;
       to_date?: string;
@@ -102,7 +103,7 @@ export function createApiClient(token?: string) {
     }) => request("/feedback", opts({ method: "POST", body: JSON.stringify(body) })),
 
     // ── Context ───────────────────────────────────────────────────────────
-    buildContext: (body: { user_id: string; query: string; app_id?: string }) =>
+    buildContext: (body: { user_id: string; query: string; app_ids?: string[] }) =>
       request("/context", opts({ method: "POST", body: JSON.stringify(body) })),
 
     // ── Identity ─────────────────────────────────────────────────────────
@@ -137,8 +138,9 @@ export function createApiClient(token?: string) {
       request(`/audit/stats/${userId}?app_id=${appId}`, opts()),
 
     // ── Procedures ────────────────────────────────────────────────────────
-    getProcedures: (userId: string, appId = "default", activeOnly = false) => {
-      const q = new URLSearchParams({ app_id: appId });
+    getProcedures: (userId: string, appIds?: string[], activeOnly = false) => {
+      const q = new URLSearchParams();
+      if (appIds) appIds.forEach((id) => q.append("app_ids", id));
       if (activeOnly) q.set("active_only", "true");
       return request(`/procedures/${userId}?${q}`, opts());
     },
@@ -184,7 +186,7 @@ export function createApiClient(token?: string) {
     adminGetUser: (username: string) =>
       request(`/admin/users/${username}`, opts()),
 
-    adminPatchUser: (username: string, body: { is_active?: boolean; role?: string }) =>
+    adminPatchUser: (username: string, body: { is_active?: boolean; role?: string; app_ids?: string[] }) =>
       request(`/admin/users/${username}`, opts({ method: "PATCH", body: JSON.stringify(body) })),
 
     // ── Admin — jobs ──────────────────────────────────────────────────────
@@ -204,7 +206,7 @@ export function createApiClient(token?: string) {
     listApiKeys: () =>
       request(`/keys`, opts()),
 
-    createApiKey: (body: { name: string; app_id?: string }) =>
+    createApiKey: (body: { name: string; app_ids?: string[] }) =>
       request(`/keys`, opts({ method: "POST", body: JSON.stringify(body) })),
 
     revokeApiKey: (keyId: string) =>

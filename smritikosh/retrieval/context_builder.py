@@ -238,7 +238,7 @@ class ContextBuilder:
         *,
         user_id: str,
         query: str,
-        app_id: str = "default",
+        app_ids: list[str] | None = None,
         from_date: Optional[datetime] = None,
         to_date: Optional[datetime] = None,
     ) -> MemoryContext:
@@ -270,7 +270,7 @@ class ContextBuilder:
                 pg_session,
                 user_id,
                 embedding,
-                app_id=app_id,
+                app_ids=app_ids,
                 top_k=self.top_k_similar,
                 weights_override=intent_result.weights if intent_result else None,
                 from_date=from_date,
@@ -279,17 +279,19 @@ class ContextBuilder:
             if embedding is not None
             else _empty()
         )
+        # Use first app_id for Neo4j profile lookup (graph is scoped by single namespace)
+        neo4j_app_id = app_ids[0] if app_ids else "default"
         profile_task = self.semantic.get_user_profile(
-            neo_session, user_id, app_id,
+            neo_session, user_id, neo4j_app_id,
             min_confidence=self.min_profile_confidence,
         )
         recent_task = self.episodic.get_recent(
-            pg_session, user_id, app_id, limit=self.recent_limit,
+            pg_session, user_id, app_ids, limit=self.recent_limit,
             from_date=from_date, to_date=to_date,
         )
         procedural_task = (
             self.procedural.search_by_query(
-                pg_session, user_id, query, app_id=app_id, top_k=self.top_k_procedures
+                pg_session, user_id, query, app_ids=app_ids, top_k=self.top_k_procedures
             )
             if self.procedural is not None
             else _empty()
@@ -377,7 +379,7 @@ class ContextBuilder:
             await self.audit.emit(AuditEvent(
                 event_type=EventType.CONTEXT_BUILT,
                 user_id=user_id,
-                app_id=app_id,
+                app_id=neo4j_app_id,
                 payload={
                     "query_preview": query[:200],
                     "intent": str(detected_intent),

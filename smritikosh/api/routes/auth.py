@@ -58,7 +58,7 @@ async def login(
     token = create_access_token(
         user_id=user.username,
         role=user.role,
-        app_id=user.app_id,
+        app_ids=user.app_ids,
     )
 
     logger.info("User logged in", extra={"username": user.username, "role": user.role})
@@ -67,7 +67,7 @@ async def login(
         access_token=token,
         user_id=user.username,
         role=user.role,
-        app_id=user.app_id,
+        app_ids=user.app_ids,
     )
 
 
@@ -107,7 +107,7 @@ async def register(
         email=request.email,
         password_hash=hash_password(request.password),
         role=role,
-        app_id=request.app_id,
+        app_ids=request.app_ids,
         is_active=True,
     )
     pg.add(new_user)
@@ -123,7 +123,7 @@ async def register(
         user_id=new_user.username,
         username=new_user.username,
         role=new_user.role,
-        app_id=new_user.app_id,
+        app_ids=new_user.app_ids,
         email=new_user.email,
         is_active=new_user.is_active,
         created_at=created_at.isoformat(),
@@ -151,7 +151,7 @@ async def get_me(
         user_id=user.username,
         username=user.username,
         role=user.role,
-        app_id=user.app_id,
+        app_ids=user.app_ids,
         email=user.email,
         is_active=user.is_active,
         created_at=user.created_at.isoformat(),

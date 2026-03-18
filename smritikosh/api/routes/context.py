@@ -58,13 +58,14 @@ async def get_context(
     Partial context is returned even if one memory system is unavailable.
     """
     assert_self_or_admin(current_user, request.user_id)
+    resolved_app_ids = request.app_ids or current_user.get("app_ids")
     try:
         ctx = await builder.build(
             pg,
             neo,
             user_id=request.user_id,
             query=request.query,
-            app_id=request.app_id,
+            app_ids=resolved_app_ids,
             from_date=request.from_date,
             to_date=request.to_date,
         )

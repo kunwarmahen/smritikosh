@@ -78,7 +78,7 @@ class SmritikoshClient:
         resp = httpx.post(
             f"{BASE_URL}/context",
             headers=self._headers,
-            json={"user_id": user_id, "query": query, "app_id": self.app_id},
+            json={"user_id": user_id, "query": query, "app_ids": [self.app_id]},
             timeout=30,
         )
         resp.raise_for_status()
@@ -93,7 +93,7 @@ class SmritikoshClient:
             json={
                 "user_id": user_id,
                 "query": query,
-                "app_id": self.app_id,
+                "app_ids": [self.app_id],
                 "limit": limit,
             },
             timeout=30,

@@ -78,7 +78,7 @@ export default function AdminUserDetailPage({
             <div className="space-y-0">
               <InfoRow label="Username"><span className="mono text-zinc-300">{user.username}</span></InfoRow>
               <InfoRow label="Email"><span className="text-zinc-400">{user.email ?? "—"}</span></InfoRow>
-              <InfoRow label="App ID"><span className="mono text-zinc-400">{user.app_id}</span></InfoRow>
+              <InfoRow label="App IDs"><span className="mono text-zinc-400">{(user.app_ids ?? []).join(", ")}</span></InfoRow>
               <InfoRow label="Created">
                 <span className="text-zinc-500 text-xs">
                   {formatDistanceToNow(new Date(user.created_at), { addSuffix: true })}
