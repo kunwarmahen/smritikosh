@@ -8,6 +8,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from smritikosh.auth.deps import assert_self_or_admin, get_current_user
 from smritikosh.api.deps import get_audit_logger, get_reinforcement
 from smritikosh.api.schemas import FeedbackRequest, FeedbackResponse
 from smritikosh.db.models import FeedbackType
@@ -24,6 +25,7 @@ async def submit_feedback(
     request: FeedbackRequest,
     pg: AsyncSession = Depends(get_session),
     loop: ReinforcementLoop = Depends(get_reinforcement),
+    current_user: dict = Depends(get_current_user),
 ) -> FeedbackResponse:
     """
     Record user feedback on a recalled memory and adjust its importance score.
@@ -35,6 +37,7 @@ async def submit_feedback(
     The updated importance_score influences all future hybrid_search rankings
     for this event.
     """
+    assert_self_or_admin(current_user, request.user_id)
     try:
         event_id = uuid.UUID(request.event_id)
     except ValueError:

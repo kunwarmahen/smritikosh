@@ -11,6 +11,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from neo4j import AsyncSession as NeoSession
 
+from smritikosh.auth.deps import assert_self_or_admin, get_current_user
 from smritikosh.api.deps import get_neo4j_session
 from smritikosh.api.schemas import FactGraphEdge, FactGraphNode, FactGraphResponse
 
@@ -31,6 +32,7 @@ async def get_fact_graph(
     app_id: str = "default",
     min_confidence: float = 0.0,
     neo: NeoSession = Depends(get_neo4j_session),
+    current_user: dict = Depends(get_current_user),
 ) -> FactGraphResponse:
     """
     Return the full fact graph for a user.
@@ -43,6 +45,7 @@ async def get_fact_graph(
       - User → Fact  (typed by category: HAS_PREFERENCE, HAS_INTEREST, …)
       - Fact → Fact  (RELATED_TO links between facts belonging to this user)
     """
+    assert_self_or_admin(current_user, user_id)
     try:
         # ── 1. User → Fact edges ──────────────────────────────────────────────
         user_fact_query = """

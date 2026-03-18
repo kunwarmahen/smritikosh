@@ -437,3 +437,45 @@ class AppUser(Base):
 
     def __repr__(self) -> str:
         return f"<AppUser username={self.username!r} role={self.role}>"
+
+
+class ApiKey(Base):
+    """
+    API keys for programmatic / SDK access.
+
+    Full key is returned once on creation and never stored.
+    Only the SHA-256 hash is persisted.  The prefix (first 8 chars of the
+    random part) is stored in plain text so users can identify keys in the UI.
+
+    Key format:  sk-smriti-<48 hex chars>
+    Example:     sk-smriti-a1b2c3d4e5f6789012345678901234abcdef0123456789ab
+    """
+
+    __tablename__ = "api_keys"
+    __table_args__ = (
+        Index("ix_api_keys_user_id", "user_id"),
+        Index("ix_api_keys_key_hash", "key_hash", unique=True),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(255), ForeignKey("app_users.username", ondelete="CASCADE")
+    )
+    app_id: Mapped[str] = mapped_column(String(255), default="default")
+    name: Mapped[str] = mapped_column(String(255))
+    key_prefix: Mapped[str] = mapped_column(String(16))   # first 8 hex chars of random part
+    key_hash: Mapped[str] = mapped_column(String(64), unique=True)  # SHA-256 hex
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now
+    )
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+
+    def __repr__(self) -> str:
+        return f"<ApiKey user={self.user_id!r} name={self.name!r}>"

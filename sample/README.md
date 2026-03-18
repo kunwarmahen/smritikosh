@@ -6,7 +6,7 @@ store memories → search → inject context → LLM call.
 ## Prerequisites
 
 - Smritikosh server running on `http://localhost:8080`
-- User `alice` created (see [quickstart.md](../QUICKSTART.md) Step 10)
+- User `alice` created (see [QUICKSTART.md](../QUICKSTART.md) Step 10)
 - Memories seeded: run `python seed.py` once before the chatbot
 
 ## Setup
@@ -23,6 +23,27 @@ pip install httpx openai   # openai SDK works with ollama, openai, and gemini
 | `seed.py` | Pre-loads 10 memories for `alice` — run once before the chatbot |
 | `chatbot.py` | The interactive memory-aware chatbot loop |
 
+## Authentication
+
+`client.py` supports two auth modes:
+
+**Username/password** (default — exchanges credentials for a JWT on startup):
+
+```bash
+python chatbot.py
+# uses alice / alicepass by default, or set SMRITIKOSH_USER / SMRITIKOSH_USER_PASS
+```
+
+**API key** (recommended for integrations — no login round-trip, never expires):
+
+```bash
+# Generate a key: sign in to the dashboard → API Keys → New key
+# Then pass it via environment variable:
+SMRITIKOSH_API_KEY=sk-smriti-your-key-here python chatbot.py
+```
+
+Or set `SMRITIKOSH_API_KEY` in the project's `.env` to use it automatically every time.
+
 ## Run
 
 ```bash
@@ -31,9 +52,12 @@ python seed.py
 
 # 2. Start the chatbot (reads LLM config from the project's .env automatically)
 python chatbot.py
+
+# Or with an API key:
+SMRITIKOSH_API_KEY=sk-smriti-... python chatbot.py
 ```
 
-No environment variables need to be exported manually — `chatbot.py` reads
+No LLM environment variables need to be exported manually — `chatbot.py` reads
 `LLM_PROVIDER`, `LLM_MODEL`, `LLM_BASE_URL`, and `LLM_API_KEY` directly from
 the project's `.env` file.
 

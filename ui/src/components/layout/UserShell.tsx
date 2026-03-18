@@ -10,6 +10,7 @@ import {
   Grid3X3,
   ScrollText,
   Zap,
+  Key,
   ShieldCheck,
   LogOut,
 } from "lucide-react";
@@ -21,6 +22,10 @@ const USER_NAV = [
   { href: "/dashboard/clusters",   icon: Grid3X3,     label: "Clusters" },
   { href: "/dashboard/audit",      icon: ScrollText,  label: "Audit trail" },
   { href: "/dashboard/procedures", icon: Zap,         label: "Procedures" },
+];
+
+const SETTINGS_NAV = [
+  { href: "/dashboard/settings/api-keys", icon: Key, label: "API Keys" },
 ];
 
 const ADMIN_NAV = [
@@ -81,6 +86,35 @@ export function UserShell({ children }: { children: React.ReactNode }) {
                 </Link>
               );
             })}
+
+            <div className="pt-4">
+              <p className="px-3 mb-1.5 text-[10px] font-medium text-zinc-600 uppercase tracking-widest">
+                Settings
+              </p>
+              {SETTINGS_NAV.map(({ href, icon: Icon, label }) => {
+                const active = pathname.startsWith(href);
+                return (
+                  <Link
+                    key={href}
+                    href={href}
+                    className={clsx(
+                      "flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all duration-100",
+                      active
+                        ? "bg-zinc-800 text-zinc-100 font-medium"
+                        : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900",
+                    )}
+                  >
+                    <Icon
+                      className={clsx(
+                        "w-4 h-4 flex-shrink-0",
+                        active ? "text-violet-400" : "text-zinc-600",
+                      )}
+                    />
+                    {label}
+                  </Link>
+                );
+              })}
+            </div>
 
             {isAdmin && (
               <div className="pt-4">

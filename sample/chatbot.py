@@ -64,11 +64,16 @@ def _make_llm_client():
 _provider_type, _llm = _make_llm_client()
 
 # ── Smritikosh client ─────────────────────────────────────────────────────────
+# Auth priority: SMRITIKOSH_API_KEY env var → username/password fallback
 
-SMRITIKOSH_USER      = "alice"
-SMRITIKOSH_USER_PASS = "alicepass"
+SMRITIKOSH_USER      = os.getenv("SMRITIKOSH_USER", "alice")
+SMRITIKOSH_USER_PASS = os.getenv("SMRITIKOSH_USER_PASS", "alicepass")
 
-memory       = SmritikoshClient(username=SMRITIKOSH_USER, password=SMRITIKOSH_USER_PASS)
+memory = SmritikoshClient(
+    api_key=os.getenv("SMRITIKOSH_API_KEY"),        # preferred: API key from env
+    username=SMRITIKOSH_USER,                        # fallback: username/password
+    password=SMRITIKOSH_USER_PASS,
+)
 conversation: list[dict] = []
 
 # ── LLM call (normalised across providers) ────────────────────────────────────

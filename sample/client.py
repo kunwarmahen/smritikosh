@@ -6,13 +6,46 @@ BASE_URL = os.getenv("SMRITIKOSH_URL", "http://localhost:8080")
 
 
 class SmritikoshClient:
-    """Minimal sync client for the Smritikosh REST API."""
+    """
+    Minimal sync client for the Smritikosh REST API.
 
-    def __init__(self, username: str, password: str, app_id: str = "default"):
+    Two authentication modes:
+
+    1. Username + password (exchanges credentials for a short-lived JWT):
+        client = SmritikoshClient(username="alice", password="secret")
+
+    2. API key (no login round-trip, key never expires unless revoked):
+        client = SmritikoshClient(api_key="sk-smriti-...")
+
+    The API key can also be set via the SMRITIKOSH_API_KEY environment variable:
+        client = SmritikoshClient()   # reads from env
+    """
+
+    def __init__(
+        self,
+        username: str | None = None,
+        password: str | None = None,
+        *,
+        api_key: str | None = None,
+        app_id: str = "default",
+    ):
         self.app_id = app_id
-        self._token = self._login(username, password)
+
+        # API key takes priority; fall back to env var; then username/password
+        resolved_key = api_key or os.getenv("SMRITIKOSH_API_KEY")
+
+        if resolved_key:
+            token = resolved_key
+        elif username and password:
+            token = self._login(username, password)
+        else:
+            raise ValueError(
+                "Provide either (username + password) or an api_key "
+                "(or set SMRITIKOSH_API_KEY in your environment)."
+            )
+
         self._headers = {
-            "Authorization": f"Bearer {self._token}",
+            "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         }
 

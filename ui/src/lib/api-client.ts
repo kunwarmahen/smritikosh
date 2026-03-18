@@ -199,6 +199,16 @@ export function createApiClient(token?: string) {
 
     adminMineBeliefs: (userId: string, appId = "default") =>
       request(`/admin/mine-beliefs`, opts({ method: "POST", body: JSON.stringify({ user_id: userId, app_id: appId }) })),
+
+    // ── API keys ──────────────────────────────────────────────────────────
+    listApiKeys: () =>
+      request(`/keys`, opts()),
+
+    createApiKey: (body: { name: string; app_id?: string }) =>
+      request(`/keys`, opts({ method: "POST", body: JSON.stringify(body) })),
+
+    revokeApiKey: (keyId: string) =>
+      request(`/keys/${keyId}`, opts({ method: "DELETE" })),
   };
 }
 

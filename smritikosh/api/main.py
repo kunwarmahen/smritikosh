@@ -30,7 +30,7 @@ from smritikosh.api.deps import (
     get_episodic,
     get_pruner,
 )
-from smritikosh.api.routes import admin, audit, auth, context, feedback, graph, health, identity, ingest, memory, procedures
+from smritikosh.api.routes import admin, audit, auth, context, feedback, graph, health, identity, ingest, keys, memory, procedures
 from smritikosh.audit.mongodb import close_audit, init_audit_indexes
 from smritikosh.db.neo4j import close_neo4j, init_neo4j
 from smritikosh.db.postgres import close_db, init_db
@@ -76,6 +76,7 @@ app = FastAPI(
 
 app.include_router(auth.router)
 app.include_router(health.router)
+app.include_router(keys.router)
 app.include_router(memory.router)
 app.include_router(context.router)
 app.include_router(identity.router)

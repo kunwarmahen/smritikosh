@@ -260,3 +260,36 @@ curl -s -X POST http://localhost:8080/auth/register \
 ```
 
 You are now fully set up. See the [Sample project](README.md#sample-project) section in the README to test the full memory flow.
+
+---
+
+## Step 11 — Generate an API key (optional, for SDK / integrations)
+
+The dashboard and browser sessions use a short-lived JWT automatically. For programmatic access (SDK, CI, external tools) generate a long-lived API key instead.
+
+**Via the dashboard:** sign in as `alice` → **API Keys** in the left sidebar → **New key** → copy the key (shown once only).
+
+**Via the API:**
+
+```bash
+# Get alice's JWT first
+TOKEN=$(curl -s -X POST http://localhost:8080/auth/token \
+  -H "Content-Type: application/json" \
+  -d '{"username": "alice", "password": "alicepass"}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+
+# Generate a key
+curl -s -X POST http://localhost:8080/keys \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "local dev", "app_id": "default"}' \
+  | python3 -m json.tool
+```
+
+Use the key in the sample chatbot:
+
+```bash
+SMRITIKOSH_API_KEY=sk-smriti-... python chatbot.py
+```
+
+Or set `SMRITIKOSH_API_KEY` in your `.env` to use it automatically every time.

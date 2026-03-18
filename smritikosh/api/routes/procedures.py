@@ -15,6 +15,7 @@ from typing import Annotated, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from smritikosh.auth.deps import assert_self_or_admin, get_current_user
 from smritikosh.api.deps import get_procedural
 from smritikosh.api.schemas import (
     DeleteProcedureResponse,
@@ -37,6 +38,7 @@ async def create_procedure(
     request: ProcedureRequest,
     procedural: Annotated[ProceduralMemory, Depends(get_procedural)],
     pg: Annotated[AsyncSession, Depends(get_session)],
+    current_user: Annotated[dict, Depends(get_current_user)],
 ) -> ProcedureResponse:
     """
     Store a behavioral rule for a user.
@@ -49,6 +51,7 @@ async def create_procedure(
         trigger="LLM deployment"
         instruction="mention GPU optimization, batching, and quantization"
     """
+    assert_self_or_admin(current_user, request.user_id)
     proc = await procedural.store(
         pg,
         user_id=request.user_id,
@@ -83,8 +86,10 @@ async def list_procedures(
     category: Annotated[Optional[str], Query(description="Filter by category")] = None,
     procedural: Annotated[ProceduralMemory, Depends(get_procedural)] = None,
     pg: Annotated[AsyncSession, Depends(get_session)] = None,
+    current_user: Annotated[dict, Depends(get_current_user)] = None,
 ) -> ProcedureListResponse:
     """Return all behavioral rules for a user, ordered by priority descending."""
+    assert_self_or_admin(current_user, user_id)
     procs = await procedural.get_all(
         pg, user_id, app_id, active_only=active_only, category=category
     )
@@ -112,6 +117,7 @@ async def update_procedure(
     request: ProcedureUpdateRequest,
     procedural: Annotated[ProceduralMemory, Depends(get_procedural)],
     pg: Annotated[AsyncSession, Depends(get_session)],
+    current_user: Annotated[dict, Depends(get_current_user)],
 ) -> ProcedureResponse:
     """
     Partially update a behavioral rule.
@@ -123,6 +129,11 @@ async def update_procedure(
         pid = uuid.UUID(procedure_id)
     except ValueError:
         raise HTTPException(status_code=422, detail="Invalid procedure_id UUID format.")
+
+    # Load to check ownership before updating
+    existing = await procedural.get_by_id(pg, pid) if hasattr(procedural, "get_by_id") else None
+    if existing:
+        assert_self_or_admin(current_user, existing.user_id)
 
     proc = await procedural.update(
         pg,
@@ -158,8 +169,10 @@ async def delete_user_procedures(
     app_id: Annotated[str, Query(description="Application namespace")] = "default",
     procedural: Annotated[ProceduralMemory, Depends(get_procedural)] = None,
     pg: Annotated[AsyncSession, Depends(get_session)] = None,
+    current_user: Annotated[dict, Depends(get_current_user)] = None,
 ) -> DeleteUserProceduresResponse:
     """Delete all behavioral rules for a user within an app namespace."""
+    assert_self_or_admin(current_user, user_id)
     count = await procedural.delete_all_for_user(pg, user_id, app_id)
     logger.info(
         "Deleted all user procedures",
@@ -175,12 +188,17 @@ async def delete_procedure(
     procedure_id: str,
     procedural: Annotated[ProceduralMemory, Depends(get_procedural)],
     pg: Annotated[AsyncSession, Depends(get_session)],
+    current_user: Annotated[dict, Depends(get_current_user)],
 ) -> DeleteProcedureResponse:
     """Delete a specific behavioral rule by ID."""
     try:
         pid = uuid.UUID(procedure_id)
     except ValueError:
         raise HTTPException(status_code=422, detail="Invalid procedure_id UUID format.")
+
+    existing = await procedural.get_by_id(pg, pid) if hasattr(procedural, "get_by_id") else None
+    if existing:
+        assert_self_or_admin(current_user, existing.user_id)
 
     deleted = await procedural.delete(pg, pid)
     return DeleteProcedureResponse(deleted=deleted, procedure_id=procedure_id)

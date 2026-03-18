@@ -17,6 +17,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from neo4j import AsyncSession as NeoSession
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from smritikosh.auth.deps import assert_self_or_admin, get_current_user
 from smritikosh.api.deps import get_context_builder, get_reconsolidation_engine
 from smritikosh.api.schemas import ContextRequest, ContextResponse
 from smritikosh.db.neo4j import get_neo4j_session
@@ -36,6 +37,7 @@ async def get_context(
     reconsolidation: Annotated[ReconsolidationEngine, Depends(get_reconsolidation_engine)],
     pg: Annotated[AsyncSession, Depends(get_session)],
     neo: Annotated[NeoSession, Depends(get_neo4j_session)],
+    current_user: Annotated[dict, Depends(get_current_user)],
 ) -> ContextResponse:
     """
     Assemble memory context for a user query.
@@ -55,6 +57,7 @@ async def get_context(
     in the background (its summary is refined with the current query context).
     Partial context is returned even if one memory system is unavailable.
     """
+    assert_self_or_admin(current_user, request.user_id)
     try:
         ctx = await builder.build(
             pg,

@@ -40,6 +40,7 @@ from neo4j import AsyncSession as NeoSession
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from smritikosh.auth.deps import assert_self_or_admin, get_current_user
 from smritikosh.api.deps import get_hippocampus
 from smritikosh.connectors.base import ConnectorEvent
 from smritikosh.connectors.calendar import CalendarConnector
@@ -125,6 +126,7 @@ async def push_ingest(
     hippocampus: Annotated[Hippocampus, Depends(get_hippocampus)],
     pg: Annotated[AsyncSession, Depends(get_session)],
     neo: Annotated[NeoSession, Depends(get_neo4j_session)],
+    current_user: Annotated[dict, Depends(get_current_user)],
 ) -> IngestResponse:
     """
     Encode a single event pushed from an external system.
@@ -132,6 +134,7 @@ async def push_ingest(
     Use this endpoint for server-side integrations that can push JSON
     directly (e.g. custom webhooks, n8n, Zapier, Make.com workflows).
     """
+    assert_self_or_admin(current_user, request.user_id)
     connector = WebhookConnector()
     payload: dict[str, Any] = {
         "content":   request.content,
@@ -161,6 +164,7 @@ async def file_ingest(
     hippocampus: Annotated[Hippocampus, Depends(get_hippocampus)] = None,
     pg: Annotated[AsyncSession, Depends(get_session)] = None,
     neo: Annotated[NeoSession, Depends(get_neo4j_session)] = None,
+    current_user: Annotated[dict, Depends(get_current_user)] = None,
 ) -> IngestResponse:
     """
     Upload a file and encode its contents as memory events.
@@ -170,6 +174,7 @@ async def file_ingest(
     - ``.csv``            One memory event per row
     - ``.json``           Array of strings or objects
     """
+    assert_self_or_admin(current_user, user_id)
     content = await file.read()
     if not content:
         raise HTTPException(status_code=422, detail="Uploaded file is empty.")
@@ -271,6 +276,7 @@ async def email_sync(
     hippocampus: Annotated[Hippocampus, Depends(get_hippocampus)],
     pg: Annotated[AsyncSession, Depends(get_session)],
     neo: Annotated[NeoSession, Depends(get_neo4j_session)],
+    current_user: Annotated[dict, Depends(get_current_user)],
 ) -> IngestResponse:
     """
     Fetch emails from an IMAP mailbox and encode them as memory events.
@@ -283,6 +289,7 @@ async def email_sync(
     - Outlook: host=outlook.office365.com
     - iCloud:  host=imap.mail.me.com
     """
+    assert_self_or_admin(current_user, request.user_id)
     config = IMAPConfig(
         host=request.host,
         username=request.username,
@@ -315,6 +322,7 @@ async def calendar_ingest(
     hippocampus: Annotated[Hippocampus, Depends(get_hippocampus)] = None,
     pg: Annotated[AsyncSession, Depends(get_session)] = None,
     neo: Annotated[NeoSession, Depends(get_neo4j_session)] = None,
+    current_user: Annotated[dict, Depends(get_current_user)] = None,
 ) -> IngestResponse:
     """
     Upload an iCalendar (.ics) file and encode each VEVENT as a memory event.
@@ -322,6 +330,7 @@ async def calendar_ingest(
     Useful for ingesting meeting history, schedule context, or past events
     that the AI should be aware of when building context for the user.
     """
+    assert_self_or_admin(current_user, user_id)
     content = await file.read()
     if not content:
         raise HTTPException(status_code=422, detail="Uploaded file is empty.")

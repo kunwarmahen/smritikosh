@@ -51,6 +51,7 @@ Smritikosh gives any LLM application persistent, user-specific memory modelled o
   - [External ingest](#external-ingest)
   - [Audit trail](#audit-trail-api)
 - [Audit trail](#audit-trail)
+- [Authentication & API keys](#authentication--api-keys)
 - [Python SDK](#python-sdk)
 - [Node.js SDK](#nodejs-sdk)
 - [Testing](#testing)
@@ -513,7 +514,7 @@ smritikosh-demo/
 
 ### File 1 — `client.py`
 
-This is a minimal API client. It handles authentication and exposes the three methods the chatbot needs: store a memory, get context, and search.
+This is a minimal API client. It supports two authentication modes and exposes the three methods the chatbot needs: store a memory, get context, and search.
 
 ```python
 # client.py
@@ -524,13 +525,40 @@ BASE_URL = os.getenv("SMRITIKOSH_URL", "http://localhost:8080")
 
 
 class SmritikoshClient:
-    """Minimal sync client for the Smritikosh REST API."""
+    """
+    Minimal sync client for the Smritikosh REST API.
 
-    def __init__(self, username: str, password: str, app_id: str = "demo"):
+    Two authentication modes:
+
+    1. Username + password (exchanges credentials for a short-lived JWT):
+        client = SmritikoshClient(username="alice", password="alicepass")
+
+    2. API key (no login round-trip, never expires unless revoked):
+        client = SmritikoshClient(api_key="sk-smriti-...")
+        # or set SMRITIKOSH_API_KEY in your environment and call SmritikoshClient()
+    """
+
+    def __init__(
+        self,
+        username: str | None = None,
+        password: str | None = None,
+        *,
+        api_key: str | None = None,
+        app_id: str = "default",
+    ):
         self.app_id = app_id
-        self._token = self._login(username, password)
+        resolved_key = api_key or os.getenv("SMRITIKOSH_API_KEY")
+        if resolved_key:
+            token = resolved_key
+        elif username and password:
+            token = self._login(username, password)
+        else:
+            raise ValueError(
+                "Provide (username + password) or an api_key "
+                "(or set SMRITIKOSH_API_KEY in your environment)."
+            )
         self._headers = {
-            "Authorization": f"Bearer {self._token}",
+            "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         }
 
@@ -2084,6 +2112,84 @@ docker compose exec mongo mongosh smritikosh_audit
 
 ---
 
+## Authentication & API keys
+
+Every API endpoint (except `/auth/token`, `/auth/register`, and `/health`) requires a Bearer token.  Two token formats are accepted:
+
+| Format | When to use |
+|--------|-------------|
+| **JWT** | UI sessions and short-lived programmatic access. Obtained via `POST /auth/token`. Expires after `JWT_EXPIRE_DAYS` (default 30 days). |
+| **API key** (`sk-smriti-…`) | SDK integrations, CI pipelines, external tools. Never expires unless revoked. |
+
+### Generating an API key
+
+**Via the dashboard** (recommended): sign in → **API Keys** in the left sidebar → **New key** → copy the key immediately (shown once only).
+
+**Via the API:**
+
+```bash
+# 1. Get a JWT first
+TOKEN=$(curl -s -X POST http://localhost:8080/auth/token \
+  -H "Content-Type: application/json" \
+  -d '{"username": "alice", "password": "alicepass"}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+
+# 2. Generate a key
+curl -s -X POST http://localhost:8080/keys \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "My integration", "app_id": "default"}' \
+  | python3 -m json.tool
+# Returns: { "id": "...", "key": "sk-smriti-abc123...", "key_prefix": "abc123ab", ... }
+# The full key is returned ONCE — store it immediately.
+```
+
+### Using an API key
+
+Pass it as a Bearer token, exactly like a JWT:
+
+```bash
+curl -s http://localhost:8080/memory/alice \
+  -H "Authorization: Bearer sk-smriti-your-key-here"
+```
+
+In the Python sample client:
+
+```python
+# Via constructor
+client = SmritikoshClient(api_key="sk-smriti-your-key-here")
+
+# Via environment variable (recommended for CI / production)
+# export SMRITIKOSH_API_KEY=sk-smriti-your-key-here
+client = SmritikoshClient()
+```
+
+### Listing and revoking keys
+
+```bash
+# List active keys
+curl -s http://localhost:8080/keys \
+  -H "Authorization: Bearer $TOKEN" | python3 -m json.tool
+
+# Revoke a key
+curl -s -X DELETE http://localhost:8080/keys/<key-id> \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Access control
+
+All memory endpoints enforce ownership — a user can only read and write their own data:
+
+| Caller | Access |
+|--------|--------|
+| Regular user token / API key | Own data only |
+| Admin token / API key | Any user's data |
+| No token | 401 Unauthorized |
+
+Background jobs and admin job triggers bypass the HTTP layer entirely — they call Python functions directly and are unaffected by API auth.
+
+---
+
 ## Python SDK
 
 Install the package (the SDK is included):
@@ -2093,6 +2199,20 @@ pip install smritikosh          # or pip install -e . from the repo
 ```
 
 ### Basic usage
+
+The SDK accepts either an API key or username/password:
+
+```python
+# API key (recommended for integrations)
+client = SmritikoshClient(
+    base_url="http://localhost:8080",
+    app_id="myapp",
+    headers={"Authorization": "Bearer sk-smriti-your-key-here"},
+)
+
+# Username/password (obtains a JWT automatically)
+# Use the sample client.py for this pattern — the async SDK accepts pre-built headers.
+```
 
 ```python
 import asyncio

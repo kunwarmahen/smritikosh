@@ -15,6 +15,7 @@ from sqlalchemy import or_, select
 from neo4j import AsyncSession as NeoSession
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from smritikosh.auth.deps import assert_self_or_admin, get_current_user
 from smritikosh.api.deps import get_audit_logger, get_hippocampus, get_episodic, get_llm
 from smritikosh.api.schemas import (
     DeleteEventResponse,
@@ -47,6 +48,7 @@ async def capture_event(
     hippocampus: Annotated[Hippocampus, Depends(get_hippocampus)],
     pg: Annotated[AsyncSession, Depends(get_session)],
     neo: Annotated[NeoSession, Depends(get_neo4j_session)],
+    current_user: Annotated[dict, Depends(get_current_user)],
 ) -> EventResponse:
     """
     Encode a user interaction into persistent memory.
@@ -60,6 +62,7 @@ async def capture_event(
     Returns immediately with the stored event ID and extraction summary.
     If fact extraction fails the event is still stored (extraction_failed=True).
     """
+    assert_self_or_admin(current_user, request.user_id)
     try:
         result = await hippocampus.encode(
             pg,
@@ -87,6 +90,7 @@ async def delete_event(
     event_id: str,
     episodic: Annotated[EpisodicMemory, Depends(get_episodic)],
     pg: Annotated[AsyncSession, Depends(get_session)],
+    current_user: Annotated[dict, Depends(get_current_user)],
 ) -> DeleteEventResponse:
     """
     Delete a specific memory event by ID.
@@ -99,6 +103,12 @@ async def delete_event(
     except ValueError:
         raise HTTPException(status_code=422, detail="Invalid event_id UUID format.")
 
+    # Load first to check ownership
+    result = await pg.execute(select(Event).where(Event.id == eid))
+    event = result.scalar_one_or_none()
+    if event:
+        assert_self_or_admin(current_user, event.user_id)
+
     deleted = await episodic.delete(pg, eid)
     return DeleteEventResponse(deleted=deleted, event_id=event_id)
 
@@ -109,6 +119,7 @@ async def delete_user_memory(
     app_id: Annotated[str, Query(description="Application namespace")] = "default",
     episodic: Annotated[EpisodicMemory, Depends(get_episodic)] = None,
     pg: Annotated[AsyncSession, Depends(get_session)] = None,
+    current_user: Annotated[dict, Depends(get_current_user)] = None,
 ) -> DeleteUserMemoryResponse:
     """
     Delete all memory events for a user within an app namespace.
@@ -116,6 +127,7 @@ async def delete_user_memory(
     Use with care — this removes all episodic events for the user.
     Semantic facts in Neo4j are not affected by this endpoint.
     """
+    assert_self_or_admin(current_user, user_id)
     count = await episodic.delete_all_for_user(pg, user_id, app_id)
     logger.info(
         "Deleted all user memory",
@@ -130,6 +142,7 @@ async def search_memory(
     episodic: Annotated[EpisodicMemory, Depends(get_episodic)],
     llm: Annotated[LLMAdapter, Depends(get_llm)],
     pg: Annotated[AsyncSession, Depends(get_session)],
+    current_user: Annotated[dict, Depends(get_current_user)],
 ) -> SearchResponse:
     """
     Hybrid search over a user's episodic memory.
@@ -141,6 +154,7 @@ async def search_memory(
     Unlike ``/context``, this endpoint does not inject semantic facts from Neo4j
     or procedural rules — it returns event rows with their score breakdown.
     """
+    assert_self_or_admin(current_user, request.user_id)
     embedding_failed = False
     query_embedding: list[float] | None = None
 
@@ -211,6 +225,7 @@ async def search_memory(
 async def get_event(
     event_id: str,
     pg: Annotated[AsyncSession, Depends(get_session)],
+    current_user: Annotated[dict, Depends(get_current_user)],
 ) -> MemoryEventDetail:
     """Return a single memory event by ID."""
     try:
@@ -222,6 +237,7 @@ async def get_event(
     event = result.scalar_one_or_none()
     if event is None:
         raise HTTPException(status_code=404, detail="Event not found.")
+    assert_self_or_admin(current_user, event.user_id)
 
     return MemoryEventDetail(
         event_id=str(event.id),
@@ -248,6 +264,7 @@ async def get_event(
 async def get_event_links(
     event_id: str,
     pg: Annotated[AsyncSession, Depends(get_session)],
+    current_user: Annotated[dict, Depends(get_current_user)],
 ) -> MemoryLinksResponse:
     """
     Return all narrative links touching this event (both directions).
@@ -269,6 +286,11 @@ async def get_event_links(
     links = links_result.scalars().all()
 
     if not links:
+        # Verify ownership via a direct event lookup before returning empty
+        ev_result = await pg.execute(select(Event).where(Event.id == eid))
+        ev = ev_result.scalar_one_or_none()
+        if ev:
+            assert_self_or_admin(current_user, ev.user_id)
         return MemoryLinksResponse(event_id=event_id, links=[])
 
     # Collect the IDs of the *other* side of each link
@@ -323,8 +345,10 @@ async def get_recent_events(
     limit: Annotated[int, Query(ge=1, le=500, description="Number of events to return")] = 10,
     episodic: Annotated[EpisodicMemory, Depends(get_episodic)] = None,
     pg: Annotated[AsyncSession, Depends(get_session)] = None,
+    current_user: Annotated[dict, Depends(get_current_user)] = None,
 ) -> RecentEventsResponse:
     """Return the most recent memory events for a user, newest first."""
+    assert_self_or_admin(current_user, user_id)
     events = await episodic.get_recent(pg, user_id, app_id=app_id, limit=limit)
 
     return RecentEventsResponse(

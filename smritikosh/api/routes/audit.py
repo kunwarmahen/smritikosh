@@ -17,6 +17,7 @@ from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from smritikosh.auth.deps import assert_self_or_admin, get_current_user
 from smritikosh.api.deps import get_audit_logger
 
 logger = logging.getLogger(__name__)
@@ -46,12 +47,14 @@ async def get_user_timeline(
     to_ts: Annotated[Optional[datetime], Query(description="End of time range (ISO 8601)")] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
+    current_user: dict = Depends(get_current_user),
 ) -> dict:
     """
     Return the audit timeline for a user — all pipeline events that touched
     their data, newest first. Filterable by event_type, episodic event_id,
     and date range.
     """
+    assert_self_or_admin(current_user, user_id)
     records = await audit.get_timeline(
         user_id=user_id,
         app_id=app_id,
@@ -95,11 +98,13 @@ async def get_audit_stats(
     user_id: str,
     app_id: Annotated[str, Query()] = "default",
     audit=Depends(_require_audit),
+    current_user: dict = Depends(get_current_user),
 ) -> dict:
     """
     Return total audit record count broken down by event_type for a user.
     Useful for dashboards and monitoring.
     """
+    assert_self_or_admin(current_user, user_id)
     counts = await audit.get_stats(user_id=user_id, app_id=app_id)
     return {
         "user_id": user_id,
