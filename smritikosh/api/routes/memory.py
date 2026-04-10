@@ -10,13 +10,15 @@ import logging
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import or_, select
 from neo4j import AsyncSession as NeoSession
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from smritikosh.api.ratelimit import limiter
 from smritikosh.auth.deps import assert_app_access, assert_self_or_admin, get_current_user
 from smritikosh.api.deps import get_audit_logger, get_hippocampus, get_episodic, get_llm
+from smritikosh.config import settings
 from smritikosh.api.schemas import (
     DeleteEventResponse,
     DeleteUserMemoryResponse,
@@ -43,7 +45,9 @@ router = APIRouter(prefix="/memory", tags=["memory"])
 
 
 @router.post("/event", response_model=EventResponse, status_code=201)
+@limiter.limit(lambda: settings.rate_limit_encode or "10000/minute")
 async def capture_event(
+    http_request: Request,
     request: EventRequest,
     hippocampus: Annotated[Hippocampus, Depends(get_hippocampus)],
     pg: Annotated[AsyncSession, Depends(get_session)],
@@ -139,7 +143,9 @@ async def delete_user_memory(
 
 
 @router.post("/search", response_model=SearchResponse)
+@limiter.limit(lambda: settings.rate_limit_search or "10000/minute")
 async def search_memory(
+    http_request: Request,
     request: SearchRequest,
     episodic: Annotated[EpisodicMemory, Depends(get_episodic)],
     llm: Annotated[LLMAdapter, Depends(get_llm)],

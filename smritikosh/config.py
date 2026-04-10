@@ -51,6 +51,14 @@ class Settings(BaseSettings):
     # without a token. Remove it immediately after creating the first account.
     bootstrap_admin: bool = False
 
+    # ── Rate limiting ───────────────────────────────────────────────────────
+    # Limits applied per authenticated user (user_id extracted from JWT/API key).
+    # Format: "<count>/<period>" — e.g. "60/minute", "1000/hour"
+    # Set to "" to disable rate limiting entirely.
+    rate_limit_encode: str = "60/minute"     # POST /memory/event
+    rate_limit_context: str = "60/minute"    # POST /context
+    rate_limit_search: str = "120/minute"    # POST /memory/search
+
 
 # Single shared instance — import this everywhere
 settings = Settings()

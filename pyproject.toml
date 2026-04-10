@@ -38,6 +38,7 @@ dependencies = [
     "motor>=3.6.0",             # async MongoDB driver (audit trail)
     "passlib[bcrypt]>=1.7.4",   # password hashing
     "PyJWT>=2.9.0",             # JWT creation and verification
+    "slowapi>=0.1.9",           # rate limiting for FastAPI
 ]
 
 [project.optional-dependencies]

@@ -22,6 +22,8 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from smritikosh.api.deps import (
     get_belief_miner,
@@ -30,6 +32,7 @@ from smritikosh.api.deps import (
     get_episodic,
     get_pruner,
 )
+from smritikosh.api.ratelimit import limiter
 from smritikosh.api.routes import admin, audit, auth, context, feedback, graph, health, identity, ingest, keys, memory, procedures
 from smritikosh.audit.mongodb import close_audit, init_audit_indexes
 from smritikosh.db.neo4j import close_neo4j, init_neo4j
@@ -73,6 +76,10 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# Rate limiter — attach state and register the 429 handler
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.include_router(auth.router)
 app.include_router(health.router)

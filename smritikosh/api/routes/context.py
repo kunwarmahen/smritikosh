@@ -13,12 +13,14 @@ with new associations) without adding latency to the API response.
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from neo4j import AsyncSession as NeoSession
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from smritikosh.api.ratelimit import limiter
 from smritikosh.auth.deps import assert_self_or_admin, get_current_user
 from smritikosh.api.deps import get_context_builder, get_reconsolidation_engine
+from smritikosh.config import settings
 from smritikosh.api.schemas import ContextRequest, ContextResponse
 from smritikosh.db.neo4j import get_neo4j_session
 from smritikosh.db.postgres import get_session
@@ -30,7 +32,9 @@ router = APIRouter(tags=["context"])
 
 
 @router.post("/context", response_model=ContextResponse)
+@limiter.limit(lambda: settings.rate_limit_context or "10000/minute")
 async def get_context(
+    http_request: Request,
     request: ContextRequest,
     background_tasks: BackgroundTasks,
     builder: Annotated[ContextBuilder, Depends(get_context_builder)],
