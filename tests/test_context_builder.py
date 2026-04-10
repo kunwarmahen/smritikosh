@@ -86,6 +86,8 @@ def make_builder(**kwargs) -> tuple[ContextBuilder, AsyncMock, AsyncMock, AsyncM
         intent_classifier=kwargs.get("intent_classifier", None),
         narrative=kwargs.get("narrative", None),
         include_chains=kwargs.get("include_chains", False),
+        chain_top_k=kwargs.get("chain_top_k", 3),
+        chain_boost=kwargs.get("chain_boost", 0.05),
     )
     return builder, llm, episodic, semantic
 
@@ -486,6 +488,14 @@ class TestNarrativeChains:
         semantic.get_user_profile = AsyncMock(return_value=make_profile([]))
         return builder, llm, episodic, semantic, pg, neo
 
+    def _make_pg_with_event(self, event: Event):
+        """Return a pg mock whose execute() always returns the given single event."""
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [event]
+        pg = AsyncMock()
+        pg.execute = AsyncMock(return_value=mock_result)
+        return pg
+
     @pytest.mark.asyncio
     async def test_narrative_chains_populated_when_links_exist(self):
         anchor_event = make_event(raw_text="anchor")
@@ -494,16 +504,14 @@ class TestNarrativeChains:
 
         narrative = AsyncMock(spec=NarrativeMemory)
         narrative.get_chain_forward = AsyncMock(return_value=[link])
+        narrative.get_chain_backward = AsyncMock(return_value=[])
 
         builder, llm, episodic, semantic, pg, neo = self._setup_with_narrative(narrative)
+        pg = self._make_pg_with_event(linked_event)
         episodic.hybrid_search = AsyncMock(return_value=[
             SearchResult(event=anchor_event, hybrid_score=0.9)
         ])
-
-        # pg.execute returns the linked event
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = [linked_event]
-        pg.execute = AsyncMock(return_value=mock_result)
+        episodic.increment_recall = AsyncMock()
 
         ctx = await builder.build(pg, neo, user_id="u1", query="test")
 
@@ -516,6 +524,7 @@ class TestNarrativeChains:
         anchor_event = make_event(raw_text="anchor")
         narrative = AsyncMock(spec=NarrativeMemory)
         narrative.get_chain_forward = AsyncMock(return_value=[])
+        narrative.get_chain_backward = AsyncMock(return_value=[])
 
         builder, llm, episodic, semantic, pg, neo = self._setup_with_narrative(narrative)
         episodic.hybrid_search = AsyncMock(return_value=[
@@ -560,6 +569,7 @@ class TestNarrativeChains:
         anchor_event = make_event(raw_text="anchor")
         narrative = AsyncMock(spec=NarrativeMemory)
         narrative.get_chain_forward = AsyncMock(side_effect=RuntimeError("db error"))
+        narrative.get_chain_backward = AsyncMock(return_value=[])
 
         builder, llm, episodic, semantic, pg, neo = self._setup_with_narrative(narrative)
         episodic.hybrid_search = AsyncMock(return_value=[
@@ -569,6 +579,158 @@ class TestNarrativeChains:
         ctx = await builder.build(pg, neo, user_id="u1", query="test")
 
         assert ctx.narrative_chains == []
+
+    @pytest.mark.asyncio
+    async def test_chain_events_added_to_similar_with_boost(self):
+        """Chain-adjacent events should appear in similar_events with boosted score."""
+        anchor_event = make_event(raw_text="anchor")
+        chain_event = make_event(raw_text="chain event")
+        link = make_memory_link(anchor_event.id, chain_event.id)
+
+        narrative = AsyncMock(spec=NarrativeMemory)
+        narrative.get_chain_forward = AsyncMock(return_value=[link])
+        narrative.get_chain_backward = AsyncMock(return_value=[])
+
+        builder, llm, episodic, semantic, pg, neo = self._setup_with_narrative(narrative)
+        pg = self._make_pg_with_event(chain_event)
+        episodic.hybrid_search = AsyncMock(return_value=[
+            SearchResult(event=anchor_event, hybrid_score=0.80, similarity_score=0.8, recency_score=0.7)
+        ])
+        episodic.increment_recall = AsyncMock()
+
+        ctx = await builder.build(pg, neo, user_id="u1", query="test")
+
+        similar_ids = {sr.event.id for sr in ctx.similar_events}
+        assert chain_event.id in similar_ids
+
+    @pytest.mark.asyncio
+    async def test_chain_boost_applied_to_score(self):
+        """Chain event score = anchor score + chain_boost (capped at 1.0)."""
+        anchor_event = make_event(raw_text="anchor")
+        chain_event = make_event(raw_text="chain event")
+        link = make_memory_link(anchor_event.id, chain_event.id)
+
+        narrative = AsyncMock(spec=NarrativeMemory)
+        narrative.get_chain_forward = AsyncMock(return_value=[link])
+        narrative.get_chain_backward = AsyncMock(return_value=[])
+
+        builder, llm, episodic, semantic, pg, neo = self._setup_with_narrative(narrative)
+        pg = self._make_pg_with_event(chain_event)
+        anchor_score = 0.75
+        episodic.hybrid_search = AsyncMock(return_value=[
+            SearchResult(event=anchor_event, hybrid_score=anchor_score, similarity_score=0.7, recency_score=0.6)
+        ])
+        episodic.increment_recall = AsyncMock()
+
+        # Default chain_boost is 0.05
+        ctx = await builder.build(pg, neo, user_id="u1", query="test")
+
+        chain_sr = next(sr for sr in ctx.similar_events if sr.event.id == chain_event.id)
+        assert abs(chain_sr.hybrid_score - (anchor_score + 0.05)) < 1e-9
+
+    @pytest.mark.asyncio
+    async def test_chain_boost_capped_at_one(self):
+        """Even if anchor score is very high, boosted score never exceeds 1.0."""
+        anchor_event = make_event(raw_text="anchor")
+        chain_event = make_event(raw_text="chain event")
+        link = make_memory_link(anchor_event.id, chain_event.id)
+
+        narrative = AsyncMock(spec=NarrativeMemory)
+        narrative.get_chain_forward = AsyncMock(return_value=[link])
+        narrative.get_chain_backward = AsyncMock(return_value=[])
+
+        # custom boost of 0.10, anchor score of 0.95 → would be 1.05 without cap
+        builder, llm, episodic, semantic = make_builder(
+            narrative=narrative, include_chains=True, chain_boost=0.10
+        )
+        pg, neo = make_sessions()
+        pg = self._make_pg_with_event(chain_event)
+        llm.embed = AsyncMock(return_value=[0.1] * 1536)
+        episodic.hybrid_search = AsyncMock(return_value=[
+            SearchResult(event=anchor_event, hybrid_score=0.95, similarity_score=0.9, recency_score=0.8)
+        ])
+        episodic.get_recent = AsyncMock(return_value=[])
+        episodic.increment_recall = AsyncMock()
+        semantic.get_user_profile = AsyncMock(return_value=make_profile([]))
+
+        ctx = await builder.build(pg, neo, user_id="u1", query="test")
+
+        chain_sr = next(sr for sr in ctx.similar_events if sr.event.id == chain_event.id)
+        assert chain_sr.hybrid_score <= 1.0
+
+    @pytest.mark.asyncio
+    async def test_backward_chain_events_added_to_similar(self):
+        """Backward chain (predecessor) events also get added to similar_events."""
+        anchor_event = make_event(raw_text="anchor")
+        predecessor = make_event(raw_text="predecessor")
+        bwd_link = make_memory_link(predecessor.id, anchor_event.id)
+
+        narrative = AsyncMock(spec=NarrativeMemory)
+        narrative.get_chain_forward = AsyncMock(return_value=[])
+        narrative.get_chain_backward = AsyncMock(return_value=[bwd_link])
+
+        builder, llm, episodic, semantic, pg, neo = self._setup_with_narrative(narrative)
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [predecessor]
+        pg.execute = AsyncMock(return_value=mock_result)
+        episodic.hybrid_search = AsyncMock(return_value=[
+            SearchResult(event=anchor_event, hybrid_score=0.80, similarity_score=0.8, recency_score=0.7)
+        ])
+        episodic.increment_recall = AsyncMock()
+
+        ctx = await builder.build(pg, neo, user_id="u1", query="test")
+
+        similar_ids = {sr.event.id for sr in ctx.similar_events}
+        assert predecessor.id in similar_ids
+
+    @pytest.mark.asyncio
+    async def test_existing_events_not_duplicated_by_chain(self):
+        """An event already in similar_events should not be added again via a chain."""
+        event_a = make_event(raw_text="event A")
+        event_b = make_event(raw_text="event B — already in results")
+        link = make_memory_link(event_a.id, event_b.id)
+
+        narrative = AsyncMock(spec=NarrativeMemory)
+        narrative.get_chain_forward = AsyncMock(return_value=[link])
+        narrative.get_chain_backward = AsyncMock(return_value=[])
+
+        builder, llm, episodic, semantic, pg, neo = self._setup_with_narrative(narrative)
+        episodic.hybrid_search = AsyncMock(return_value=[
+            SearchResult(event=event_a, hybrid_score=0.9),
+            SearchResult(event=event_b, hybrid_score=0.85),
+        ])
+        episodic.increment_recall = AsyncMock()
+
+        ctx = await builder.build(pg, neo, user_id="u1", query="test")
+
+        b_count = sum(1 for sr in ctx.similar_events if sr.event.id == event_b.id)
+        assert b_count == 1
+
+    @pytest.mark.asyncio
+    async def test_chain_top_k_limits_anchors_traversed(self):
+        """chain_top_k=1 means only the top similar event's chain is traversed."""
+        events = [make_event(raw_text=f"event {i}") for i in range(3)]
+        narrative = AsyncMock(spec=NarrativeMemory)
+        narrative.get_chain_forward = AsyncMock(return_value=[])
+        narrative.get_chain_backward = AsyncMock(return_value=[])
+
+        builder, llm, episodic, semantic = make_builder(
+            narrative=narrative, include_chains=True, chain_top_k=1
+        )
+        pg, neo = make_sessions()
+        llm.embed = AsyncMock(return_value=[0.1] * 1536)
+        episodic.hybrid_search = AsyncMock(return_value=[
+            SearchResult(event=e, hybrid_score=0.9 - i * 0.1) for i, e in enumerate(events)
+        ])
+        episodic.get_recent = AsyncMock(return_value=[])
+        episodic.increment_recall = AsyncMock()
+        semantic.get_user_profile = AsyncMock(return_value=make_profile([]))
+
+        await builder.build(pg, neo, user_id="u1", query="test")
+
+        # With chain_top_k=1, only 1 anchor was traversed → 1 fwd + 1 bwd call
+        assert narrative.get_chain_forward.call_count == 1
+        assert narrative.get_chain_backward.call_count == 1
 
     @pytest.mark.asyncio
     async def test_chain_renders_in_prompt_text(self):

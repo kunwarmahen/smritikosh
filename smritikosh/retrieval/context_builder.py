@@ -212,6 +212,8 @@ class ContextBuilder:
         intent_classifier: IntentClassifier | None = None,
         narrative: NarrativeMemory | None = None,
         include_chains: bool = False,
+        chain_top_k: int = 3,
+        chain_boost: float = 0.05,
         procedural: ProceduralMemory | None = None,
         top_k_procedures: int = 5,
         audit=None,   # AuditLogger | None
@@ -225,6 +227,8 @@ class ContextBuilder:
         self.intent_classifier = intent_classifier
         self.narrative = narrative
         self.include_chains = include_chains
+        self.chain_top_k = chain_top_k
+        self.chain_boost = chain_boost
         self.procedural = procedural
         self.top_k_procedures = top_k_procedures
         self.audit = audit
@@ -321,28 +325,85 @@ class ContextBuilder:
             )
 
         # Deduplicate: don't show the same event in both similar and recent
-        similar_ids = {sr.event.id for sr in similar_events}
-        recent_events = [e for e in recent_events if e.id not in similar_ids]
+        recent_events = [e for e in recent_events if e.id not in {sr.event.id for sr in similar_events}]
 
-        # ── 5. Narrative chain traversal (opt-in) ────────────────────────
+        # ── 5. Narrative chain traversal + score boosting (opt-in) ──────────
+        # For the top-N similar events, traverse both forward and backward chains.
+        # Chain-adjacent events that aren't already in the results are added to
+        # similar_events with a small score boost so causally-related memories
+        # surface alongside the event that triggered their inclusion.
         narrative_chains: list[list[Event]] = []
         if self.narrative and self.include_chains and similar_events:
             try:
-                anchor_id = similar_events[0].event.id
-                chain_links = await self.narrative.get_chain_forward(pg_session, anchor_id)
-                if chain_links:
-                    linked_ids = [lnk.to_event_id for lnk in chain_links]
-                    result = await pg_session.execute(
-                        select(Event).where(Event.id.in_(linked_ids))
+                seen_ids = {sr.event.id for sr in similar_events}
+                anchors = similar_events[: self.chain_top_k]
+                chain_additions: list[SearchResult] = []
+
+                for anchor_sr in anchors:
+                    boosted_score = min(anchor_sr.hybrid_score + self.chain_boost, 1.0)
+
+                    # ── Forward chain (what came next): used for both scoring and display
+                    fwd_links = await self.narrative.get_chain_forward(
+                        pg_session, anchor_sr.event.id
                     )
-                    events_by_id = {e.id: e for e in result.scalars().all()}
-                    chain_events = [similar_events[0].event] + [
-                        events_by_id[lnk.to_event_id]
-                        for lnk in chain_links
-                        if lnk.to_event_id in events_by_id
-                    ]
-                    if len(chain_events) > 1:
-                        narrative_chains = [chain_events]
+                    if fwd_links:
+                        fwd_ids = [lnk.to_event_id for lnk in fwd_links]
+                        fwd_result = await pg_session.execute(
+                            select(Event).where(Event.id.in_(fwd_ids))
+                        )
+                        fwd_by_id = {e.id: e for e in fwd_result.scalars().all()}
+
+                        # Add new fwd events to scoring pool
+                        for event_id in fwd_ids:
+                            if event_id not in seen_ids and event_id in fwd_by_id:
+                                chain_additions.append(SearchResult(
+                                    event=fwd_by_id[event_id],
+                                    similarity_score=anchor_sr.similarity_score,
+                                    recency_score=anchor_sr.recency_score,
+                                    frequency_score=anchor_sr.frequency_score,
+                                    hybrid_score=boosted_score,
+                                ))
+                                seen_ids.add(event_id)
+
+                        # Build display chain (anchor → forward)
+                        chain_events = [anchor_sr.event] + [
+                            fwd_by_id[lnk.to_event_id]
+                            for lnk in fwd_links
+                            if lnk.to_event_id in fwd_by_id
+                        ]
+                        if len(chain_events) > 1:
+                            narrative_chains.append(chain_events)
+
+                    # ── Backward chain (what caused this): scoring only
+                    bwd_links = await self.narrative.get_chain_backward(
+                        pg_session, anchor_sr.event.id
+                    )
+                    if bwd_links:
+                        bwd_ids = [
+                            lnk.from_event_id for lnk in bwd_links
+                            if lnk.from_event_id not in seen_ids
+                        ]
+                        if bwd_ids:
+                            bwd_result = await pg_session.execute(
+                                select(Event).where(Event.id.in_(bwd_ids))
+                            )
+                            for evt in bwd_result.scalars().all():
+                                chain_additions.append(SearchResult(
+                                    event=evt,
+                                    similarity_score=anchor_sr.similarity_score,
+                                    recency_score=anchor_sr.recency_score,
+                                    frequency_score=anchor_sr.frequency_score,
+                                    hybrid_score=boosted_score,
+                                ))
+                                seen_ids.add(evt.id)
+
+                # Merge chain additions into similar_events, re-sort by score
+                if chain_additions:
+                    combined = similar_events + chain_additions
+                    combined.sort(key=lambda sr: sr.hybrid_score, reverse=True)
+                    # Cap at 2× top_k so context doesn't balloon
+                    similar_events = combined[: self.top_k_similar * 2]
+
             except Exception as exc:
                 logger.warning(
                     "Narrative chain traversal failed",
