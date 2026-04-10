@@ -31,6 +31,7 @@ from smritikosh.db.postgres import db_session
 from smritikosh.memory.episodic import EpisodicMemory
 from smritikosh.processing.belief_miner import BeliefMiner, MiningResult
 from smritikosh.processing.consolidator import Consolidator, ConsolidationResult
+from smritikosh.processing.fact_decayer import DecayResult, FactDecayer
 from smritikosh.processing.memory_clusterer import ClusterResult, MemoryClusterer
 from smritikosh.processing.synaptic_pruner import PruningResult, SynapticPruner
 
@@ -62,12 +63,15 @@ class MemoryScheduler:
         clustering_hours: int = 6,
         belief_miner: BeliefMiner | None = None,
         belief_mining_hours: int = 12,
+        fact_decayer: FactDecayer | None = None,
+        fact_decay_weeks: int = 1,
     ) -> None:
         self.consolidator = consolidator
         self.pruner = pruner
         self.episodic = episodic
         self.clusterer = clusterer
         self.belief_miner = belief_miner
+        self.fact_decayer = fact_decayer
         self._scheduler = AsyncIOScheduler()
 
         self._scheduler.add_job(
@@ -102,6 +106,15 @@ class MemoryScheduler:
                 hours=belief_mining_hours,
                 id="belief_mining_job",
                 name="Belief Mining",
+                max_instances=1,
+            )
+        if self.fact_decayer is not None:
+            self._scheduler.add_job(
+                self.run_fact_decay,
+                trigger="interval",
+                weeks=fact_decay_weeks,
+                id="fact_decay_job",
+                name="Semantic Fact Decay",
                 max_instances=1,
             )
 
@@ -261,6 +274,24 @@ class MemoryScheduler:
                 extra={"user_id": user_id, "error": str(exc)},
             )
             result = ClusterResult(user_id=user_id, app_id=app_id, skipped=True)
+            result.skip_reason = str(exc)
+            return result
+
+    async def run_fact_decay(self) -> DecayResult:
+        """
+        Run one full fact decay cycle across all Neo4j facts.
+        Called automatically by the weekly scheduler or manually via admin.
+        """
+        if self.fact_decayer is None:
+            result = DecayResult(skipped=True)
+            result.skip_reason = "No fact_decayer configured."
+            return result
+        try:
+            async with neo4j_session() as neo:
+                return await self.fact_decayer.run(neo)
+        except Exception as exc:
+            logger.error("Fact decay failed", extra={"error": str(exc)})
+            result = DecayResult(skipped=True)
             result.skip_reason = str(exc)
             return result
 

@@ -30,6 +30,7 @@ from smritikosh.api.deps import (
     get_clusterer,
     get_consolidator,
     get_episodic,
+    get_fact_decayer,
     get_pruner,
 )
 from smritikosh.api.ratelimit import limiter
@@ -56,6 +57,7 @@ async def lifespan(app: FastAPI):
         episodic=get_episodic(),
         clusterer=get_clusterer(),
         belief_miner=get_belief_miner(),
+        fact_decayer=get_fact_decayer(),
     )
     scheduler.start()
     app.state.scheduler = scheduler

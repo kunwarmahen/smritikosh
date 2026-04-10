@@ -330,6 +330,71 @@ class SemanticMemory:
         record = await result.single()
         return bool(record and record["n"] > 0)
 
+    async def decay_stale_facts(
+        self,
+        session: AsyncSession,
+        *,
+        decay_half_life_days: float = 60.0,
+        confidence_floor: float = 0.1,
+    ) -> tuple[int, int, int]:
+        """
+        Apply exponential confidence decay to all user→fact relationships.
+
+        Formula: new_confidence = confidence × exp(−ln(2) × age_days / decay_half_life_days)
+        This halves confidence every `decay_half_life_days` days without reinforcement.
+
+        Three-pass execution:
+          1. Decay all relationships based on age since last_seen_at.
+          2. Delete relationships whose confidence falls below `confidence_floor`.
+          3. DETACH DELETE orphaned Fact nodes no longer connected to any User.
+
+        Returns:
+            (decayed_count, deleted_count, orphans_deleted)
+        """
+        LN2 = 0.6931471805599453
+
+        # Pass 1: apply decay in-place
+        r1 = await session.run(
+            """
+            MATCH (u:User)-[r]->(f:Fact)
+            WHERE r.last_seen_at IS NOT NULL
+            WITH r, duration.between(datetime(r.last_seen_at), datetime()).days AS age_days
+            SET r.confidence = r.confidence * exp(-$ln2 * toFloat(age_days) / $decay_days)
+            RETURN count(r) AS decayed_count
+            """,
+            ln2=LN2,
+            decay_days=float(decay_half_life_days),
+        )
+        rec1 = await r1.single()
+        decayed_count = int(rec1["decayed_count"]) if rec1 else 0
+
+        # Pass 2: delete relationships below the confidence floor
+        r2 = await session.run(
+            """
+            MATCH (u:User)-[r]->(f:Fact)
+            WHERE r.confidence < $confidence_floor
+            DELETE r
+            RETURN count(*) AS deleted_count
+            """,
+            confidence_floor=float(confidence_floor),
+        )
+        rec2 = await r2.single()
+        deleted_count = int(rec2["deleted_count"]) if rec2 else 0
+
+        # Pass 3: remove Fact nodes no longer connected to any User
+        r3 = await session.run(
+            """
+            MATCH (f:Fact)
+            WHERE NOT (:User)-[]->(f)
+            DETACH DELETE f
+            RETURN count(*) AS orphans_deleted
+            """
+        )
+        rec3 = await r3.single()
+        orphans_deleted = int(rec3["orphans_deleted"]) if rec3 else 0
+
+        return decayed_count, deleted_count, orphans_deleted
+
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 

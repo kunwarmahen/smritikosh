@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     rate_limit_context: str = "60/minute"    # POST /context
     rate_limit_search: str = "120/minute"    # POST /memory/search
 
+    # ── Semantic fact decay ─────────────────────────────────────────────────
+    # Confidence halves every N days without reinforcement (exponential decay).
+    # Relationships that fall below the floor are deleted; orphaned Fact nodes
+    # are cleaned up automatically on the same run.
+    fact_decay_half_life_days: float = 60.0  # days until confidence halves
+    fact_decay_floor: float = 0.1            # delete relationships below this confidence
+
 
 # Single shared instance — import this everywhere
 settings = Settings()
