@@ -49,6 +49,7 @@ def mock_llm():
             {"category": "preference", "key": "ui_color", "value": "green", "confidence": 0.9},
         ],
     }
+    llm.embed.return_value = [0.1] * 5  # dummy embedding for summary re-embedding
     return llm
 
 
@@ -57,6 +58,7 @@ def mock_episodic():
     episodic = AsyncMock()
     episodic.get_unconsolidated = AsyncMock(return_value=[])
     episodic.mark_consolidated = AsyncMock()
+    episodic.update_embedding = AsyncMock()
     return episodic
 
 
@@ -86,6 +88,7 @@ class TestConsolidationResult:
         assert r.facts_distilled == 0
         assert r.links_created == 0
         assert r.batches == 0
+        assert r.embeddings_updated == 0
         assert r.skipped is False
         assert r.skip_reason == ""
 
@@ -308,6 +311,71 @@ class TestConsolidatorLLMFailure:
 
         # mark_consolidated called with summary=None (empty string → None)
         mock_episodic.mark_consolidated.assert_called_once()
+
+
+# ── Consolidator — summary re-embedding ──────────────────────────────────────
+
+class TestConsolidatorReEmbedding:
+    async def test_embeds_summary_after_consolidation(
+        self, consolidator, mock_episodic, mock_llm
+    ):
+        """Summary should be embedded and the first event's embedding updated."""
+        events = make_events(5)
+        mock_episodic.get_unconsolidated.return_value = events
+        pg, neo = AsyncMock(), AsyncMock()
+
+        result = await consolidator.run(pg, neo, user_id="u1", app_id="default")
+
+        mock_llm.embed.assert_called_once_with("User is building a memory system.")
+        mock_episodic.update_embedding.assert_called_once_with(
+            pg, events[0].id, [0.1] * 5
+        )
+        assert result.embeddings_updated == 1
+
+    async def test_no_embed_when_summary_is_empty(
+        self, consolidator, mock_episodic, mock_llm
+    ):
+        """If the LLM returns no summary, skip re-embedding."""
+        events = make_events(5)
+        mock_episodic.get_unconsolidated.return_value = events
+        mock_llm.extract_structured.return_value = {"summary": "", "facts": []}
+        pg, neo = AsyncMock(), AsyncMock()
+
+        result = await consolidator.run(pg, neo, user_id="u1", app_id="default")
+
+        mock_llm.embed.assert_not_called()
+        mock_episodic.update_embedding.assert_not_called()
+        assert result.embeddings_updated == 0
+
+    async def test_graceful_on_embed_failure(
+        self, consolidator, mock_episodic, mock_llm
+    ):
+        """If embed() raises, consolidation still succeeds — original embedding retained."""
+        events = make_events(5)
+        mock_episodic.get_unconsolidated.return_value = events
+        mock_llm.embed.side_effect = RuntimeError("embedding API down")
+        pg, neo = AsyncMock(), AsyncMock()
+
+        result = await consolidator.run(pg, neo, user_id="u1", app_id="default")
+
+        # Consolidation succeeded despite embedding failure
+        assert result.events_consolidated == 5
+        assert result.embeddings_updated == 0
+        mock_episodic.update_embedding.assert_not_called()
+
+    async def test_embeds_once_per_batch(
+        self, consolidator, mock_episodic, mock_llm
+    ):
+        """With 2 batches, embed should be called once per batch (first event each)."""
+        events = make_events(15)  # 2 batches: 10 + 5
+        mock_episodic.get_unconsolidated.return_value = events
+        pg, neo = AsyncMock(), AsyncMock()
+
+        result = await consolidator.run(pg, neo, user_id="u1", app_id="default")
+
+        assert mock_llm.embed.call_count == 2
+        assert mock_episodic.update_embedding.call_count == 2
+        assert result.embeddings_updated == 2
 
 
 # ── Consolidator — narrative link extraction ──────────────────────────────────

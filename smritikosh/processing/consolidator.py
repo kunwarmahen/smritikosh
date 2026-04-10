@@ -69,6 +69,7 @@ class ConsolidationResult:
     facts_distilled: int = 0
     links_created: int = 0
     batches: int = 0
+    embeddings_updated: int = 0    # batches where summary was re-embedded
     skipped: bool = False          # True if fewer than MIN_EVENTS_TO_CONSOLIDATE
     skip_reason: str = ""
 
@@ -152,12 +153,13 @@ class Consolidator:
         result.batches = len(batches)
 
         for batch in batches:
-            consolidated, facts, links, batch_summary, batch_fact_list = await self._consolidate_batch(
+            consolidated, facts, links, batch_summary, batch_fact_list, embedding_updated = await self._consolidate_batch(
                 pg_session, neo_session, user_id, app_id, batch
             )
             result.events_consolidated += consolidated
             result.facts_distilled += facts
             result.links_created += links
+            result.embeddings_updated += 1 if embedding_updated else 0
 
             if self.audit and consolidated:
                 from smritikosh.audit.logger import AuditEvent, EventType
@@ -172,6 +174,7 @@ class Consolidator:
                         "facts_distilled": facts,
                         "links_created": links,
                         "facts": batch_fact_list,
+                        "summary_embedding_updated": embedding_updated,
                     },
                 ))
 
@@ -184,6 +187,7 @@ class Consolidator:
                 "facts_distilled": result.facts_distilled,
                 "links_created": result.links_created,
                 "batches": result.batches,
+                "embeddings_updated": result.embeddings_updated,
             },
         )
         return result
@@ -197,10 +201,10 @@ class Consolidator:
         user_id: str,
         app_id: str,
         batch: list[Event],
-    ) -> tuple[int, int, int, str, list]:
+    ) -> tuple[int, int, int, str, list, bool]:
         """
         Consolidate one batch of events.
-        Returns (events_consolidated, facts_distilled, links_created, summary, fact_list).
+        Returns (events_consolidated, facts_distilled, links_created, summary, fact_list, embedding_updated).
         """
         prompt = _build_consolidation_prompt(batch)
 
@@ -215,7 +219,7 @@ class Consolidator:
                 "Consolidation LLM call failed — batch skipped",
                 extra={"user_id": user_id, "batch_size": len(batch), "error": str(exc)},
             )
-            return 0, 0, 0, "", []
+            return 0, 0, 0, "", [], False
 
         summary = extracted.get("summary", "")
         fact_dicts = extracted.get("facts", [])
@@ -226,6 +230,29 @@ class Consolidator:
         await self.episodic.mark_consolidated(
             pg_session, event_ids, summary=summary or None
         )
+
+        # Re-embed the consolidated summary so hybrid search uses the clean,
+        # distilled signal rather than the original noisy raw_text embeddings.
+        # Only the first (oldest) event in the batch is updated — it acts as the
+        # canonical representative; other events retain their original embeddings
+        # for result diversity in hybrid search.
+        embedding_updated = False
+        if summary:
+            try:
+                summary_embedding = await self.llm.embed(summary)
+                await self.episodic.update_embedding(
+                    pg_session, batch[0].id, summary_embedding
+                )
+                embedding_updated = True
+                logger.debug(
+                    "Summary embedding updated",
+                    extra={"user_id": user_id, "event_id": str(batch[0].id)},
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Summary re-embedding failed — original embedding retained",
+                    extra={"user_id": user_id, "event_id": str(batch[0].id), "error": str(exc)},
+                )
 
         # Upsert distilled facts to Neo4j
         facts_stored = 0
@@ -273,7 +300,7 @@ class Consolidator:
                         extra={"link": ld, "error": str(exc)},
                     )
 
-        return len(batch), facts_stored, links_created, summary, fact_dicts
+        return len(batch), facts_stored, links_created, summary, fact_dicts, embedding_updated
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
