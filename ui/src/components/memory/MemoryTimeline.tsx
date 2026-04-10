@@ -19,12 +19,15 @@ export function MemoryTimeline() {
 
   // Convert SearchResultItem → MemoryEvent shape for display
   const searchEvents: MemoryEvent[] = (searchResults ?? []).map((r) => ({
-    event_id:        r.event_id,
-    user_id:         "",
-    raw_text:        r.raw_text,
+    event_id:         r.event_id,
+    user_id:          "",
+    raw_text:         r.raw_text,
+    summary:          r.summary ?? null,
     importance_score: r.importance_score,
-    consolidated:    r.consolidated,
-    created_at:      r.created_at,
+    consolidated:     r.consolidated,
+    created_at:       r.created_at,
+    hybrid_score:     r.hybrid_score,
+    similarity_score: r.similarity_score,
   }));
 
   const events: MemoryEvent[] = isSearching ? searchEvents : (data?.events ?? []);

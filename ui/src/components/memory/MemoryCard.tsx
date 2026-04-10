@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { Network, ThumbsUp, ThumbsDown, Trash2, Tag, GitMerge } from "lucide-react";
+import { Network, ThumbsUp, ThumbsDown, Trash2, Tag, GitMerge, Sparkles } from "lucide-react";
 import { clsx } from "clsx";
 import { useDeleteEvent, useSubmitFeedback } from "@/hooks/useMemory";
 import type { MemoryEvent } from "@/types";
@@ -84,6 +84,15 @@ export function MemoryCard({ event, onViewGraph }: Props) {
             <span className="badge bg-violet-500/10 text-violet-400 border border-violet-500/20">
               <Tag className="w-3 h-3" />
               {event.cluster_label}
+            </span>
+          )}
+          {event.hybrid_score !== undefined && (
+            <span
+              className="badge bg-sky-500/10 text-sky-400 border border-sky-500/20"
+              title={`Similarity: ${(event.similarity_score! * 100).toFixed(0)}%`}
+            >
+              <Sparkles className="w-3 h-3" />
+              {(event.hybrid_score * 100).toFixed(0)}% match
             </span>
           )}
         </div>

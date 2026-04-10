@@ -15,6 +15,9 @@ export interface MemoryEvent {
   created_at: string;
   updated_at?: string;
   last_reconsolidated_at?: string | null;
+  // Present when this event came from a search result
+  hybrid_score?: number;
+  similarity_score?: number;
 }
 
 export interface RecentEventsResponse {
@@ -26,6 +29,7 @@ export interface RecentEventsResponse {
 export interface SearchResultItem {
   event_id: string;
   raw_text: string;
+  summary?: string | null;
   importance_score: number;
   hybrid_score: number;
   similarity_score: number;
