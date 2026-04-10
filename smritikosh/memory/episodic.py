@@ -47,6 +47,13 @@ class HybridWeights:
 
     All five weights must sum to 1.0.
     contextual_match defaults to 0.0 and is activated in Phase 2 (intent classification).
+
+    ann_candidates controls the two-phase retrieval pool size: the ANN index
+    fetches ann_candidates rows by pure cosine similarity (fast, uses HNSW),
+    then the full hybrid formula re-ranks that smaller pool. A larger value
+    improves recall at the cost of re-ranking more rows.
+    hnsw_ef_search sets the HNSW ef_search parameter for the session, trading
+    recall quality against query speed (pgvector default is 40).
     """
     similarity: float = 0.40        # semantic closeness to the query
     recency: float = 0.30           # exponential decay based on event age
@@ -55,6 +62,8 @@ class HybridWeights:
     contextual_match: float = 0.0   # reserved: intent-aware boost (Phase 2)
     decay_days: float = 30.0        # half-life for recency decay
     frequency_cap: int = 50         # recall_count normalisation ceiling
+    ann_candidates: int = 50        # ANN oversample pool before hybrid re-rank
+    hnsw_ef_search: int = 80        # HNSW ef_search quality parameter
 
     def __post_init__(self) -> None:
         total = (
@@ -320,12 +329,20 @@ class EpisodicMemory:
         to_date: Optional[datetime] = None,
     ) -> list[SearchResult]:
         """
-        Hybrid retrieval: semantic similarity + recency decay + importance score.
+        Two-phase hybrid retrieval: ANN candidate fetch → full hybrid re-rank.
 
-        This is the primary retrieval method used by the ContextBuilder.
-        Returns SearchResult objects so the caller can inspect score breakdown.
+        Phase 1 — ANN candidate fetch (uses HNSW index):
+            The inner query sorts purely by cosine distance with a LIMIT of
+            ann_candidates. This is the only form pgvector's HNSW index can
+            accelerate. A larger pool improves recall at the cost of re-ranking
+            more rows; the default (50) is a good trade-off.
 
-        SQL formula (inline for pgvector compatibility):
+        Phase 2 — Hybrid re-rank (in SQL, on the small candidate pool):
+            The outer query applies the full weighted formula over the candidate
+            rows returned by Phase 1. No index is needed — it's just arithmetic
+            over at most ann_candidates rows.
+
+        Full scoring formula:
             hybrid_score =
                 similarity_weight  * (1 - cosine_distance)
               + recency_weight     * exp(-age_in_days / decay_days)
@@ -335,8 +352,13 @@ class EpisodicMemory:
         w = weights_override if weights_override is not None else self.weights
         vec_literal = _embedding_literal(query_embedding)
 
+        # Set HNSW ef_search for this session to tune recall quality.
+        # Higher values give better recall at the cost of slightly slower search.
+        await session.execute(text(f"SET hnsw.ef_search = {w.hnsw_ef_search}"))
+
         app_id_filter = ""
         date_filter = ""
+        candidates = max(w.ann_candidates, top_k)
         params: dict = {
             "user_id": user_id,
             "decay_days": w.decay_days,
@@ -346,34 +368,48 @@ class EpisodicMemory:
             "w_freq": w.frequency,
             "freq_cap": w.frequency_cap,
             "top_k": top_k,
+            "candidates": candidates,
         }
         if app_ids is not None:
-            app_id_filter = "\n                AND app_id = ANY(:app_ids)"
+            app_id_filter = "\n                    AND app_id = ANY(:app_ids)"
             params["app_ids"] = app_ids
         if from_date is not None:
-            date_filter += "\n                AND created_at >= :from_date"
+            date_filter += "\n                    AND created_at >= :from_date"
             params["from_date"] = from_date
         if to_date is not None:
-            date_filter += "\n                AND created_at <= :to_date"
+            date_filter += "\n                    AND created_at <= :to_date"
             params["to_date"] = to_date
 
+        # Two-phase query:
+        # Inner: pure cosine ORDER BY → HNSW index fires, returns candidates pool
+        # Outer: full hybrid re-rank over the small candidate set
         sql = text(f"""
             SELECT
                 id,
-                (1.0 - (embedding <=> '{vec_literal}'))                     AS similarity_score,
+                (1.0 - cosine_dist)                                          AS similarity_score,
                 EXP(
                     -EXTRACT(EPOCH FROM (NOW() - created_at))
                     / 86400.0 / :decay_days
                 )                                                            AS recency_score,
                 importance_score,
                 LEAST(recall_count, :freq_cap)::float / :freq_cap           AS frequency_score
-            FROM events
-            WHERE
-                user_id = :user_id
-                AND embedding IS NOT NULL{app_id_filter}{date_filter}
+            FROM (
+                SELECT
+                    id,
+                    (embedding <=> '{vec_literal}')  AS cosine_dist,
+                    created_at,
+                    importance_score,
+                    recall_count
+                FROM events
+                WHERE
+                    user_id = :user_id
+                    AND embedding IS NOT NULL{app_id_filter}{date_filter}
+                ORDER BY embedding <=> '{vec_literal}'
+                LIMIT :candidates
+            ) candidates
             ORDER BY
                 (
-                    :w_sim  * (1.0 - (embedding <=> '{vec_literal}'))
+                    :w_sim  * (1.0 - cosine_dist)
                   + :w_rec  * EXP(-EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400.0 / :decay_days)
                   + :w_imp  * importance_score
                   + :w_freq * (LEAST(recall_count, :freq_cap)::float / :freq_cap)
