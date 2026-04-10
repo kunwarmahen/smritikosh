@@ -385,6 +385,7 @@ class UserBelief(Base):
     category: Mapped[str] = mapped_column(String(50))   # BeliefCategory value
     confidence: Mapped[float] = mapped_column(Float, default=0.8)
     evidence_count: Mapped[int] = mapped_column(Integer, default=1)
+    evidence_event_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     first_inferred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now
     )

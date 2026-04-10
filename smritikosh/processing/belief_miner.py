@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from neo4j import AsyncSession as NeoSession
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -155,6 +155,10 @@ class BeliefMiner:
         )
         facts = (profile.facts if profile else [])[:MAX_FACTS_IN_PROMPT]
 
+        # Capture event IDs before the LLM call — these become the evidence
+        # sources stored alongside each belief for provenance and auditability.
+        event_ids = [str(e.id) for e in events]
+
         # ── 4. Extract beliefs via LLM ────────────────────────────────────
         prompt = _build_belief_prompt(facts, events)
         try:
@@ -179,7 +183,7 @@ class BeliefMiner:
         now = datetime.now(timezone.utc)
         for bd in belief_dicts:
             try:
-                upserted = await _upsert_belief(pg_session, user_id, app_id, bd, now)
+                upserted = await _upsert_belief(pg_session, user_id, app_id, bd, now, event_ids)
                 if upserted:
                     result.beliefs_upserted += 1
             except (KeyError, ValueError, TypeError) as exc:
@@ -296,9 +300,15 @@ async def _upsert_belief(
     app_id: str,
     bd: dict,
     now: datetime,
+    event_ids: list[str],
 ) -> bool:
     """
     Upsert one belief dict into user_beliefs.
+
+    On INSERT: stores event_ids as evidence sources.
+    On CONFLICT: merges old and new event IDs (deduped, capped at 50) so the
+    full provenance trail grows across mining cycles without unbounded growth.
+
     Returns True if the upsert was executed, False if validation failed.
     """
     statement = str(bd["statement"]).strip()
@@ -321,6 +331,7 @@ async def _upsert_belief(
             category=category,
             confidence=confidence,
             evidence_count=1,
+            evidence_event_ids=event_ids,
             first_inferred_at=now,
             last_updated_at=now,
         )
@@ -329,6 +340,18 @@ async def _upsert_belief(
             set_={
                 "confidence": confidence,
                 "evidence_count": UserBelief.evidence_count + 1,
+                # Merge existing IDs with new IDs: concatenate, deduplicate,
+                # cap at 50 to prevent unbounded growth over many mining cycles.
+                "evidence_event_ids": text(
+                    "(SELECT jsonb_agg(DISTINCT val) "
+                    "FROM ("
+                    "  SELECT val "
+                    "  FROM jsonb_array_elements_text("
+                    "    user_beliefs.evidence_event_ids || EXCLUDED.evidence_event_ids"
+                    "  ) val "
+                    "  LIMIT 50"
+                    ") sub)"
+                ),
                 "last_updated_at": now,
             },
         )

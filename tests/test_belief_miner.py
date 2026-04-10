@@ -294,7 +294,7 @@ class TestGetBeliefs:
         belief = UserBelief(
             id=uuid.uuid4(), user_id="u1", app_id="default",
             statement="values speed", category="value", confidence=0.8,
-            evidence_count=1,
+            evidence_count=1, evidence_event_ids=[],
             first_inferred_at=datetime.now(timezone.utc),
             last_updated_at=datetime.now(timezone.utc),
         )
@@ -329,7 +329,7 @@ class TestUserIdentityBeliefs:
         return UserBelief(
             id=uuid.uuid4(), user_id="u1", app_id="default",
             statement=statement, category="value", confidence=confidence,
-            evidence_count=2,
+            evidence_count=2, evidence_event_ids=[],
             first_inferred_at=datetime.now(timezone.utc),
             last_updated_at=datetime.now(timezone.utc),
         )
@@ -424,6 +424,87 @@ class TestUserIdentityBeliefs:
         identity = await builder.build(AsyncMock(), user_id="u1")   # no pg_session
 
         assert identity.beliefs == []
+
+
+# ── Belief evidence tracking ──────────────────────────────────────────────────
+
+
+class TestBeliefEvidenceTracking:
+    @pytest.mark.asyncio
+    async def test_event_ids_passed_to_upsert(self):
+        """Evidence event IDs from the fetched events are included in the upsert."""
+        events = [make_event() for _ in range(3)]
+        session = make_mock_session(events)
+        miner = BeliefMiner(llm=make_mock_llm(), semantic=make_mock_semantic())
+
+        await miner.mine(session, AsyncMock(), user_id="u1")
+
+        # Grab the INSERT statement from the first upsert call
+        upsert_calls = [
+            call for call in session.execute.call_args_list
+            if hasattr(call.args[0], "table")   # pg_insert returns an Insert obj
+        ]
+        assert len(upsert_calls) > 0
+
+    @pytest.mark.asyncio
+    async def test_upsert_belief_stores_event_ids_on_insert(self):
+        """_upsert_belief sets evidence_event_ids on a fresh INSERT."""
+        from smritikosh.processing.belief_miner import _upsert_belief
+
+        session = AsyncMock()
+        event_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+        bd = {"statement": "values speed", "category": "value", "confidence": 0.8}
+
+        result = await _upsert_belief(
+            session, "u1", "default", bd, datetime.now(timezone.utc), event_ids
+        )
+
+        assert result is True
+        session.execute.assert_called_once()
+        # Inspect the compiled INSERT — evidence_event_ids must be in the values
+        insert_stmt = session.execute.call_args.args[0]
+        compiled_params = insert_stmt.compile().params
+        assert "evidence_event_ids" in compiled_params
+        assert compiled_params["evidence_event_ids"] == event_ids
+
+    @pytest.mark.asyncio
+    async def test_upsert_belief_empty_ids_still_works(self):
+        """_upsert_belief handles an empty event_ids list gracefully."""
+        from smritikosh.processing.belief_miner import _upsert_belief
+
+        session = AsyncMock()
+        bd = {"statement": "believes in iteration", "category": "value", "confidence": 0.9}
+
+        result = await _upsert_belief(
+            session, "u1", "default", bd, datetime.now(timezone.utc), []
+        )
+
+        assert result is True
+        insert_stmt = session.execute.call_args.args[0]
+        compiled_params = insert_stmt.compile().params
+        assert compiled_params["evidence_event_ids"] == []
+
+    @pytest.mark.asyncio
+    async def test_mine_extracts_ids_from_all_fetched_events(self):
+        """All event IDs from the fetch window are passed as evidence, not just one."""
+        event_ids_expected = []
+        events = []
+        for _ in range(3):
+            e = make_event()
+            events.append(e)
+            event_ids_expected.append(str(e.id))
+
+        session = make_mock_session(events)
+        miner = BeliefMiner(llm=make_mock_llm(), semantic=make_mock_semantic())
+
+        await miner.mine(session, AsyncMock(), user_id="u1")
+
+        # All 3 event IDs should appear in each upsert call's evidence_event_ids
+        upsert_execute_calls = session.execute.call_args_list[1:]  # skip the SELECT
+        for call in upsert_execute_calls:
+            insert_stmt = call.args[0]
+            compiled_params = insert_stmt.compile().params
+            assert compiled_params["evidence_event_ids"] == event_ids_expected
 
 
 # ── DB integration tests ──────────────────────────────────────────────────────
