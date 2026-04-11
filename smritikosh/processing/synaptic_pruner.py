@@ -15,16 +15,19 @@ Design decisions:
     preserved until the Consolidator has processed them.
   - The conjunction of all three conditions is conservative: a memory that
     has been recalled even once is kept regardless of age or importance.
+  - Thresholds are adaptive: a high-volume user (>1000 events) gets a
+    tighter prune than a light user (<50 events). The instance defaults
+    act as the baseline for the "normal" volume tier.
   - Returns a PruningResult so the Scheduler can log what was removed.
 
 Run: after each Consolidation cycle via the Scheduler.
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from smritikosh.db.models import Event
@@ -38,6 +41,19 @@ DEFAULT_IMPORTANCE_THRESHOLD = 0.2   # prune only if importance is below this
 DEFAULT_MIN_RECALL_COUNT = 2         # prune only if recalled fewer times than this
 DEFAULT_MIN_AGE_DAYS = 90            # never prune events younger than this
 
+# Volume tiers that trigger threshold adjustment
+HIGH_VOLUME_EVENT_COUNT = 1000       # tighten thresholds above this
+LOW_VOLUME_EVENT_COUNT = 50          # loosen thresholds below this
+
+
+# ── Threshold type ────────────────────────────────────────────────────────────
+
+@dataclass
+class PruningThresholds:
+    importance_threshold: float
+    min_recall_count: int
+    min_age_days: int
+
 
 # ── Result type ───────────────────────────────────────────────────────────────
 
@@ -48,6 +64,47 @@ class PruningResult:
     events_evaluated: int = 0
     events_pruned: int = 0
     skipped: bool = False
+    thresholds: PruningThresholds | None = field(default=None)
+
+
+# ── Adaptive threshold computation ───────────────────────────────────────────
+
+def compute_adaptive_thresholds(
+    event_count: int,
+    base_importance: float = DEFAULT_IMPORTANCE_THRESHOLD,
+    base_min_recall: int = DEFAULT_MIN_RECALL_COUNT,
+    base_min_age: int = DEFAULT_MIN_AGE_DAYS,
+) -> PruningThresholds:
+    """
+    Return pruning thresholds scaled to the user's event volume.
+
+    High-volume users accumulate memories faster, so the prune bar is raised
+    (more aggressive).  Low-volume users have sparse memory, so the bar is
+    lowered (more conservative).
+
+    Tier         | event_count     | effect
+    -------------|-----------------|----------------------------------------------
+    High volume  | > 1000          | importance +50%, age −33%  (tighten)
+    Normal       | 50 – 1000       | base values unchanged
+    Low volume   | < 50            | importance −25%, age +100% (loosen)
+    """
+    if event_count > HIGH_VOLUME_EVENT_COUNT:
+        return PruningThresholds(
+            importance_threshold=round(base_importance * 1.5, 4),
+            min_recall_count=base_min_recall,
+            min_age_days=max(1, round(base_min_age * 0.67)),
+        )
+    if event_count < LOW_VOLUME_EVENT_COUNT:
+        return PruningThresholds(
+            importance_threshold=round(base_importance * 0.75, 4),
+            min_recall_count=base_min_recall,
+            min_age_days=round(base_min_age * 2.0),
+        )
+    return PruningThresholds(
+        importance_threshold=base_importance,
+        min_recall_count=base_min_recall,
+        min_age_days=base_min_age,
+    )
 
 
 # ── SynapticPruner ────────────────────────────────────────────────────────────
@@ -88,12 +145,34 @@ class SynapticPruner:
         """
         Evaluate and delete consolidated events that meet all prune conditions.
 
-        Pre-filters in SQL (importance + recall_count + age) so that only
-        true candidates are loaded into Python.
+        Computes adaptive thresholds based on the user's total event count
+        before loading any candidates, so the SQL pre-filter already uses the
+        scaled values.
         """
         result = PruningResult(user_id=user_id, app_id=app_id)
 
-        candidates = await self._get_prune_candidates(session, user_id, app_id)
+        # Compute adaptive thresholds for this user
+        event_count = await self._count_user_events(session, user_id, app_id)
+        thresholds = compute_adaptive_thresholds(
+            event_count,
+            base_importance=self.importance_threshold,
+            base_min_recall=self.min_recall_count,
+            base_min_age=self.min_age_days,
+        )
+        result.thresholds = thresholds
+
+        if event_count != DEFAULT_MIN_RECALL_COUNT:  # log only when tier changed
+            logger.debug(
+                "Adaptive pruning thresholds",
+                extra={
+                    "user_id": user_id,
+                    "event_count": event_count,
+                    "importance_threshold": thresholds.importance_threshold,
+                    "min_age_days": thresholds.min_age_days,
+                },
+            )
+
+        candidates = await self._get_prune_candidates(session, user_id, app_id, thresholds)
         result.events_evaluated = len(candidates)
 
         if not candidates:
@@ -104,7 +183,7 @@ class SynapticPruner:
         pruned = 0
 
         for event in candidates:
-            if self._should_prune(event, now):
+            if self._should_prune(event, now, thresholds):
                 deleted = await self.episodic.delete(session, event.id)
                 if deleted:
                     pruned += 1
@@ -132,9 +211,10 @@ class SynapticPruner:
                                 "importance_score": event.importance_score,
                                 "recall_count": event.recall_count or 0,
                                 "age_days": age_days,
-                                "importance_threshold": self.importance_threshold,
-                                "min_recall_count": self.min_recall_count,
-                                "min_age_days": self.min_age_days,
+                                "importance_threshold": thresholds.importance_threshold,
+                                "min_recall_count": thresholds.min_recall_count,
+                                "min_age_days": thresholds.min_age_days,
+                                "event_count": event_count,
                                 "raw_text_preview": (event.raw_text or "")[:200],
                             },
                         ))
@@ -152,14 +232,32 @@ class SynapticPruner:
 
     # ── Helpers ────────────────────────────────────────────────────────────
 
-    async def _get_prune_candidates(
+    async def _count_user_events(
         self, session: AsyncSession, user_id: str, app_id: str
+    ) -> int:
+        """Count total consolidated events for this user to determine volume tier."""
+        row = await session.execute(
+            select(func.count()).where(
+                Event.user_id == user_id,
+                Event.app_id == app_id,
+                Event.consolidated.is_(True),
+            )
+        )
+        return row.scalar_one() or 0
+
+    async def _get_prune_candidates(
+        self,
+        session: AsyncSession,
+        user_id: str,
+        app_id: str,
+        thresholds: PruningThresholds,
     ) -> list[Event]:
         """
         Fetch consolidated events that pass all three pre-filter conditions.
         SQL-level filtering keeps the Python loop small.
+        Uses the adaptive thresholds computed for this user.
         """
-        cutoff_sql = text(f"NOW() - INTERVAL '{self.min_age_days} days'")
+        cutoff_sql = text(f"NOW() - INTERVAL '{thresholds.min_age_days} days'")
         result = await session.execute(
             select(Event)
             .where(
@@ -167,19 +265,20 @@ class SynapticPruner:
                 Event.app_id == app_id,
                 Event.consolidated.is_(True),
                 Event.created_at < cutoff_sql,
-                Event.importance_score < self.importance_threshold,
-                Event.recall_count < self.min_recall_count,
+                Event.importance_score < thresholds.importance_threshold,
+                Event.recall_count < thresholds.min_recall_count,
             )
             .order_by(Event.importance_score.asc())  # lowest importance first
         )
         return list(result.scalars().all())
 
-    def _should_prune(self, event: Event, now: datetime) -> bool:
+    def _should_prune(self, event: Event, now: datetime, thresholds: PruningThresholds) -> bool:
         """
         Return True only if ALL three conditions are met:
           - importance_score below threshold
           - recall_count below minimum
           - age exceeds minimum days
+        Uses the adaptive thresholds computed for this user.
         """
         created = event.created_at
         if created is None:
@@ -188,9 +287,9 @@ class SynapticPruner:
             created = created.replace(tzinfo=timezone.utc)
         age_days = (now - created).total_seconds() / 86400.0
         return (
-            (event.importance_score or 0.0) < self.importance_threshold
-            and (event.recall_count or 0) < self.min_recall_count
-            and age_days > self.min_age_days
+            (event.importance_score or 0.0) < thresholds.importance_threshold
+            and (event.recall_count or 0) < thresholds.min_recall_count
+            and age_days > thresholds.min_age_days
         )
 
 
