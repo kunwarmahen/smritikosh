@@ -94,6 +94,26 @@ What should I focus on this week for our infra migration?
 ### What happens before the LLM sees the question
 
 The chatbot calls `POST /context` with `user_id=alice` and the query text.
+Before running search, Smritikosh classifies the query intent using a two-tier
+classifier:
+
+```
+Query: "What should I focus on this week for our infra migration?"
+   │
+   ▼
+IntentClassifier
+   Step 1 — keyword heuristic (always runs, zero latency):
+     "infra", "migration" → PROJECT_PLANNING keywords: confidence=0.67
+     Confidence ≥ 0.5 threshold → use keyword result directly.
+   Step 2 — LLM fallback (only when keyword confidence < 0.5):
+     Prompts a cheap model for {primary_intent, secondary_intents, confidence}.
+     Falls back to keyword result on any failure.
+   Result: intent=PROJECT_PLANNING, via_llm=False
+```
+
+The detected intent adjusts the hybrid search weight distribution. A
+`PROJECT_PLANNING` query shifts weight towards recency and contextual match;
+a `TECHNICAL` query shifts weight towards embedding similarity. Then
 Smritikosh embeds the query and runs a **hybrid search** across all of Alice's
 stored memories:
 
@@ -101,15 +121,17 @@ stored memories:
 Query vector  (768-dim for "infra migration focus this week")
    │
    ▼
-Hybrid scoring — every event is scored:
+Hybrid scoring — every event is scored with intent-adjusted weights:
 
   hybrid_score =
-      0.40 × cosine_similarity(query_vec, event.embedding)
-    + 0.30 × exp(−days_since_event / 30)
-    + 0.15 × event.importance_score
-    + 0.15 × min(recall_count, 50) / 50
+      w_sim  × cosine_similarity(query_vec, event.embedding)
+    + w_rec  × exp(−days_since_event / 30)
+    + w_imp  × event.importance_score
+    + w_freq × min(recall_count, 50) / 50
+    + w_ctx  × contextual_match_score
 
-  ↑ semantic   ↑ recency        ↑ significance   ↑ reinforcement
+  Weights sum to 1.0 and vary by intent (e.g. TECHNICAL puts 0.55 on similarity;
+  HISTORICAL_RECALL puts 0.30 on frequency).
 
 Top-5 events ranked by hybrid_score:
   [0.91]  "team migrating from PyTorch to JAX"           (high sim + high importance)
@@ -118,6 +140,12 @@ Top-5 events ranked by hybrid_score:
   [0.58]  "learning Rust, borrow checker finally clicked"
   [0.51]  "MacBook Pro M3 Max for local dev"
 ```
+
+After ranking, Smritikosh traverses **narrative chains** for the top-3 results.
+If a high-scoring event is causally or temporally linked to other events via
+`memory_links`, those chain neighbours are included with a small score boost
+(`+0.05`). This surfaces contextually adjacent memories even when they wouldn't
+have ranked highly on their own.
 
 Smritikosh assembles these into a context block and returns it:
 
@@ -300,11 +328,15 @@ reflects:
 A timeline of all events, newest first. Each card shows:
 - The raw text
 - Importance score (coloured bar — higher = more significant)
+- Hybrid search score badge (shown when the page is in search mode)
 - A ✓ badge if the event has been consolidated
 - Cluster label (e.g. "Machine learning & infrastructure")
 
-Searching for "JAX" instantly returns the most semantically relevant events
-using the same hybrid search the API uses — not a keyword filter.
+A search bar at the top calls `POST /memory/search` and re-renders the list
+with results sorted by hybrid score. Searching for "JAX" instantly returns the
+most semantically relevant events using the same scoring the API uses — not a
+keyword filter. The score badge on each result shows exactly why it ranked where
+it did.
 
 ### Identity page
 

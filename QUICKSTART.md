@@ -118,6 +118,19 @@ EMBEDDING_API_KEY=sk-...
 JWT_SECRET=replace-this-with-something-random-and-long
 ```
 
+Optional settings (defaults shown):
+
+```dotenv
+# Rate limiting (per user identity, per minute)
+RATE_LIMIT_ENCODE=60/minute
+RATE_LIMIT_CONTEXT=60/minute
+RATE_LIMIT_SEARCH=120/minute
+
+# Semantic fact decay (background job, runs weekly)
+FACT_DECAY_HALF_LIFE_DAYS=60.0           # halve confidence every 60 days
+FACT_DECAY_FLOOR=0.1                     # delete facts below this confidence
+```
+
 ---
 
 ## Step 6 — Start the databases
@@ -180,6 +193,8 @@ alembic upgrade head
 You should see output ending with something like:
 ```
 INFO  [alembic.runtime.migration] Running upgrade ... -> 0009, multi-app access: app_ids array on app_users; create api_keys table
+INFO  [alembic.runtime.migration] Running upgrade 0009 -> 0010, add belief evidence_event_ids column
+INFO  [alembic.runtime.migration] Running upgrade 0010 -> 0011, hnsw index on events.embedding
 ```
 
 ---

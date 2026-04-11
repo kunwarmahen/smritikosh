@@ -170,17 +170,19 @@ Your application
 | **SemanticMemory** | Distilled facts organised in a knowledge graph | Neo4j |
 | **Hippocampus** | Orchestrates intake: score → embed → extract → store | — |
 | **NarrativeMemory** | Tracks causal/temporal links between events (memory chains) | PostgreSQL |
-| **ContextBuilder** | Retrieves relevant context before an LLM call | — |
-| **Consolidator** | Background: compresses events into summaries + Neo4j facts | — |
+| **ContextBuilder** | Retrieves relevant context before an LLM call; boosts chain-adjacent events | — |
+| **Consolidator** | Background: compresses events into summaries + Neo4j facts + re-embeds summaries | — |
 | **SynapticPruner** | Background: deletes old low-scoring events | — |
 | **MemoryClusterer** | Background: groups similar events by topic using embeddings | PostgreSQL |
-| **BeliefMiner** | Background: infers durable beliefs and values from event patterns | PostgreSQL |
+| **BeliefMiner** | Background: infers durable beliefs and values from event patterns; tracks evidence event IDs | PostgreSQL |
+| **FactDecayer** | Background (weekly): exponential confidence decay on Neo4j facts; deletes stale ones | Neo4j |
 | **IdentityBuilder** | Synthesises semantic facts + beliefs into a user identity model | — |
 | **ReinforcementLoop** | Adjusts event importance scores based on user feedback signals | PostgreSQL |
 | **ProceduralMemory** | Stores trigger→instruction rules; fuzzy-matched against each query | PostgreSQL |
 | **ReconsolidationEngine** | Re-summarises events after recall to incorporate new context | PostgreSQL |
 | **SourceConnector** | Normalises external sources (file, webhook, Slack, email, calendar) into events | — |
 | **MemoryScheduler** | Runs all background jobs on configurable timers (APScheduler) | — |
+| **IntentClassifier** | Two-tier intent classification: keyword heuristic + LLM fallback for ambiguous queries | — |
 | **LLMAdapter** | Unified interface to Claude, OpenAI, Gemini, Ollama, vLLM | — |
 | **SmritikoshClient (Python)** | Python SDK wrapping the REST API | — |
 | **SmritikoshClient (Node.js)** | TypeScript/ESM SDK with identical surface to the Python SDK | — |
@@ -1063,7 +1065,9 @@ alembic/
     ├── 0006_add_user_procedures.py   # user_procedures table + priority/active indexes
     ├── 0007_add_reconsolidation_fields.py  # reconsolidation_count, last_reconsolidated_at
     ├── 0008_add_app_users.py         # app_users table (username, role, is_active, app_id)
-    └── 0009_multi_app_ids.py         # app_ids TEXT[] on app_users and api_keys; create api_keys table
+    ├── 0009_multi_app_ids.py         # app_ids TEXT[] on app_users and api_keys; create api_keys table
+    ├── 0010_add_belief_evidence_ids.py  # evidence_event_ids JSONB on user_beliefs
+    └── 0011_hnsw_index.py            # replace IVFFlat with HNSW index on events.embedding
 ```
 
 ---
@@ -1434,6 +1438,11 @@ All backend settings are read from the environment (or `.env`). Every field has 
 | `JWT_SECRET` | `change-me-in-production` | Secret key for signing JWT tokens — **change this in production** |
 | `JWT_ALGORITHM` | `HS256` | JWT signing algorithm |
 | `JWT_EXPIRE_DAYS` | `30` | Token lifetime in days |
+| `RATE_LIMIT_ENCODE` | `60/minute` | Per-user rate limit for `POST /memory/event`. Set to `""` to disable. |
+| `RATE_LIMIT_CONTEXT` | `60/minute` | Per-user rate limit for `POST /context`. Set to `""` to disable. |
+| `RATE_LIMIT_SEARCH` | `120/minute` | Per-user rate limit for `POST /memory/search`. Set to `""` to disable. |
+| `FACT_DECAY_HALF_LIFE_DAYS` | `60.0` | Days for Neo4j fact confidence to halve without reinforcement. |
+| `FACT_DECAY_FLOOR` | `0.1` | Facts whose confidence falls below this threshold are deleted. |
 
 ### UI environment variables
 
@@ -1457,7 +1466,7 @@ On startup the server will:
 1. Enable the `pgvector` extension and create tables (if not already present via Alembic)
 2. Apply Neo4j schema constraints and indexes
 3. Create MongoDB `audit_events` collection and indexes (if `MONGODB_URL` is configured)
-4. Start background scheduler (consolidation every hour, pruning every 24 hours)
+4. Start background scheduler (consolidation every hour, pruning every 24 hours, fact decay weekly)
 
 Interactive API docs are available at `http://localhost:8080/docs`.
 
@@ -2441,7 +2450,7 @@ npm run test:watch
 pytest
 ```
 
-The default run executes **~600 tests** in about 8 seconds. All tests that require real API keys, a local Ollama server, or running databases are automatically skipped.
+The default run executes **~670 tests** in about 8 seconds. All tests that require real API keys, a local Ollama server, or running databases are automatically skipped.
 
 ```
 601 passed, 42 skipped in 7.9s
@@ -2504,7 +2513,7 @@ pytest tests/test_amygdala.py::TestAmygdala::test_scores_decision_text -v
 | `test_amygdala.py` | 19 | All scoring rules, boosts, penalties, clamp behaviour |
 | `test_hippocampus.py` | 16 | Parallel LLM calls, embedding failure, extraction failure |
 | `test_narrative_memory.py` | 18 | Memory link creation, chain traversal, relation types |
-| `test_context_builder.py` | 34 | Deduplication, degraded-mode fallbacks, prompt rendering, narrative chains |
+| `test_context_builder.py` | 42 | Deduplication, degraded-mode fallbacks, prompt rendering, narrative chain boost, chain_top_k |
 | `test_consolidator.py` | 26 | Batch splitting, LLM failures, fact upserts, narrative link creation |
 | `test_synaptic_pruner.py` | 22 | Score formula, pruning logic, threshold sensitivity |
 | `test_scheduler.py` | 14 | Job registration, manual triggers, error recovery |
@@ -2519,6 +2528,9 @@ pytest tests/test_amygdala.py::TestAmygdala::test_scores_decision_text -v
 | `test_api_procedures.py` | 18 | Procedure CRUD routes + delete_all_for_user, delete event/user memory |
 | `test_api_admin.py` | 22 | Admin job endpoints, ingest routes (push/file/slack/calendar), 503 on missing scheduler |
 | `test_sdk_client.py` | 40 | HTTP mocking via respx, error handling, type checks |
+| `test_intent_classifier.py` | 32 | Weight table, keyword detection, confidence, two-tier classify_async, LLM fallback |
+| `test_fact_decayer.py` | 11 | Decay Cypher execution, count forwarding, config defaults, error skip |
+| `test_e2e_pipeline.py` | 17 | Full encode → consolidate → context pipeline; embedding failure survival |
 
 #### Node.js (`vitest`)
 
@@ -2614,7 +2626,7 @@ EMBEDDING_DIMENSIONS=3584          # match your model's output dimension
 
 ## Background jobs
 
-The `MemoryScheduler` runs four jobs inside the FastAPI process using APScheduler:
+The `MemoryScheduler` runs five jobs inside the FastAPI process using APScheduler:
 
 | Job | Default interval | What it does |
 |---|---|---|
@@ -2622,6 +2634,7 @@ The `MemoryScheduler` runs four jobs inside the FastAPI process using APSchedule
 | **Synaptic pruning** | every 24 hours | Deletes old low-scoring events |
 | **Memory clustering** | every 6 hours | Groups similar events by topic using embeddings |
 | **Belief mining** | every 12 hours | Infers durable beliefs and values from event patterns |
+| **Semantic fact decay** | every 1 week | Decays Neo4j fact confidence over time; deletes facts below threshold |
 
 ### Consolidation (every hour)
 
@@ -2651,6 +2664,16 @@ Groups events with embeddings into topical clusters using a greedy centroid algo
 
 Reads consolidated events (minimum 3) and semantic facts, then prompts the LLM to infer higher-order beliefs and values. Results are upserted into `user_beliefs` — `evidence_count` increments each time the same belief is independently inferred, reinforcing confidence over time.
 
+### Semantic fact decay (every week)
+
+Facts in Neo4j persist indefinitely by default. The `FactDecayer` applies exponential confidence decay to every fact whose `last_seen_at` timestamp is older than a full epoch:
+
+```
+new_confidence = confidence × exp(−ln2 × age_days / half_life_days)
+```
+
+The default half-life is **60 days** (`FACT_DECAY_HALF_LIFE_DAYS`). Facts whose confidence drops below `0.1` (`FACT_DECAY_FLOOR`) are deleted. Orphaned `Fact` nodes with no remaining user relationship are also cleaned up in a third pass.
+
 ### Manual triggers (admin / testing)
 
 ```python
@@ -2667,6 +2690,7 @@ await scheduler.run_consolidation_for_all_users()
 await scheduler.run_pruning_for_all_users()
 await scheduler.run_clustering_for_all_users()
 await scheduler.run_belief_mining_for_all_users()
+await scheduler.run_fact_decay()
 ```
 
 ### Tune the schedule
@@ -2676,11 +2700,12 @@ Pass custom intervals when constructing the scheduler (or subclass `MemorySchedu
 ```python
 MemoryScheduler(
     consolidator=..., pruner=..., episodic=...,
-    clusterer=..., belief_miner=...,
+    clusterer=..., belief_miner=..., fact_decayer=...,
     consolidation_hours=2,    # consolidate every 2 hours
     pruning_hours=48,         # prune every 2 days
     clustering_hours=12,      # cluster every 12 hours
     belief_mining_hours=24,   # mine beliefs once a day
+    fact_decay_weeks=2,       # decay facts every 2 weeks
 )
 ```
 
