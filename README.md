@@ -57,6 +57,7 @@ Smritikosh gives any LLM application persistent, user-specific memory modelled o
 - [Testing](#testing)
 - [LLM provider guide](#llm-provider-guide)
 - [Background jobs](#background-jobs)
+- [Production deployment](#production-deployment)
 - [Data reset script](#data-reset-script)
 
 ---
@@ -2708,6 +2709,67 @@ MemoryScheduler(
     fact_decay_weeks=2,       # decay facts every 2 weeks
 )
 ```
+
+---
+
+## Production deployment
+
+### Build and run with Docker
+
+```bash
+# Build the image
+docker build -t smritikosh-api:latest .
+
+# Run a single container (databases must already be accessible)
+docker run -d \
+  --name smritikosh \
+  -p 8080:8080 \
+  --env-file .env.prod \
+  smritikosh-api:latest
+```
+
+The image is a two-stage build:
+- **Stage 1 (builder):** installs all Python deps into `/install` using a full build toolchain.
+- **Stage 2 (runtime):** copies only `/install` — no compiler, no build tools. Runs as non-root user `smriti` (uid 1001).
+
+The container runs `alembic upgrade head` before starting uvicorn, so migrations are always applied on deploy.
+
+A `HEALTHCHECK` polls `GET /health` every 30 seconds. Container orchestrators (ECS, Kubernetes, Fly.io) use this to determine readiness.
+
+### Full stack with Docker Compose
+
+`docker-compose.prod.yml` wires up the API, PostgreSQL, Neo4j, and MongoDB with production-safe defaults:
+- Databases are not exposed to the host (internal network only)
+- `restart: unless-stopped` on all services
+- `depends_on` with `condition: service_healthy` so the API only starts after all databases pass their health checks
+- All secrets come from environment variables (never hardcoded)
+
+```bash
+# Create your production .env (never commit this)
+cp .env.example .env.prod
+# Fill in POSTGRES_PASSWORD, NEO4J_PASSWORD, JWT_SECRET, LLM_*, EMBEDDING_*
+
+# Start everything
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+
+# View logs
+docker compose -f docker-compose.prod.yml logs -f api
+
+# Tear down (data volumes are preserved)
+docker compose -f docker-compose.prod.yml down
+```
+
+### Deploying without Docker
+
+If you deploy directly to a VM or PaaS (e.g. Railway, Render, Fly.io):
+
+```bash
+pip install .
+alembic upgrade head
+uvicorn smritikosh.api.main:app --host 0.0.0.0 --port 8080 --workers 2
+```
+
+Set all environment variables from `.env.example` in your platform's config panel.
 
 ---
 
