@@ -6,11 +6,13 @@ POST /memory/search     Hybrid search — returns raw scored events
 GET  /memory/{user_id}  Return recent events for a user
 """
 
+import json
 import logging
 import uuid
-from typing import Annotated
+from typing import Annotated, AsyncIterator
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy import or_, select
 from neo4j import AsyncSession as NeoSession
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +26,7 @@ from smritikosh.api.schemas import (
     DeleteUserMemoryResponse,
     EventRequest,
     EventResponse,
+    ExportEventItem,
     MemoryEventDetail,
     MemoryLinkItem,
     MemoryLinksResponse,
@@ -345,6 +348,52 @@ async def get_event_links(
         )
 
     return MemoryLinksResponse(event_id=event_id, links=items)
+
+
+@router.get("/export", tags=["memory"])
+async def export_memory(
+    user_id: Annotated[str, Query(description="User whose memories to export")],
+    app_ids: Annotated[list[str] | None, Query(description="App namespaces to include. Defaults to all.")] = None,
+    pg: Annotated[AsyncSession, Depends(get_session)] = None,
+    current_user: Annotated[dict, Depends(get_current_user)] = None,
+) -> StreamingResponse:
+    """
+    Export all memory events for a user as NDJSON (newline-delimited JSON).
+
+    Each line is a JSON object with: event_id, raw_text, summary,
+    importance_score, consolidated, recall_count, cluster_label, created_at.
+
+    The response streams incrementally — safe for large memory sets.
+    Content-Type: application/x-ndjson
+    """
+    assert_self_or_admin(current_user, user_id)
+    resolved_app_ids = app_ids or current_user.get("app_ids")
+
+    async def _ndjson_stream() -> AsyncIterator[str]:
+        stmt = select(Event).where(Event.user_id == user_id)
+        if resolved_app_ids:
+            stmt = stmt.where(Event.app_id.in_(resolved_app_ids))
+        stmt = stmt.order_by(Event.created_at.asc())
+
+        result = await pg.execute(stmt)
+        for event in result.scalars().all():
+            item = ExportEventItem(
+                event_id=str(event.id),
+                raw_text=event.raw_text or "",
+                summary=event.summary,
+                importance_score=event.importance_score,
+                consolidated=bool(event.consolidated),
+                recall_count=event.recall_count or 0,
+                cluster_label=event.cluster_label,
+                created_at=event.created_at.isoformat() if event.created_at else "",
+            )
+            yield item.model_dump_json() + "\n"
+
+    return StreamingResponse(
+        _ndjson_stream(),
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition": f'attachment; filename="memories_{user_id}.ndjson"'},
+    )
 
 
 @router.get("/{user_id}", response_model=RecentEventsResponse, tags=["memory"])

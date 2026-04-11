@@ -219,18 +219,26 @@ class MemoryClusterer:
 def cluster_embeddings(
     embeddings: list[list[float]],
     similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
+    n_iterations: int = 3,
 ) -> list[int]:
     """
-    Greedy centroid-based clustering.
+    Greedy centroid-based clustering with k-means refinement.
 
-    For each embedding, compute cosine similarity to all existing cluster
-    centroids. If the best similarity meets the threshold, assign to that
-    cluster and update its centroid (running average). Otherwise start a
-    new cluster.
+    Phase 1 — greedy pass (order-dependent, creates cluster structure):
+        For each embedding, assign to the nearest existing centroid if
+        similarity ≥ threshold, otherwise start a new cluster.
+
+    Phase 2 — k-means refinement (up to n_iterations):
+        Recompute true centroids from current assignments, then reassign
+        every point to the globally nearest centroid. Repeat until stable
+        or n_iterations is reached. This removes order-dependence and moves
+        borderline points to their best cluster.
 
     Args:
         embeddings:           List of float vectors (must all have the same length).
-        similarity_threshold: Minimum cosine similarity to join an existing cluster.
+        similarity_threshold: Minimum cosine similarity to join an existing cluster
+                              during the greedy phase.
+        n_iterations:         Number of k-means refinement passes (default 3).
 
     Returns:
         List of integer cluster IDs, one per input embedding.
@@ -240,6 +248,8 @@ def cluster_embeddings(
         return []
 
     vecs = [np.array(e, dtype=np.float32) for e in embeddings]
+
+    # ── Phase 1: greedy pass ──────────────────────────────────────────────
     centroids: list[np.ndarray] = []
     centroid_counts: list[int] = []
     assignments: list[int] = []
@@ -264,6 +274,33 @@ def cluster_embeddings(
             centroids.append(vec.copy())
             centroid_counts.append(1)
             assignments.append(len(centroids) - 1)
+
+    if len(centroids) <= 1 or n_iterations <= 0:
+        return assignments
+
+    # ── Phase 2: k-means refinement ───────────────────────────────────────
+    n_clusters = len(centroids)
+    for _ in range(n_iterations):
+        # Recompute true mean centroids from current assignments
+        stacked = np.stack(vecs)  # (n, dim)
+        new_centroids: list[np.ndarray] = []
+        for cid in range(n_clusters):
+            mask = np.array([a == cid for a in assignments])
+            if mask.any():
+                new_centroids.append(stacked[mask].mean(axis=0))
+            else:
+                new_centroids.append(centroids[cid])  # keep stale centroid
+        centroids = new_centroids
+
+        # Reassign each point to the nearest centroid (no threshold — all
+        # points stay assigned, just move between clusters)
+        new_assignments = [
+            int(np.argmax([_cosine_sim(vec, c) for c in centroids]))
+            for vec in vecs
+        ]
+        if new_assignments == assignments:
+            break  # converged early
+        assignments = new_assignments
 
     return assignments
 

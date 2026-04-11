@@ -391,6 +391,21 @@ class SearchResponse(BaseModel):
     embedding_failed: bool
 
 
+# ── GET /memory/export ────────────────────────────────────────────────────────
+
+
+class ExportEventItem(BaseModel):
+    """One line of the NDJSON export.  All fields are present on every row."""
+    event_id: str
+    raw_text: str
+    summary: Optional[str]
+    importance_score: Optional[float]
+    consolidated: bool
+    recall_count: int
+    cluster_label: Optional[str]
+    created_at: str
+
+
 # ── GET /admin/users  GET /admin/users/{username}  PATCH /admin/users/{username} ─
 
 

@@ -395,6 +395,50 @@ class SemanticMemory:
 
         return decayed_count, deleted_count, orphans_deleted
 
+    async def purge_unseen_facts(
+        self,
+        session: AsyncSession,
+        *,
+        user_id: str,
+        not_seen_since_days: int,
+    ) -> int:
+        """
+        Delete Neo4j facts for a user that have not been reinforced in
+        `not_seen_since_days` days.
+
+        Called by SynapticPruner after deleting old episodic events: facts
+        that were only reinforced by those events will no longer be
+        re-confirmed by future consolidation runs, so we remove them eagerly
+        rather than waiting for the weekly confidence-decay cycle.
+
+        Returns the number of relationships deleted (orphaned Fact nodes are
+        also cleaned up in a second pass).
+        """
+        r1 = await session.run(
+            """
+            MATCH (u:User {id: $user_id})-[r]->(f:Fact)
+            WHERE r.last_seen_at IS NOT NULL
+              AND duration.between(datetime(r.last_seen_at), datetime()).days > $cutoff_days
+            DELETE r
+            RETURN count(*) AS deleted_count
+            """,
+            user_id=user_id,
+            cutoff_days=int(not_seen_since_days),
+        )
+        rec = await r1.single()
+        deleted = int(rec["deleted_count"]) if rec else 0
+
+        # Clean up any Fact nodes that are now orphaned
+        await session.run(
+            """
+            MATCH (f:Fact)
+            WHERE NOT (:User)-[]->(f)
+            DETACH DELETE f
+            """
+        )
+
+        return deleted
+
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 

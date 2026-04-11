@@ -63,6 +63,7 @@ class PruningResult:
     app_id: str
     events_evaluated: int = 0
     events_pruned: int = 0
+    facts_purged: int = 0
     skipped: bool = False
     thresholds: PruningThresholds | None = field(default=None)
 
@@ -127,12 +128,14 @@ class SynapticPruner:
         importance_threshold: float = DEFAULT_IMPORTANCE_THRESHOLD,
         min_recall_count: int = DEFAULT_MIN_RECALL_COUNT,
         min_age_days: int = DEFAULT_MIN_AGE_DAYS,
-        audit=None,   # AuditLogger | None
+        semantic=None,  # SemanticMemory | None — enables fact GC after pruning
+        audit=None,     # AuditLogger | None
     ) -> None:
         self.episodic = episodic
         self.importance_threshold = importance_threshold
         self.min_recall_count = min_recall_count
         self.min_age_days = min_age_days
+        self.semantic = semantic
         self.audit = audit
 
     async def prune(
@@ -141,6 +144,7 @@ class SynapticPruner:
         *,
         user_id: str,
         app_id: str = "default",
+        neo_session=None,   # neo4j.AsyncSession | None — for fact GC
     ) -> PruningResult:
         """
         Evaluate and delete consolidated events that meet all prune conditions.
@@ -220,12 +224,36 @@ class SynapticPruner:
                         ))
 
         result.events_pruned = pruned
+
+        # ── Fact garbage collection ────────────────────────────────────────
+        # If any events were pruned and we have a SemanticMemory + neo4j
+        # session, remove facts that were last reinforced within the same
+        # age window as the deleted events — they are orphaned in practice.
+        if pruned and self.semantic and neo_session is not None:
+            try:
+                facts_purged = await self.semantic.purge_unseen_facts(
+                    neo_session,
+                    user_id=user_id,
+                    not_seen_since_days=thresholds.min_age_days,
+                )
+                result.facts_purged = facts_purged
+                logger.debug(
+                    "Fact GC complete",
+                    extra={"user_id": user_id, "facts_purged": facts_purged},
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Fact GC failed — skipping",
+                    extra={"user_id": user_id, "error": str(exc)},
+                )
+
         logger.info(
             "Pruning complete",
             extra={
                 "user_id": user_id,
                 "evaluated": result.events_evaluated,
                 "pruned": pruned,
+                "facts_purged": result.facts_purged,
             },
         )
         return result

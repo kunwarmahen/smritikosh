@@ -13,6 +13,7 @@ the codebase never needs to know which provider is active.
 """
 
 import json
+import logging
 from typing import Any
 
 import litellm
@@ -20,6 +21,7 @@ from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wai
 
 from smritikosh.config import Settings, settings as default_settings
 
+logger = logging.getLogger(__name__)
 
 # Suppress litellm's verbose startup banner
 litellm.suppress_debug_info = True
@@ -37,6 +39,16 @@ class LLMAdapter:
         self._cfg = cfg
         self._chat_model = self._resolve_chat_model(cfg)
         self._embed_model = self._resolve_embed_model(cfg)
+        logger.info(
+            "LLMAdapter initialised",
+            extra={
+                "chat_provider": cfg.llm_provider,
+                "chat_model": self._chat_model,
+                "embed_provider": cfg.embedding_provider,
+                "embed_model": self._embed_model,
+                "embed_dimensions": cfg.embedding_dimensions,
+            },
+        )
 
     # ── Public interface ───────────────────────────────────────────────────
 

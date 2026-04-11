@@ -189,9 +189,9 @@ class MemoryScheduler:
     ) -> PruningResult:
         """Run pruning immediately for a specific user."""
         try:
-            async with db_session() as session:
+            async with db_session() as pg, neo4j_session() as neo:
                 return await self.pruner.prune(
-                    session, user_id=user_id, app_id=app_id
+                    pg, user_id=user_id, app_id=app_id, neo_session=neo
                 )
         except Exception as exc:
             logger.error(

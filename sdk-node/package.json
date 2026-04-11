@@ -4,6 +4,13 @@
   "description": "Node.js SDK for the Smritikosh universal AI memory layer",
   "keywords": ["ai", "memory", "llm", "rag", "smritikosh"],
   "license": "MIT",
+  "author": "Smritikosh contributors",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/smritikosh.git",
+    "directory": "sdk-node"
+  },
+  "homepage": "https://github.com/your-org/smritikosh#readme",
   "engines": { "node": ">=18.0.0" },
 
   "main": "./dist/cjs/index.js",
@@ -17,7 +24,7 @@
     }
   },
 
-  "files": ["dist", "src"],
+  "files": ["dist", "src", "README.md", "LICENSE"],
 
   "scripts": {
     "build": "npm run build:esm && npm run build:cjs && npm run build:types",
@@ -25,8 +32,14 @@
     "build:cjs": "tsc -p tsconfig.cjs.json",
     "build:types": "tsc -p tsconfig.types.json",
     "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run lint && npm run test && npm run build",
     "test": "vitest run",
     "test:watch": "vitest"
+  },
+
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
 
   "devDependencies": {

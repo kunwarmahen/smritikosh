@@ -126,7 +126,7 @@ def get_identity_builder() -> IdentityBuilder:
 
 @lru_cache(maxsize=1)
 def get_pruner() -> SynapticPruner:
-    return SynapticPruner(episodic=get_episodic(), audit=get_audit_logger())
+    return SynapticPruner(episodic=get_episodic(), semantic=get_semantic(), audit=get_audit_logger())
 
 
 @lru_cache(maxsize=1)
