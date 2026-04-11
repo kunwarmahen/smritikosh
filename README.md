@@ -184,7 +184,7 @@ Your application
 | **SourceConnector** | Normalises external sources (file, webhook, Slack, email, calendar) into events | — |
 | **MemoryScheduler** | Runs all background jobs on configurable timers (APScheduler) | — |
 | **IntentClassifier** | Two-tier intent classification: keyword heuristic + LLM fallback for ambiguous queries | — |
-| **LLMAdapter** | Unified interface to Claude, OpenAI, Gemini, Ollama, vLLM | — |
+| **LLMAdapter** | Unified interface to Claude, OpenAI, Gemini, Ollama, vLLM; logs resolved provider + model at startup | — |
 | **SmritikoshClient (Python)** | Python SDK wrapping the REST API | — |
 | **SmritikoshClient (Node.js)** | TypeScript/ESM SDK with identical surface to the Python SDK | — |
 
@@ -1683,6 +1683,29 @@ curl -X POST http://localhost:8080/memory/search \
 
 ---
 
+### `GET /memory/export`
+
+Export all memory events for a user as NDJSON (newline-delimited JSON). Each line is a self-contained JSON object. Safe for large memory sets — the response streams incrementally.
+
+```bash
+curl -o memories_alice.ndjson \
+  "http://localhost:8080/memory/export?user_id=alice&app_ids=myapp" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Each line:
+
+```json
+{"event_id":"a3f1c2d4-...","raw_text":"I switched to rocks.nvim today","summary":null,"importance_score":0.61,"consolidated":false,"recall_count":0,"cluster_label":"Editor & tooling preferences","created_at":"2026-04-11T09:14:22+00:00"}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `user_id` | string | **Required.** Query parameter — user whose memories to export |
+| `app_ids` | string (repeatable) | Query parameter — filter by app namespace |
+
+---
+
 ### `POST /memory/event`
 
 ## Admin jobs
@@ -2657,9 +2680,16 @@ prune_score = importance_score × exp(−age_days / 30)
 
 Events scoring below `0.15` are deleted. High-importance or recently-accessed memories are preserved.
 
+After each pruning run, **fact garbage collection** removes Neo4j facts for that user whose `last_seen_at` timestamp falls within the same age window as the deleted events. These facts were only reinforced by the pruned events and will never be re-confirmed by future consolidation — removing them immediately avoids waiting for the weekly confidence-decay cycle.
+
 ### Memory clustering (every 6 hours)
 
-Groups events with embeddings into topical clusters using a greedy centroid algorithm (cosine similarity ≥ 0.75). Each cluster is labelled by the LLM (`cluster_label`) and stored on the event rows. Requires at least 5 events with embeddings to run.
+Groups events with embeddings into topical clusters using a **two-phase algorithm**:
+
+1. **Greedy centroid pass** — each event is assigned to the nearest existing cluster centroid if cosine similarity ≥ 0.75, otherwise starts a new cluster.
+2. **K-means refinement** (3 iterations) — recomputes true mean centroids from current assignments and reassigns every point to the nearest centroid. Removes order-dependence and moves borderline points to their best cluster.
+
+Each cluster is labelled by the LLM (`cluster_label`) and stored on the event rows. Requires at least 5 events with embeddings to run.
 
 ### Belief mining (every 12 hours)
 

@@ -276,6 +276,23 @@ curl -s -X POST http://localhost:8080/auth/register \
 
 You are now fully set up. See the [Sample project](README.md#sample-project) section in the README to test the full memory flow.
 
+**Verify the LLM adapter resolved correctly** — on startup you should see a log line like:
+
+```
+INFO  LLMAdapter initialised  chat_provider=claude  chat_model=claude-haiku-4-5-20251001
+                              embed_provider=openai  embed_model=text-embedding-3-small  embed_dimensions=1536
+```
+
+If you see the wrong provider or model, check that your `.env` has exactly one `LLM_MODEL` line.
+
+**Export a user's memories** at any time:
+
+```bash
+curl -o memories_alice.ndjson \
+  "http://localhost:8080/memory/export?user_id=alice&app_ids=default" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
 ---
 
 ## Step 11 — Generate an API key (optional, for SDK / integrations)

@@ -338,6 +338,11 @@ most semantically relevant events using the same scoring the API uses — not a
 keyword filter. The score badge on each result shows exactly why it ranked where
 it did.
 
+An **Export** button calls `GET /memory/export` and downloads all events as
+NDJSON — one JSON object per line. Every row includes raw text, summary,
+importance score, cluster label, and timestamp. Users can verify what the system
+holds about them and import it elsewhere.
+
 ### Identity page
 
 A synthesised profile built from Neo4j facts + consolidated summaries:
