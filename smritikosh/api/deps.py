@@ -71,7 +71,7 @@ def get_narrative() -> NarrativeMemory:
 
 @lru_cache(maxsize=1)
 def get_intent_classifier() -> IntentClassifier:
-    return IntentClassifier()
+    return IntentClassifier(llm=get_llm())
 
 
 @lru_cache(maxsize=1)

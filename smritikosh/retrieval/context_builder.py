@@ -257,9 +257,9 @@ class ContextBuilder:
         If embedding fails, similar_events will be empty but profile and
         recent events are still included (partial context is better than none).
         """
-        # ── 1. Classify intent (sync, no I/O) ────────────────────────────
+        # ── 1. Classify intent (uses LLM when keyword confidence is low) ──
         intent_result = (
-            self.intent_classifier.classify(query)
+            await self.intent_classifier.classify_async(query)
             if self.intent_classifier is not None
             else None
         )

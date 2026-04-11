@@ -1,8 +1,13 @@
 """
 Tests for IntentClassifier, QueryIntent, and IntentResult.
 
-All tests are pure unit tests — no mocks, no I/O.
+Unit tests are split into two groups:
+  - Keyword path: pure sync, no mocks, no I/O.
+  - LLM path: mocked LLMAdapter, tests classify_async() two-tier logic.
 """
+
+import json
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -63,6 +68,14 @@ class TestIntentResult:
     def test_weights_match_intent(self, classifier):
         result = classifier.classify("career job role")
         assert result.weights == _INTENT_WEIGHTS[result.intent]
+
+    def test_keyword_result_via_llm_is_false(self, classifier):
+        result = classifier.classify("career job")
+        assert result.via_llm is False
+
+    def test_secondary_intents_default_empty(self, classifier):
+        result = classifier.classify("career job")
+        assert result.secondary_intents == []
 
 
 # ── Intent detection ──────────────────────────────────────────────────────────
@@ -139,3 +152,101 @@ class TestConfidence:
             "career job role salary promotion hiring interview resume cv"
         )
         assert result.confidence <= 1.0
+
+
+# ── classify_async — LLM path ─────────────────────────────────────────────────
+
+
+def _make_llm(response: dict) -> AsyncMock:
+    """Return a mock LLMAdapter whose complete() returns the given dict as JSON."""
+    llm = AsyncMock()
+    llm.complete = AsyncMock(return_value=json.dumps(response))
+    # _parse_json is a static method — delegate to the real implementation
+    from smritikosh.llm.adapter import LLMAdapter
+    llm._parse_json = LLMAdapter._parse_json
+    return llm
+
+
+class TestClassifyAsync:
+    @pytest.mark.asyncio
+    async def test_returns_keyword_result_when_confidence_high(self):
+        """High keyword confidence → no LLM call."""
+        llm = AsyncMock()
+        classifier = IntentClassifier(llm=llm, llm_confidence_threshold=0.5)
+        # "career job role" → 3 keywords → confidence 1.0 ≥ 0.5
+        result = await classifier.classify_async("career job role")
+        llm.complete.assert_not_called()
+        assert result.intent == QueryIntent.CAREER
+        assert result.via_llm is False
+
+    @pytest.mark.asyncio
+    async def test_calls_llm_when_keyword_confidence_low(self):
+        """Low keyword confidence → LLM is called."""
+        llm = _make_llm({"primary_intent": "project_planning", "secondary_intents": [], "confidence": 0.85})
+        classifier = IntentClassifier(llm=llm, llm_confidence_threshold=0.5)
+        # "roadmap" alone → 1 keyword → confidence 0.33 < 0.5
+        result = await classifier.classify_async("What is the roadmap")
+        llm.complete.assert_called_once()
+        assert result.intent == QueryIntent.PROJECT_PLANNING
+        assert result.via_llm is True
+
+    @pytest.mark.asyncio
+    async def test_no_llm_configured_uses_keyword_only(self):
+        """No LLM configured → classify_async behaves identically to classify."""
+        classifier = IntentClassifier(llm=None)
+        result = await classifier.classify_async("career job")
+        assert result.intent == QueryIntent.CAREER
+        assert result.via_llm is False
+
+    @pytest.mark.asyncio
+    async def test_llm_result_confidence_is_used(self):
+        llm = _make_llm({"primary_intent": "technical", "secondary_intents": [], "confidence": 0.92})
+        classifier = IntentClassifier(llm=llm, llm_confidence_threshold=0.5)
+        result = await classifier.classify_async("show me")
+        assert result.intent == QueryIntent.TECHNICAL
+        assert abs(result.confidence - 0.92) < 1e-9
+
+    @pytest.mark.asyncio
+    async def test_llm_result_includes_secondary_intents(self):
+        llm = _make_llm({
+            "primary_intent": "career",
+            "secondary_intents": ["technical"],
+            "confidence": 0.8,
+        })
+        classifier = IntentClassifier(llm=llm, llm_confidence_threshold=0.5)
+        result = await classifier.classify_async("show me")
+        assert QueryIntent.TECHNICAL in result.secondary_intents
+
+    @pytest.mark.asyncio
+    async def test_llm_failure_falls_back_to_keyword(self):
+        """LLM throws → keyword result returned, no exception propagated."""
+        llm = AsyncMock()
+        llm.complete = AsyncMock(side_effect=RuntimeError("LLM service down"))
+        classifier = IntentClassifier(llm=llm, llm_confidence_threshold=0.5)
+        result = await classifier.classify_async("tell me about my project")
+        assert result.intent == QueryIntent.PROJECT_PLANNING
+        assert result.via_llm is False
+
+    @pytest.mark.asyncio
+    async def test_llm_unknown_intent_falls_back_to_keyword(self):
+        """LLM returns an unrecognised intent string → fallback to keyword."""
+        llm = _make_llm({"primary_intent": "UNKNOWN_GARBAGE", "secondary_intents": [], "confidence": 0.9})
+        classifier = IntentClassifier(llm=llm, llm_confidence_threshold=0.5)
+        result = await classifier.classify_async("tell me about my project")
+        assert result.via_llm is False
+        assert result.intent == QueryIntent.PROJECT_PLANNING
+
+    @pytest.mark.asyncio
+    async def test_llm_confidence_clamped_to_range(self):
+        """LLM returning out-of-range confidence is clamped to [0, 1]."""
+        llm = _make_llm({"primary_intent": "personal", "secondary_intents": [], "confidence": 5.0})
+        classifier = IntentClassifier(llm=llm, llm_confidence_threshold=0.5)
+        result = await classifier.classify_async("show me")
+        assert result.confidence == 1.0
+
+    @pytest.mark.asyncio
+    async def test_weights_are_set_from_llm_intent(self):
+        llm = _make_llm({"primary_intent": "historical_recall", "secondary_intents": [], "confidence": 0.8})
+        classifier = IntentClassifier(llm=llm, llm_confidence_threshold=0.5)
+        result = await classifier.classify_async("show me")
+        assert result.weights == _INTENT_WEIGHTS[QueryIntent.HISTORICAL_RECALL]
