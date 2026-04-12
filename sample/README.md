@@ -6,13 +6,19 @@ store memories → search → inject context → LLM call.
 ## Prerequisites
 
 - Smritikosh server running on `http://localhost:8080`
-- User `alice` created (see [QUICKSTART.md](../QUICKSTART.md) Step 10)
-- Memories seeded: run `python seed.py` once before the chatbot
+- Demo users created (see [QUICKSTART.md](../QUICKSTART.md) Step 10)
 
 ## Setup
 
 ```bash
-pip install httpx openai   # openai SDK works with ollama, openai, and gemini
+pip install httpx openai python-dotenv   # openai SDK works with ollama, openai, and gemini
+```
+
+Copy the local env template and configure your active user:
+
+```bash
+cp .env.example .env
+# then edit .env — at minimum set SMRITIKOSH_USER and SMRITIKOSH_USER_PASS
 ```
 
 ## Files
@@ -20,8 +26,64 @@ pip install httpx openai   # openai SDK works with ollama, openai, and gemini
 | File | Purpose |
 |---|---|
 | `client.py` | Thin wrapper around the Smritikosh REST API |
-| `seed.py` | Pre-loads 10 memories for `alice` — run once before the chatbot |
+| `seed.py` | Pre-loads 10 memories for `alice` — run once |
+| `seed_priya.py` | Pre-loads 15 memories for `priya` — run once |
 | `chatbot.py` | The interactive memory-aware chatbot loop |
+| `.env.example` | Template for local overrides (copy to `.env`) |
+
+## Demo personas
+
+### Alice — ML engineer
+
+```bash
+# 1. Seed her memories (run once)
+python seed.py
+
+# 2. Set her as the active user in sample/.env
+#    SMRITIKOSH_USER=alice
+#    SMRITIKOSH_USER_PASS=alicepass
+
+# 3. Chat
+python chatbot.py
+```
+
+Alice is a machine learning engineer at a Series B startup. She knows Python,
+is learning Rust, runs a RAG pipeline, and uses Neovim.
+
+### Priya — lifestyle & travel
+
+```bash
+# 1. Seed her memories (run once)
+python seed_priya.py
+
+# 2. Switch the active user in sample/.env
+#    SMRITIKOSH_USER=priya
+#    SMRITIKOSH_USER_PASS=priyapass
+
+# 3. Chat
+python chatbot.py
+```
+
+Priya is a homemaker who loves fashion (Chanel, Bottega Veneta), reads literary
+fiction, travels to exotic destinations (Maldives, Patagonia, Kyoto), has a
+wealthy husband Rohan and two kids — Aanya (8) and Kabir (5).
+
+Try asking her:
+- *"What should I pack for our Japan trip?"*
+- *"Can you recommend a book for Kabir?"*
+- *"What's on my travel wishlist?"*
+
+## Switching users
+
+Edit `sample/.env` to change `SMRITIKOSH_USER` / `SMRITIKOSH_USER_PASS`.
+The local `sample/.env` overrides the project-root `.env`, so you never
+need to touch the server config.
+
+You can also override inline without editing the file:
+
+```bash
+SMRITIKOSH_USER=priya SMRITIKOSH_USER_PASS=priyapass python chatbot.py
+```
 
 ## Authentication
 
@@ -31,35 +93,17 @@ pip install httpx openai   # openai SDK works with ollama, openai, and gemini
 
 ```bash
 python chatbot.py
-# uses alice / alicepass by default, or set SMRITIKOSH_USER / SMRITIKOSH_USER_PASS
+# reads SMRITIKOSH_USER / SMRITIKOSH_USER_PASS from sample/.env
 ```
 
 **API key** (recommended for integrations — no login round-trip, never expires):
 
 ```bash
 # Generate a key: sign in to the dashboard → API Keys → New key
-# Then pass it via environment variable:
 SMRITIKOSH_API_KEY=sk-smriti-your-key-here python chatbot.py
 ```
 
-Or set `SMRITIKOSH_API_KEY` in the project's `.env` to use it automatically every time.
-
-## Run
-
-```bash
-# 1. Seed alice's memories (run once)
-python seed.py
-
-# 2. Start the chatbot (reads LLM config from the project's .env automatically)
-python chatbot.py
-
-# Or with an API key:
-SMRITIKOSH_API_KEY=sk-smriti-... python chatbot.py
-```
-
-No LLM environment variables need to be exported manually — `chatbot.py` reads
-`LLM_PROVIDER`, `LLM_MODEL`, `LLM_BASE_URL`, and `LLM_API_KEY` directly from
-the project's `.env` file.
+Or set `SMRITIKOSH_API_KEY` in `sample/.env` to use it every time.
 
 ## Commands inside the chatbot
 
@@ -67,10 +111,10 @@ the project's `.env` file.
 |---|---|
 | `<any text>` | Chat — memory context is injected automatically |
 | `/remember <text>` | Manually store a memory |
-| `/search <query>` | Search alice’s memories and show scored results |
+| `/search <query>` | Search the current user's memories and show scored results |
 | `/quit` | Exit |
 
-## Example session
+## Example session (Alice)
 
 ```
 ============================================================
@@ -80,22 +124,9 @@ the project's `.env` file.
 ============================================================
 
 You: What do I do for work?
-
-Assistant: You're a machine learning engineer at a Series B startup. You work
-mostly on data pipelines and ML systems, and your team is currently migrating
-the training infrastructure from PyTorch to JAX.
-
-You: What languages do I prefer?
-
-Assistant: You prefer Python, especially for data pipelines and ML work.
-You're also learning Rust in your spare time — you find the borrow checker
-challenging but rewarding.
-
-You: How is my RAG pipeline going?
-
-Assistant: You deployed a RAG pipeline last week using pgvector and LangChain.
-Latency was higher than expected, so that's something you're likely still
-working through.
+Assistant: You are a machine learning engineer at a Series B startup, focused
+on data pipelines and ML systems. Your team is currently migrating the training
+infrastructure from PyTorch to JAX.
 
 You: /search editor
 
@@ -103,40 +134,27 @@ You: /search editor
   [0.921] · My favourite editor is Neovim with the lazy.nvim plugin manager...
   [0.503] · I use a MacBook Pro M3 Max for local development...
 
-You: /remember I switched from lazy.nvim to rocks.nvim today
-
-  Stored. importance=0.61  facts_extracted=1
-
-You: What is my current Neovim setup?
-
-Assistant: You just switched from lazy.nvim to rocks.nvim today. Before that
-you were using Neovim with lazy.nvim as your plugin manager.
-
 You: /quit
 Goodbye!
 ```
 
-Notice the last answer — the bot recalls the `/remember` from earlier in the
-same session. Next time you run `chatbot.py`, Alice's bot will still know about
-the rocks.nvim switch because it was persisted to Smritikosh.
-
-## What just happened under the hood
+## What happens under the hood
 
 | Step | What Smritikosh did |
 |---|---|
-| `seed.py` ran | 10 texts → importance scored → embedded → stored in PostgreSQL → facts extracted → written to Neo4j |
+| `seed.py` ran | Texts → importance scored → embedded → stored in PostgreSQL → facts extracted → written to Neo4j |
 | `chat()` called | `/context` retrieved the most relevant memories + Neo4j profile → injected as system prompt |
 | LLM responded | Model answered using the injected context |
 | Exchange stored | The full Q&A was stored as a new memory event for future sessions |
-| `/remember` ran | `POST /memory/event` stored the Neovim switch immediately |
 
 ## Where to look next
 
-- **Dashboard** (`http://localhost:3000`) — log in as `alice`, browse the memory timeline and fact graph
+- **Dashboard** (`http://localhost:3000`) — log in as the active user, browse the memory timeline and fact graph
 - **Identity page** — see the Neo4j knowledge graph as a React Flow canvas
 - **Admin panel** — log in as `admin` to trigger consolidation or check system health
-- **Run consolidation** — compresses alice’s memories into summaries and extracts more facts:
+- **Run consolidation** — compresses memories into summaries and extracts more facts:
 
 ```bash
 curl -X POST "http://localhost:8080/admin/consolidate?user_id=alice"
+curl -X POST "http://localhost:8080/admin/consolidate?user_id=priya"
 ```

@@ -19,12 +19,15 @@ import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load the project .env (one level up from this sample/ directory)
-_env_path = Path(__file__).resolve().parent.parent / ".env"
-if _env_path.exists():
-    load_dotenv(_env_path)
-else:
-    load_dotenv()  # fallback: look in cwd
+# Load env files in priority order (later calls win for already-set keys,
+# so we load the project root first, then the local sample/.env overrides it).
+_root_env  = Path(__file__).resolve().parent.parent / ".env"
+_local_env = Path(__file__).resolve().parent / ".env"
+
+if _root_env.exists():
+    load_dotenv(_root_env)
+if _local_env.exists():
+    load_dotenv(_local_env, override=True)  # local .env takes priority
 
 from client import SmritikoshClient  # noqa: E402 (import after env load)
 
