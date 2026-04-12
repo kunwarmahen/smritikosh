@@ -34,8 +34,8 @@ router = APIRouter(tags=["context"])
 @router.post("/context", response_model=ContextResponse)
 @limiter.limit(lambda: settings.rate_limit_context or "10000/minute")
 async def get_context(
-    http_request: Request,
-    request: ContextRequest,
+    request: Request,
+    body: ContextRequest,
     background_tasks: BackgroundTasks,
     builder: Annotated[ContextBuilder, Depends(get_context_builder)],
     reconsolidation: Annotated[ReconsolidationEngine, Depends(get_reconsolidation_engine)],
@@ -61,20 +61,20 @@ async def get_context(
     in the background (its summary is refined with the current query context).
     Partial context is returned even if one memory system is unavailable.
     """
-    assert_self_or_admin(current_user, request.user_id)
-    resolved_app_ids = request.app_ids or current_user.get("app_ids")
+    assert_self_or_admin(current_user, body.user_id)
+    resolved_app_ids = body.app_ids or current_user.get("app_ids")
     try:
         ctx = await builder.build(
             pg,
             neo,
-            user_id=request.user_id,
-            query=request.query,
+            user_id=body.user_id,
+            query=body.query,
             app_ids=resolved_app_ids,
-            from_date=request.from_date,
-            to_date=request.to_date,
+            from_date=body.from_date,
+            to_date=body.to_date,
         )
     except Exception as exc:
-        logger.exception("ContextBuilder failed", extra={"user_id": request.user_id})
+        logger.exception("ContextBuilder failed", extra={"user_id": body.user_id})
         raise HTTPException(status_code=500, detail=f"Context retrieval failed: {exc}") from exc
 
     # Schedule background reconsolidation for the top recalled event.
@@ -85,14 +85,14 @@ async def get_context(
         background_tasks.add_task(
             reconsolidation.reconsolidate_after_recall,
             ctx.similar_events,
-            request.query,
-            request.user_id,
+            body.query,
+            body.user_id,
         )
         reconsolidation_scheduled = True
 
     return ContextResponse(
-        user_id=request.user_id,
-        query=request.query,
+        user_id=body.user_id,
+        query=body.query,
         context_text=ctx.as_prompt_text(),
         messages=ctx.as_messages(),
         total_memories=ctx.total_memories(),

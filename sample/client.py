@@ -68,7 +68,7 @@ class SmritikoshClient:
             f"{BASE_URL}/memory/event",
             headers=self._headers,
             json={"user_id": user_id, "content": text, "app_id": self.app_id},
-            timeout=30,
+            timeout=120,
         )
         resp.raise_for_status()
         return resp.json()
@@ -79,7 +79,7 @@ class SmritikoshClient:
             f"{BASE_URL}/context",
             headers=self._headers,
             json={"user_id": user_id, "query": query, "app_ids": [self.app_id]},
-            timeout=30,
+            timeout=120,
         )
         resp.raise_for_status()
         data = resp.json()
@@ -96,7 +96,7 @@ class SmritikoshClient:
                 "app_ids": [self.app_id],
                 "limit": limit,
             },
-            timeout=30,
+            timeout=120,
         )
         resp.raise_for_status()
         return resp.json().get("results", [])

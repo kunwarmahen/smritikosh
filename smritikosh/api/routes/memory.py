@@ -50,8 +50,8 @@ router = APIRouter(prefix="/memory", tags=["memory"])
 @router.post("/event", response_model=EventResponse, status_code=201)
 @limiter.limit(lambda: settings.rate_limit_encode or "10000/minute")
 async def capture_event(
-    http_request: Request,
-    request: EventRequest,
+    request: Request,
+    body: EventRequest,
     hippocampus: Annotated[Hippocampus, Depends(get_hippocampus)],
     pg: Annotated[AsyncSession, Depends(get_session)],
     neo: Annotated[NeoSession, Depends(get_neo4j_session)],
@@ -69,24 +69,24 @@ async def capture_event(
     Returns immediately with the stored event ID and extraction summary.
     If fact extraction fails the event is still stored (extraction_failed=True).
     """
-    assert_self_or_admin(current_user, request.user_id)
-    assert_app_access(current_user, request.app_id)
+    assert_self_or_admin(current_user, body.user_id)
+    assert_app_access(current_user, body.app_id)
     try:
         result = await hippocampus.encode(
             pg,
             neo,
-            user_id=request.user_id,
-            raw_text=request.content,
-            app_id=request.app_id,
-            metadata=request.metadata,
+            user_id=body.user_id,
+            raw_text=body.content,
+            app_id=body.app_id,
+            metadata=body.metadata,
         )
     except Exception as exc:
-        logger.exception("Hippocampus encode failed", extra={"user_id": request.user_id})
+        logger.exception("Hippocampus encode failed", extra={"user_id": body.user_id})
         raise HTTPException(status_code=500, detail=f"Memory encoding failed: {exc}") from exc
 
     return EventResponse(
         event_id=str(result.event.id),
-        user_id=request.user_id,
+        user_id=body.user_id,
         importance_score=result.importance_score,
         facts_extracted=len(result.facts),
         extraction_failed=result.extraction_failed,
@@ -148,8 +148,8 @@ async def delete_user_memory(
 @router.post("/search", response_model=SearchResponse)
 @limiter.limit(lambda: settings.rate_limit_search or "10000/minute")
 async def search_memory(
-    http_request: Request,
-    request: SearchRequest,
+    request: Request,
+    body: SearchRequest,
     episodic: Annotated[EpisodicMemory, Depends(get_episodic)],
     llm: Annotated[LLMAdapter, Depends(get_llm)],
     pg: Annotated[AsyncSession, Depends(get_session)],
@@ -165,21 +165,21 @@ async def search_memory(
     Unlike ``/context``, this endpoint does not inject semantic facts from Neo4j
     or procedural rules — it returns event rows with their score breakdown.
     """
-    assert_self_or_admin(current_user, request.user_id)
-    resolved_app_ids = request.app_ids or current_user.get("app_ids")
+    assert_self_or_admin(current_user, body.user_id)
+    resolved_app_ids = body.app_ids or current_user.get("app_ids")
     embedding_failed = False
     query_embedding: list[float] | None = None
 
     try:
-        query_embedding = await llm.embed(request.query)
+        query_embedding = await llm.embed(body.query)
     except Exception as exc:
         logger.warning("Embedding failed for search query: %s", exc)
         embedding_failed = True
 
     if query_embedding is None:
         return SearchResponse(
-            user_id=request.user_id,
-            query=request.query,
+            user_id=body.user_id,
+            query=body.query,
             results=[],
             total=0,
             embedding_failed=True,
@@ -187,12 +187,12 @@ async def search_memory(
 
     results = await episodic.hybrid_search(
         pg,
-        request.user_id,
+        body.user_id,
         query_embedding,
         app_ids=resolved_app_ids,
-        top_k=request.limit,
-        from_date=request.from_date,
-        to_date=request.to_date,
+        top_k=body.limit,
+        from_date=body.from_date,
+        to_date=body.to_date,
     )
 
     items = [
@@ -214,19 +214,19 @@ async def search_memory(
         from smritikosh.audit.logger import AuditEvent, EventType
         await audit.emit(AuditEvent(
             event_type=EventType.SEARCH_PERFORMED,
-            user_id=request.user_id,
+            user_id=body.user_id,
             app_id=(resolved_app_ids[0] if resolved_app_ids else "default"),
             payload={
-                "query_preview": request.query[:200],
+                "query_preview": body.query[:200],
                 "results_count": len(items),
                 "embedding_failed": embedding_failed,
-                "limit": request.limit,
+                "limit": body.limit,
             },
         ))
 
     return SearchResponse(
-        user_id=request.user_id,
-        query=request.query,
+        user_id=body.user_id,
+        query=body.query,
         results=items,
         total=len(items),
         embedding_failed=embedding_failed,
