@@ -38,6 +38,7 @@ from smritikosh.api.routes import admin, audit, auth, context, feedback, graph, 
 from smritikosh.audit.mongodb import close_audit, init_audit_indexes
 from smritikosh.db.neo4j import close_neo4j, init_neo4j
 from smritikosh.db.postgres import close_db, init_db
+from smritikosh.config import settings
 from smritikosh.processing.scheduler import MemoryScheduler
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,11 @@ async def lifespan(app: FastAPI):
         clusterer=get_clusterer(),
         belief_miner=get_belief_miner(),
         fact_decayer=get_fact_decayer(),
+        consolidation_cron=settings.scheduler_consolidation_cron,
+        pruning_cron=settings.scheduler_pruning_cron,
+        clustering_cron=settings.scheduler_clustering_cron,
+        belief_mining_cron=settings.scheduler_belief_mining_cron,
+        fact_decay_cron=settings.scheduler_fact_decay_cron,
     )
     scheduler.start()
     app.state.scheduler = scheduler

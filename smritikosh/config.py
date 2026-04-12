@@ -66,6 +66,19 @@ class Settings(BaseSettings):
     fact_decay_half_life_days: float = 60.0  # days until confidence halves
     fact_decay_floor: float = 0.1            # delete relationships below this confidence
 
+    # ── Scheduler (cron expressions, UTC) ──────────────────────────────────
+    # Standard 5-field cron: minute hour day-of-month month day-of-week
+    # Examples:
+    #   "0 * * * *"   — every hour on the hour
+    #   "0 2 * * *"   — daily at 02:00 UTC
+    #   "0 */6 * * *" — every 6 hours
+    #   "0 3 * * 0"   — every Sunday at 03:00 UTC
+    scheduler_consolidation_cron: str = "0 * * * *"    # hourly
+    scheduler_pruning_cron: str = "0 2 * * *"          # daily at 02:00 UTC
+    scheduler_clustering_cron: str = "0 */6 * * *"     # every 6 hours
+    scheduler_belief_mining_cron: str = "0 */12 * * *"  # every 12 hours
+    scheduler_fact_decay_cron: str = "0 3 * * 0"       # weekly, Sunday 03:00 UTC
+
 
 # Single shared instance — import this everywhere
 settings = Settings()

@@ -24,6 +24,7 @@ import logging
 from datetime import timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select, text
 
 from smritikosh.db.neo4j import neo4j_session
@@ -45,11 +46,23 @@ class MemoryScheduler:
     Both jobs can also be triggered manually (useful for testing or admin CLI).
 
     Args:
-        consolidator:         Consolidator instance.
-        pruner:               SynapticPruner instance.
-        episodic:             EpisodicMemory — used to discover active users.
-        consolidation_hours:  How often to run consolidation (default: 1).
-        pruning_hours:        How often to run pruning (default: 24).
+        consolidator:            Consolidator instance.
+        pruner:                  SynapticPruner instance.
+        episodic:                EpisodicMemory — used to discover active users.
+        consolidation_cron:      Cron expression for consolidation (default: hourly).
+        pruning_cron:            Cron expression for pruning (default: daily 02:00 UTC).
+        clusterer:               Optional MemoryClusterer instance.
+        clustering_cron:         Cron expression for clustering (default: every 6 hours).
+        belief_miner:            Optional BeliefMiner instance.
+        belief_mining_cron:      Cron expression for belief mining (default: every 12 hours).
+        fact_decayer:            Optional FactDecayer instance.
+        fact_decay_cron:         Cron expression for fact decay (default: weekly Sunday 03:00 UTC).
+
+    Cron format: standard 5-field UTC — "minute hour day-of-month month day-of-week"
+    Examples:
+        "0 * * * *"   — every hour on the hour
+        "0 2 * * *"   — daily at 02:00 UTC
+        "0 3 * * 0"   — every Sunday at 03:00 UTC
     """
 
     def __init__(
@@ -57,14 +70,14 @@ class MemoryScheduler:
         consolidator: Consolidator,
         pruner: SynapticPruner,
         episodic: EpisodicMemory,
-        consolidation_hours: int = 1,
-        pruning_hours: int = 24,
+        consolidation_cron: str = "0 * * * *",
+        pruning_cron: str = "0 2 * * *",
         clusterer: MemoryClusterer | None = None,
-        clustering_hours: int = 6,
+        clustering_cron: str = "0 */6 * * *",
         belief_miner: BeliefMiner | None = None,
-        belief_mining_hours: int = 12,
+        belief_mining_cron: str = "0 */12 * * *",
         fact_decayer: FactDecayer | None = None,
-        fact_decay_weeks: int = 1,
+        fact_decay_cron: str = "0 3 * * 0",
     ) -> None:
         self.consolidator = consolidator
         self.pruner = pruner
@@ -76,16 +89,14 @@ class MemoryScheduler:
 
         self._scheduler.add_job(
             self.run_consolidation_for_all_users,
-            trigger="interval",
-            hours=consolidation_hours,
+            trigger=CronTrigger.from_crontab(consolidation_cron),
             id="consolidation_job",
             name="Memory Consolidation",
             max_instances=1,       # never overlap
         )
         self._scheduler.add_job(
             self.run_pruning_for_all_users,
-            trigger="interval",
-            hours=pruning_hours,
+            trigger=CronTrigger.from_crontab(pruning_cron),
             id="pruning_job",
             name="Synaptic Pruning",
             max_instances=1,
@@ -93,8 +104,7 @@ class MemoryScheduler:
         if self.clusterer is not None:
             self._scheduler.add_job(
                 self.run_clustering_for_all_users,
-                trigger="interval",
-                hours=clustering_hours,
+                trigger=CronTrigger.from_crontab(clustering_cron),
                 id="clustering_job",
                 name="Memory Clustering",
                 max_instances=1,
@@ -102,8 +112,7 @@ class MemoryScheduler:
         if self.belief_miner is not None:
             self._scheduler.add_job(
                 self.run_belief_mining_for_all_users,
-                trigger="interval",
-                hours=belief_mining_hours,
+                trigger=CronTrigger.from_crontab(belief_mining_cron),
                 id="belief_mining_job",
                 name="Belief Mining",
                 max_instances=1,
@@ -111,8 +120,7 @@ class MemoryScheduler:
         if self.fact_decayer is not None:
             self._scheduler.add_job(
                 self.run_fact_decay,
-                trigger="interval",
-                weeks=fact_decay_weeks,
+                trigger=CronTrigger.from_crontab(fact_decay_cron),
                 id="fact_decay_job",
                 name="Semantic Fact Decay",
                 max_instances=1,
