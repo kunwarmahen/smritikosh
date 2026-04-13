@@ -448,7 +448,7 @@ def _record_to_fact(record: dict) -> FactRecord:
     return FactRecord(
         category=record["category"],
         key=record["key"],
-        value=record["value"],
+        value=str(record["value"]),
         confidence=float(record["confidence"]),
         frequency_count=int(record["frequency_count"]),
         first_seen_at=str(record["first_seen_at"]),

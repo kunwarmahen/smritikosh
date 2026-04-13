@@ -224,7 +224,7 @@ def _build_dimensions(facts: list[FactRecord]) -> list[IdentityDimension]:
             IdentityDimension(
                 category=category,
                 facts=sorted_facts,
-                dominant_value=sorted_facts[0].value,
+                dominant_value=str(sorted_facts[0].value),
                 confidence=sorted_facts[0].confidence,
             )
         )

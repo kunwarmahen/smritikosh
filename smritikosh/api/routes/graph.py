@@ -119,7 +119,7 @@ async def get_fact_graph(
             nodes.append(
                 FactGraphNode(
                     id=fid,
-                    label=rec["value"],
+                    label=str(rec["value"]),
                     node_type="fact",
                     category=rec["category"],
                     confidence=rec["confidence"],
