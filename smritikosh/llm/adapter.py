@@ -104,12 +104,23 @@ class LLMAdapter:
             f"Schema: {schema_description}. "
             f"Example: {json.dumps(example_output)}"
         )
+        # response_format={"type": "json_object"} enables grammar-constrained JSON
+        # generation in Ollama (format: "json") and native JSON mode for OpenAI/Claude.
+        # This prevents models from returning empty responses or wrapping JSON in prose.
+        # For Ollama thinking models (qwen3.5, deepseek-r1) we also disable thinking via
+        # extra_body={"think": false} — thinking tokens consume the token budget and leave
+        # content empty when the schema is complex.
+        extra: dict = {}
+        if self._cfg.llm_provider.lower() == "ollama":
+            extra["extra_body"] = {"think": False}
         raw = await self.complete(
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.0,  # deterministic extraction
+            response_format={"type": "json_object"},
+            **extra,
         )
         return self._parse_json(raw)
 
@@ -143,8 +154,11 @@ class LLMAdapter:
 
         if provider == "gemini" and not model.startswith("gemini/"):
             return f"gemini/{model}"
-        if provider == "ollama" and not model.startswith("ollama/"):
-            return f"ollama/{model}"
+        if provider == "ollama" and not model.startswith("ollama_chat/"):
+            # ollama_chat/ routes to /api/chat which correctly handles thinking-model
+            # responses (qwen3.5, deepseek-r1, etc.) where reasoning tokens are
+            # returned in a separate field. ollama/ uses /api/generate which drops them.
+            return f"ollama_chat/{model}"
         if provider == "vllm" and not model.startswith("openai/"):
             return f"openai/{model}"
         # claude and openai use the model name directly
@@ -168,8 +182,11 @@ class LLMAdapter:
 
     @staticmethod
     def _parse_json(raw: str) -> dict:
-        """Strip accidental markdown fences then parse JSON."""
+        """Strip thinking tokens and markdown fences, then parse JSON."""
+        import re
         text = raw.strip()
+        # Strip <think>...</think> blocks emitted by reasoning models (e.g. Qwen3.5)
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
         if text.startswith("```"):
             # Remove ```json ... ``` wrapper if present
             lines = text.splitlines()
