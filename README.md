@@ -1,6 +1,6 @@
 # Smritikosh
 
-**स्मृतिकोश** *(Sanskrit: "memory treasury")*
+**स्मृतिकोश** *(Sanskrit: "memory bank/treasury")*
 
 A universal memory layer for LLM applications — a hippocampus for AI.
 
