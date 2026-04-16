@@ -156,6 +156,23 @@ class ReconsolidationEngine:
                 "updated": batch.events_updated,
             },
         )
+
+        if self.audit:
+            from smritikosh.audit.logger import AuditEvent, EventType
+            await self.audit.emit(AuditEvent(
+                event_type=EventType.MEMORY_RECONSOLIDATE_RUN,
+                user_id=user_id,
+                app_id="default",
+                payload={
+                    "events_evaluated": batch.events_evaluated,
+                    "events_updated": batch.events_updated,
+                    "events_skipped": batch.events_skipped,
+                    "skip_reasons": [
+                        r.skip_reason for r in batch.results if r.skipped
+                    ],
+                },
+            ))
+
         return batch
 
     async def reconsolidate_event(

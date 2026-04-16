@@ -2,16 +2,18 @@
 AuditLogger — fire-and-forget provenance tracking for every pipeline step.
 
 Every meaningful transformation in the Smritikosh pipeline emits an AuditEvent:
-  memory.encoded          Raw text → episodic event (importance, embedding, facts)
-  memory.facts_extracted  Structured facts upserted to Neo4j
-  memory.consolidated     Batch of events → summary + distilled facts
-  memory.reconsolidated   Event summary refined after recall
-  memory.pruned           Low-value event deleted by SynapticPruner
-  memory.clustered        Event assigned to a topic cluster
-  belief.mined            Higher-order belief inferred from event patterns
-  feedback.submitted      User feedback + importance score change
-  context.built           Memory context assembled for an LLM call
-  search.performed        Hybrid search executed
+  memory.encoded             Raw text → episodic event (importance, embedding, facts)
+  memory.facts_extracted     Structured facts upserted to Neo4j
+  memory.consolidated        Batch of events → summary + distilled facts
+  memory.reconsolidated      Event summary refined after recall
+  memory.reconsolidate_run   Reconsolidation job summary (always emitted, even when gated)
+  memory.pruned              Low-value event deleted by SynapticPruner
+  memory.prune_run           Pruning job summary (always emitted, even when no candidates)
+  memory.clustered           Event assigned to a topic cluster
+  belief.mined               Higher-order belief inferred from event patterns
+  feedback.submitted         User feedback + importance score change
+  context.built              Memory context assembled for an LLM call
+  search.performed           Hybrid search executed
 
 Design principles:
   - Fire-and-forget: emit() schedules writes via asyncio.create_task() so
@@ -40,6 +42,8 @@ class EventType:
     MEMORY_CONSOLIDATED    = "memory.consolidated"
     MEMORY_RECONSOLIDATED  = "memory.reconsolidated"
     MEMORY_PRUNED          = "memory.pruned"
+    MEMORY_PRUNE_RUN       = "memory.prune_run"        # job-run summary (always emitted)
+    MEMORY_RECONSOLIDATE_RUN = "memory.reconsolidate_run"  # job-run summary (always emitted)
     MEMORY_CLUSTERED       = "memory.clustered"
     BELIEF_MINED           = "belief.mined"
     FEEDBACK_SUBMITTED     = "feedback.submitted"

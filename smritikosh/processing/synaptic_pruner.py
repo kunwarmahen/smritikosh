@@ -181,6 +181,23 @@ class SynapticPruner:
 
         if not candidates:
             result.skipped = True
+            if self.audit:
+                from smritikosh.audit.logger import AuditEvent, EventType
+                await self.audit.emit(AuditEvent(
+                    event_type=EventType.MEMORY_PRUNE_RUN,
+                    user_id=user_id,
+                    app_id=app_id,
+                    payload={
+                        "events_evaluated": 0,
+                        "events_pruned": 0,
+                        "facts_purged": 0,
+                        "skipped": True,
+                        "skip_reason": "no candidates — events too young or too important",
+                        "importance_threshold": thresholds.importance_threshold,
+                        "min_age_days": thresholds.min_age_days,
+                        "min_recall_count": thresholds.min_recall_count,
+                    },
+                ))
             return result
 
         now = datetime.now(timezone.utc)
@@ -256,6 +273,24 @@ class SynapticPruner:
                 "facts_purged": result.facts_purged,
             },
         )
+
+        if self.audit:
+            from smritikosh.audit.logger import AuditEvent, EventType
+            await self.audit.emit(AuditEvent(
+                event_type=EventType.MEMORY_PRUNE_RUN,
+                user_id=user_id,
+                app_id=app_id,
+                payload={
+                    "events_evaluated": result.events_evaluated,
+                    "events_pruned": pruned,
+                    "facts_purged": result.facts_purged,
+                    "skipped": result.skipped,
+                    "importance_threshold": thresholds.importance_threshold,
+                    "min_age_days": thresholds.min_age_days,
+                    "min_recall_count": thresholds.min_recall_count,
+                },
+            ))
+
         return result
 
     # ── Helpers ────────────────────────────────────────────────────────────
