@@ -206,7 +206,12 @@ class Consolidator:
         Consolidate one batch of events.
         Returns (events_consolidated, facts_distilled, links_created, summary, fact_list, embedding_updated).
         """
-        prompt = _build_consolidation_prompt(batch)
+        profile = await self.semantic.get_user_profile(
+            neo_session, user_id, app_id, min_confidence=0.5
+        )
+        existing_facts = (profile.facts if profile else [])[:20]
+
+        prompt = _build_consolidation_prompt(batch, existing_facts)
 
         try:
             extracted = await self.llm.extract_structured(
@@ -310,7 +315,9 @@ def _split_batches(events: list[Event], batch_size: int) -> list[list[Event]]:
     return [events[i : i + batch_size] for i in range(0, len(events), batch_size)]
 
 
-def _build_consolidation_prompt(batch: list[Event]) -> str:
+def _build_consolidation_prompt(
+    batch: list[Event], existing_facts: list[FactRecord] | None = None
+) -> str:
     """Build the LLM prompt for a batch of events."""
     lines = ["Consolidate the following user interactions into a summary and extract facts.\n"]
     lines.append("Interactions:")
@@ -318,6 +325,15 @@ def _build_consolidation_prompt(batch: list[Event]) -> str:
         date = _format_date(event.created_at)
         text = (event.summary or event.raw_text)[:300]
         lines.append(f"{i}. [{date}] {text}")
+
+    if existing_facts:
+        lines.append(
+            "\nAlready known facts — REUSE the exact category+key for the same concept. "
+            "Only create a new key when the concept is genuinely not covered below:"
+        )
+        for f in existing_facts:
+            lines.append(f"  - {f.category}/{f.key}: {f.value}")
+
     lines.append(
         "\nReturn JSON with: summary (1-2 sentences) and facts (list of structured facts)."
     )

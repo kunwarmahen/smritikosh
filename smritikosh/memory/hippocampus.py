@@ -65,6 +65,19 @@ _EXTRACTION_EXAMPLE = {
 }
 
 
+def _build_extraction_prompt(raw_text: str, existing_facts: list | None = None) -> str:
+    """Build fact extraction prompt, anchoring key names to existing facts."""
+    lines = ["Extract structured facts from this user interaction:\n", raw_text]
+    if existing_facts:
+        lines.append(
+            "\n\nAlready known facts — REUSE the exact category+key for the same concept. "
+            "Only create a new key when the concept is genuinely not covered below:"
+        )
+        for f in existing_facts:
+            lines.append(f"  - {f.category}/{f.key}: {f.value}")
+    return "\n".join(lines)
+
+
 # ── Return type ───────────────────────────────────────────────────────────────
 
 @dataclass
@@ -152,12 +165,18 @@ class Hippocampus:
             extra={"user_id": user_id, "score": importance_score, "text_preview": raw_text[:80]},
         )
 
-        # ── 2. Embed + extract in parallel ────────────────────────────────
+        # ── 2. Fetch existing facts to guide consistent key naming ────────
+        profile = await self.semantic.get_user_profile(
+            neo_session, user_id, app_id, min_confidence=0.5
+        )
+        existing_facts = (profile.facts if profile else [])[:20]
+
+        # ── 3. Embed + extract in parallel ────────────────────────────────
         embedding, extracted_facts, extraction_failed = await self._embed_and_extract(
-            raw_text, user_id
+            raw_text, user_id, existing_facts
         )
 
-        # ── 3. Store episodic event ───────────────────────────────────────
+        # ── 4. Store episodic event ───────────────────────────────────────
         event = await self.episodic.store(
             pg_session,
             user_id=user_id,
@@ -172,7 +191,7 @@ class Hippocampus:
             extra={"event_id": str(event.id), "user_id": user_id, "facts_extracted": len(extracted_facts)},
         )
 
-        # ── 4. Upsert semantic facts ──────────────────────────────────────
+        # ── 5. Upsert semantic facts ──────────────────────────────────────
         stored_facts = await self._upsert_facts(
             neo_session, user_id, app_id, extracted_facts
         )
@@ -229,7 +248,7 @@ class Hippocampus:
     # ── Helpers ────────────────────────────────────────────────────────────
 
     async def _embed_and_extract(
-        self, raw_text: str, user_id: str
+        self, raw_text: str, user_id: str, existing_facts: list | None = None
     ) -> tuple[list[float] | None, list[dict], bool]:
         """
         Run embedding generation and fact extraction concurrently.
@@ -239,7 +258,7 @@ class Hippocampus:
         """
         embed_task = self.llm.embed(raw_text)
         extract_task = self.llm.extract_structured(
-            prompt=f"Extract structured facts from this user interaction:\n\n{raw_text}",
+            prompt=_build_extraction_prompt(raw_text, existing_facts),
             schema_description=_EXTRACTION_SCHEMA,
             example_output=_EXTRACTION_EXAMPLE,
         )

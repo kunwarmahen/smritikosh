@@ -149,18 +149,20 @@ class BeliefMiner:
             )
             return result
 
-        # ── 3. Fetch semantic facts ────────────────────────────────────────
+        # ── 3. Fetch semantic facts and existing beliefs ──────────────────
         profile = await self.semantic.get_user_profile(
             neo_session, user_id, app_id, min_confidence=0.5
         )
         facts = (profile.facts if profile else [])[:MAX_FACTS_IN_PROMPT]
+
+        existing_beliefs = await self.get_beliefs(pg_session, user_id, app_id)
 
         # Capture event IDs before the LLM call — these become the evidence
         # sources stored alongside each belief for provenance and auditability.
         event_ids = [str(e.id) for e in events]
 
         # ── 4. Extract beliefs via LLM ────────────────────────────────────
-        prompt = _build_belief_prompt(facts, events)
+        prompt = _build_belief_prompt(facts, events, existing_beliefs)
         try:
             extracted = await self.llm.extract_structured(
                 prompt=prompt,
@@ -266,7 +268,11 @@ async def _fetch_consolidated_events(
     return list(result.scalars().all())
 
 
-def _build_belief_prompt(facts: list[FactRecord], events: list[Event]) -> str:
+def _build_belief_prompt(
+    facts: list[FactRecord],
+    events: list[Event],
+    existing_beliefs: list | None = None,
+) -> str:
     """Build the LLM prompt for belief inference."""
     lines = [
         "Analyze this user's known facts and recent memory summaries.\n"
@@ -275,6 +281,15 @@ def _build_belief_prompt(facts: list[FactRecord], events: list[Event]) -> str:
         "Each belief must be a concise one-sentence statement starting with "
         "a verb (believes, values, assumes, prefers, thinks).\n"
     ]
+
+    if existing_beliefs:
+        lines.append(
+            "ALREADY RECORDED BELIEFS — do NOT repeat or rephrase these. "
+            "Only return beliefs that are genuinely new or meaningfully different:"
+        )
+        for b in existing_beliefs:
+            lines.append(f"  - [{b.category}] {b.statement}")
+        lines.append("")
 
     if facts:
         lines.append("Known facts:")
