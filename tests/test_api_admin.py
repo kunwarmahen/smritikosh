@@ -23,6 +23,7 @@ from httpx import ASGITransport, AsyncClient
 
 from smritikosh.api.main import app
 from smritikosh.api import deps
+from smritikosh.auth.deps import get_current_user, require_admin
 from smritikosh.db.neo4j import get_neo4j_session
 from smritikosh.db.postgres import get_session
 from smritikosh.memory.hippocampus import EncodedMemory, Hippocampus
@@ -136,6 +137,9 @@ def mock_hippocampus():
     return AsyncMock(spec=Hippocampus)
 
 
+_ADMIN_PAYLOAD = {"sub": "admin", "role": "admin", "app_ids": ["default"]}
+
+
 @pytest.fixture(autouse=True)
 def override_deps(mock_pg, mock_neo, mock_scheduler,
                   mock_reconsolidation_engine, mock_hippocampus):
@@ -143,6 +147,8 @@ def override_deps(mock_pg, mock_neo, mock_scheduler,
     app.dependency_overrides[get_neo4j_session] = lambda: mock_neo
     app.dependency_overrides[deps.get_reconsolidation_engine] = lambda: mock_reconsolidation_engine
     app.dependency_overrides[deps.get_hippocampus] = lambda: mock_hippocampus
+    app.dependency_overrides[require_admin] = lambda: _ADMIN_PAYLOAD
+    app.dependency_overrides[get_current_user] = lambda: _ADMIN_PAYLOAD
     # Inject scheduler onto app state
     app.state.scheduler = mock_scheduler
     yield

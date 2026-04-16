@@ -289,6 +289,13 @@ async def get_event_links(
     except ValueError:
         raise HTTPException(status_code=422, detail="Invalid event_id UUID format.")
 
+    # Always verify ownership before returning any data
+    ev_result = await pg.execute(select(Event).where(Event.id == eid))
+    ev = ev_result.scalar_one_or_none()
+    if ev is None:
+        raise HTTPException(status_code=404, detail="Event not found.")
+    assert_self_or_admin(current_user, ev.user_id)
+
     # Load all links where this event is either source or target
     links_result = await pg.execute(
         select(MemoryLink).where(
@@ -298,11 +305,6 @@ async def get_event_links(
     links = links_result.scalars().all()
 
     if not links:
-        # Verify ownership via a direct event lookup before returning empty
-        ev_result = await pg.execute(select(Event).where(Event.id == eid))
-        ev = ev_result.scalar_one_or_none()
-        if ev:
-            assert_self_or_admin(current_user, ev.user_id)
         return MemoryLinksResponse(event_id=event_id, links=[])
 
     # Collect the IDs of the *other* side of each link

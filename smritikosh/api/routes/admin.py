@@ -53,6 +53,7 @@ def _get_scheduler(request: Request) -> MemoryScheduler:
 async def trigger_consolidation(
     body: AdminJobRequest,
     scheduler: Annotated[MemoryScheduler, Depends(_get_scheduler)],
+    _admin: Annotated[dict, Depends(require_admin)],
 ) -> AdminJobResponse:
     """
     Run memory consolidation immediately.
@@ -94,6 +95,7 @@ async def trigger_consolidation(
 async def trigger_pruning(
     body: AdminJobRequest,
     scheduler: Annotated[MemoryScheduler, Depends(_get_scheduler)],
+    _admin: Annotated[dict, Depends(require_admin)],
 ) -> AdminJobResponse:
     """
     Run synaptic pruning immediately.
@@ -131,6 +133,7 @@ async def trigger_pruning(
 async def trigger_clustering(
     body: AdminJobRequest,
     scheduler: Annotated[MemoryScheduler, Depends(_get_scheduler)],
+    _admin: Annotated[dict, Depends(require_admin)],
 ) -> AdminJobResponse:
     """
     Run memory clustering immediately.
@@ -168,6 +171,7 @@ async def trigger_clustering(
 async def trigger_reconsolidation(
     body: ReconsolidateRequest,
     engine: Annotated[ReconsolidationEngine, Depends(get_reconsolidation_engine)],
+    _admin: Annotated[dict, Depends(require_admin)],
 ) -> ReconsolidateResponse:
     """
     Manually reconsolidate a specific memory event.
@@ -201,6 +205,7 @@ async def trigger_reconsolidation(
 async def trigger_belief_mining(
     body: AdminJobRequest,
     scheduler: Annotated[MemoryScheduler, Depends(_get_scheduler)],
+    _admin: Annotated[dict, Depends(require_admin)],
 ) -> AdminJobResponse:
     """
     Run belief mining immediately.

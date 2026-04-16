@@ -12,13 +12,18 @@ Endpoints:
 """
 
 import logging
+import uuid
 from datetime import datetime
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from smritikosh.auth.deps import assert_self_or_admin, get_current_user
 from smritikosh.api.deps import get_audit_logger
+from smritikosh.db.models import Event
+from smritikosh.db.postgres import get_session
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/audit", tags=["audit"])
@@ -78,6 +83,8 @@ async def get_user_timeline(
 async def get_event_lineage(
     event_id: str,
     audit=Depends(_require_audit),
+    pg: AsyncSession = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
 ) -> dict:
     """
     Return the complete provenance chain for one episodic memory event —
@@ -85,6 +92,17 @@ async def get_event_lineage(
     and any feedback signals.  Records are returned oldest first so you can
     read the history of a memory chronologically.
     """
+    try:
+        eid = uuid.UUID(event_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid event_id UUID format.")
+
+    result = await pg.execute(select(Event).where(Event.id == eid))
+    event = result.scalar_one_or_none()
+    if event is None:
+        raise HTTPException(status_code=404, detail="Event not found.")
+    assert_self_or_admin(current_user, event.user_id)
+
     records = await audit.get_event_lineage(event_id)
     return {
         "event_id": event_id,
