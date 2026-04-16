@@ -139,14 +139,30 @@ class ReconsolidationEngine:
         candidates = search_results[: self.max_events]
         batch.events_evaluated = len(candidates)
 
-        async with db_session() as session:
-            for sr in candidates:
-                result = await self._reconsolidate_one(session, sr.event, query)
-                batch.results.append(result)
-                if result.updated:
-                    batch.events_updated += 1
-                else:
-                    batch.events_skipped += 1
+        try:
+            async with db_session() as session:
+                for sr in candidates:
+                    result = await self._reconsolidate_one(session, sr.event, query)
+                    batch.results.append(result)
+                    if result.updated:
+                        batch.events_updated += 1
+                    else:
+                        batch.events_skipped += 1
+                        logger.debug(
+                            "Reconsolidation skipped for event",
+                            extra={
+                                "event_id": result.event_id,
+                                "user_id": user_id,
+                                "skip_reason": result.skip_reason,
+                            },
+                        )
+        except Exception as exc:
+            logger.error(
+                "Reconsolidation background task failed",
+                extra={"user_id": user_id, "error": str(exc)},
+                exc_info=True,
+            )
+            return batch
 
         logger.info(
             "Reconsolidation batch complete",
@@ -154,6 +170,7 @@ class ReconsolidationEngine:
                 "user_id": user_id,
                 "evaluated": batch.events_evaluated,
                 "updated": batch.events_updated,
+                "skipped": batch.events_skipped,
             },
         )
 
@@ -180,11 +197,14 @@ class ReconsolidationEngine:
         event_id_str: str,
         query: str,
         user_id: str,
+        force: bool = False,
     ) -> ReconsolidationResult:
         """
         Reconsolidate a single event by ID (for manual/admin triggers).
 
         Opens its own DB session — safe to call from background tasks or admin routes.
+        Set force=True to bypass gate checks (recall_count, importance, cooldown)
+        for testing.
         """
         import uuid as _uuid_mod
 
@@ -203,7 +223,7 @@ class ReconsolidationEngine:
                     event_id=event_id_str, user_id=user_id,
                     skipped=True, skip_reason="Event not found.",
                 )
-            return await self._reconsolidate_one(session, event, query)
+            return await self._reconsolidate_one(session, event, query, force=force)
 
     # ── Core logic ────────────────────────────────────────────────────────
 
@@ -212,11 +232,13 @@ class ReconsolidationEngine:
         session: AsyncSession,
         event: Event,
         query: str,
+        force: bool = False,
     ) -> ReconsolidationResult:
         """
         Attempt to reconsolidate a single event.
 
         Gate → LLM refine → DB update.
+        Set force=True to skip gate checks entirely (for testing).
         """
         result = ReconsolidationResult(
             event_id=str(event.id),
@@ -225,7 +247,7 @@ class ReconsolidationEngine:
         )
 
         # ── Gate checks ───────────────────────────────────────────────────
-        gate_fail = self._check_gate(event)
+        gate_fail = None if force else self._check_gate(event)
         if gate_fail:
             result.skipped = True
             result.skip_reason = gate_fail
@@ -325,16 +347,18 @@ class ReconsolidationEngine:
 def _build_prompt(event: Event, query: str) -> str:
     """Build the LLM prompt for a single event reconsolidation."""
     current_text = event.summary or event.raw_text
+    recall_count = event.recall_count or 0
     lines = [
-        "You are refining a stored memory summary in light of a new recall context.",
+        "You are refining a stored memory summary in light of how it has been recalled.",
         "",
-        f'Original memory: "{current_text}"',
+        f'Current summary: "{current_text}"',
         "",
-        f'Recalled in the context of: "{query}"',
+        f'This memory has been recalled {recall_count} time(s), most recently in the context of: "{query}"',
         "",
-        "Refine the memory summary to incorporate any new connections, patterns, "
-        "or insights revealed by this recall. Keep it concise (1-2 sentences). "
-        "If the existing summary is already complete and accurate, return it unchanged "
-        "and set changed=false.",
+        "Update the summary to reflect the recall pattern and context — for example, "
+        "emphasise the aspects most relevant to this query, or add the recall context "
+        "as a note on when/why this memory surfaces. Keep it concise (1-2 sentences). "
+        "Set changed=true if you made any meaningful update, changed=false only if "
+        "the summary already perfectly captures both the memory and its recall context.",
     ]
     return "\n".join(lines)

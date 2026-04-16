@@ -313,6 +313,7 @@ class ReconsolidateRequest(BaseModel):
     event_id: str = Field(..., description="UUID of the event to reconsolidate")
     query: str = Field(..., description="Recall context — the query that surfaced this event")
     user_id: str = Field(..., description="Owner of the event")
+    force: bool = Field(False, description="Bypass gate checks (recall_count, importance, cooldown). For testing only.")
 
 
 class ReconsolidateResponse(BaseModel):
@@ -334,6 +335,9 @@ class AdminJobRequest(BaseModel):
         description="User to run the job for. If omitted, runs for all eligible users.",
     )
     app_id: str = Field("default", description="Application namespace")
+    min_age_days: Optional[int] = Field(None, description="Override pruning min age in days. 0 means prune regardless of age. For testing only.")
+    importance_threshold: Optional[float] = Field(None, description="Override pruning importance threshold. For testing only.")
+    min_recall_count: Optional[int] = Field(None, description="Override pruning min recall count. For testing only.")
 
 
 class AdminJobResult(BaseModel):

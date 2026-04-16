@@ -145,6 +145,7 @@ class SynapticPruner:
         user_id: str,
         app_id: str = "default",
         neo_session=None,   # neo4j.AsyncSession | None — for fact GC
+        override_thresholds: "PruningThresholds | None" = None,
     ) -> PruningResult:
         """
         Evaluate and delete consolidated events that meet all prune conditions.
@@ -152,17 +153,23 @@ class SynapticPruner:
         Computes adaptive thresholds based on the user's total event count
         before loading any candidates, so the SQL pre-filter already uses the
         scaled values.
+
+        Pass override_thresholds to bypass adaptive computation — useful for
+        testing (e.g. min_age_days=0 to prune fresh events immediately).
         """
         result = PruningResult(user_id=user_id, app_id=app_id)
 
-        # Compute adaptive thresholds for this user
+        # Compute adaptive thresholds (or use caller-supplied overrides)
         event_count = await self._count_user_events(session, user_id, app_id)
-        thresholds = compute_adaptive_thresholds(
-            event_count,
-            base_importance=self.importance_threshold,
-            base_min_recall=self.min_recall_count,
-            base_min_age=self.min_age_days,
-        )
+        if override_thresholds is not None:
+            thresholds = override_thresholds
+        else:
+            thresholds = compute_adaptive_thresholds(
+                event_count,
+                base_importance=self.importance_threshold,
+                base_min_recall=self.min_recall_count,
+                base_min_age=self.min_age_days,
+            )
         result.thresholds = thresholds
 
         if event_count != DEFAULT_MIN_RECALL_COUNT:  # log only when tier changed

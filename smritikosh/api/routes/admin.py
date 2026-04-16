@@ -33,6 +33,7 @@ from smritikosh.db.models import AppUser
 from smritikosh.db.postgres import get_session
 from smritikosh.processing.reconsolidation import ReconsolidationEngine
 from smritikosh.processing.scheduler import MemoryScheduler
+from smritikosh.processing.synaptic_pruner import PruningThresholds
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -103,13 +104,22 @@ async def trigger_pruning(
     If ``user_id`` is provided, runs for that user only.
     If omitted, runs for all users.
     """
+    override = None
+    if any(v is not None for v in (body.min_age_days, body.importance_threshold, body.min_recall_count)):
+        from smritikosh.processing.synaptic_pruner import DEFAULT_IMPORTANCE_THRESHOLD, DEFAULT_MIN_AGE_DAYS, DEFAULT_MIN_RECALL_COUNT
+        override = PruningThresholds(
+            importance_threshold=body.importance_threshold if body.importance_threshold is not None else DEFAULT_IMPORTANCE_THRESHOLD,
+            min_recall_count=body.min_recall_count if body.min_recall_count is not None else DEFAULT_MIN_RECALL_COUNT,
+            min_age_days=body.min_age_days if body.min_age_days is not None else DEFAULT_MIN_AGE_DAYS,
+        )
+
     if body.user_id:
         result = await scheduler.run_pruning_now(
-            user_id=body.user_id, app_id=body.app_id
+            user_id=body.user_id, app_id=body.app_id, override_thresholds=override
         )
         results = [result]
     else:
-        results = await scheduler.run_pruning_for_all_users()
+        results = await scheduler.run_pruning_for_all_users(override_thresholds=override)
 
     return AdminJobResponse(
         job="pruning",
@@ -186,6 +196,7 @@ async def trigger_reconsolidation(
         event_id_str=body.event_id,
         query=body.query,
         user_id=body.user_id,
+        force=body.force,
     )
     return ReconsolidateResponse(
         event_id=result.event_id,

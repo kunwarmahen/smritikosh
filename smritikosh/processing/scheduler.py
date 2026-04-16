@@ -159,13 +159,15 @@ class MemoryScheduler:
         )
         return results
 
-    async def run_pruning_for_all_users(self) -> list[PruningResult]:
+    async def run_pruning_for_all_users(self, override_thresholds=None) -> list[PruningResult]:
         """Run pruning for all users that have consolidated events."""
         user_app_pairs = await self._get_all_users()
         results: list[PruningResult] = []
 
         for user_id, app_id in user_app_pairs:
-            result = await self.run_pruning_now(user_id=user_id, app_id=app_id)
+            result = await self.run_pruning_now(
+                user_id=user_id, app_id=app_id, override_thresholds=override_thresholds
+            )
             results.append(result)
 
         logger.info(
@@ -193,13 +195,18 @@ class MemoryScheduler:
             return result
 
     async def run_pruning_now(
-        self, *, user_id: str, app_id: str = "default"
+        self,
+        *,
+        user_id: str,
+        app_id: str = "default",
+        override_thresholds=None,  # PruningThresholds | None
     ) -> PruningResult:
         """Run pruning immediately for a specific user."""
         try:
             async with db_session() as pg, neo4j_session() as neo:
                 return await self.pruner.prune(
-                    pg, user_id=user_id, app_id=app_id, neo_session=neo
+                    pg, user_id=user_id, app_id=app_id, neo_session=neo,
+                    override_thresholds=override_thresholds,
                 )
         except Exception as exc:
             logger.error(
