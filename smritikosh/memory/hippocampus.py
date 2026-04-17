@@ -97,8 +97,9 @@ def _build_extraction_prompt(raw_text: str, existing_facts: list | None = None) 
     lines = ["Extract structured facts from this user interaction:\n", raw_text]
     if existing_facts:
         lines.append(
-            "\n\nAlready known facts — REUSE the exact category+key for the same concept. "
-            "Only create a new key when the concept is genuinely not covered below:"
+            "\n\nExisting fact keys (for reference only — do NOT re-output these unless "
+            "this specific interaction explicitly mentions them again). "
+            "When this interaction does mention the same concept, reuse the exact category+key shown:"
         )
         for f in existing_facts:
             lines.append(f"  - {f.category}/{f.key}: {f.value}")

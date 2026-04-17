@@ -15,6 +15,7 @@ Run: periodically via the Scheduler (e.g. every hour).
 """
 
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -64,8 +65,11 @@ _CONSOLIDATION_SCHEMA = (
     "event (life milestone/anniversary/upcoming appointment), "
     "tool (software/app/platform/tech stack used). "
     "key (short snake_case label), value (concise string), confidence (0.0–1.0), "
-    "source_indices (list of 0-based ints): the interaction numbers this fact was "
-    "directly derived from — only include interactions that actually mention this fact. "
+    "source_indices (list of 0-based ints): ONLY the indices of interactions where "
+    "this fact is explicitly stated or unmistakably implied in that specific text. "
+    "Do NOT include an index just because the interaction is in the same batch. "
+    "Most facts should cite exactly 1 source; cite multiple only when each "
+    "interaction independently and directly mentions the same fact. "
     "links: optional list of objects with: "
     "from_index (0-based int matching the interaction number), "
     "to_index (0-based int), "
@@ -302,12 +306,14 @@ class Consolidator:
         facts_stored = 0
         for fd in fact_dicts:
             try:
-                raw_indices = fd.get("source_indices") or []
-                fact_source_ids = [
-                    batch_event_ids[i]
-                    for i in raw_indices
+                raw_indices = [
+                    i for i in (fd.get("source_indices") or [])
                     if isinstance(i, int) and 0 <= i < len(batch)
-                ] or batch_event_ids  # fall back to full batch if LLM omits indices
+                ]
+                verified_indices = _filter_source_indices(
+                    fd.get("key", ""), fd.get("value", ""), raw_indices, batch
+                )
+                fact_source_ids = [batch_event_ids[i] for i in verified_indices]
                 await self.semantic.upsert_fact(
                     neo_session,
                     user_id=user_id,
@@ -355,6 +361,62 @@ class Consolidator:
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+_STOPWORDS = frozenset({
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+    "i", "my", "me", "we", "our", "you", "your", "he", "she", "it", "its",
+    "they", "their", "to", "of", "in", "at", "for", "on", "with", "by",
+    "and", "or", "but", "not", "so", "if", "as", "this", "that", "from",
+    "have", "has", "had", "do", "did", "does", "will", "would", "could",
+    "should", "may", "might", "very", "just", "also", "more", "than",
+})
+
+
+def _keywords(text: str) -> frozenset[str]:
+    return frozenset(
+        w.lower() for w in re.split(r'\W+', text)
+        if len(w) > 2 and w.lower() not in _STOPWORDS
+    )
+
+
+def _filter_source_indices(
+    fact_key: str,
+    fact_value: str,
+    raw_indices: list[int],
+    batch: list[Event],
+) -> list[int]:
+    """
+    Verify LLM-provided source indices by checking keyword overlap between
+    the fact and each cited event's text. Prevents over-attribution when the
+    LLM lists batch-mates that don't actually mention the fact.
+
+    Falls back to the single best-scoring event if nothing passes, rather
+    than silently accepting the full unverified list.
+    """
+    fact_kw = _keywords(f"{fact_key} {fact_value}")
+    if not fact_kw or not raw_indices:
+        return raw_indices
+
+    scores: list[tuple[int, int]] = []
+    for i in raw_indices:
+        if 0 <= i < len(batch):
+            event_text = (batch[i].raw_text or "") + " " + (batch[i].summary or "")
+            overlap = len(fact_kw & _keywords(event_text))
+            scores.append((i, overlap))
+
+    verified = [i for i, score in scores if score > 0]
+    if verified:
+        return verified
+
+    # No event matched — return the best-scoring candidate rather than all
+    if scores:
+        logger.debug(
+            "Source index verification: no keyword overlap found, using best-scoring event",
+            extra={"fact_key": fact_key, "fact_value": fact_value},
+        )
+        return [max(scores, key=lambda x: x[1])[0]]
+    return []
+
 
 def _split_batches(events: list[Event], batch_size: int) -> list[list[Event]]:
     """Split events into time-ordered batches of batch_size."""
