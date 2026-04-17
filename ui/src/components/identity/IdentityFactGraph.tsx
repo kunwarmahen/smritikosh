@@ -228,7 +228,7 @@ function SourceMemoriesPanel({
     let skipped = 0;
     results.forEach((r, i) => {
       if (!r.data) return;
-      const text = normalizeText(r.data.summary ?? r.data.raw_text);
+      const text = normalizeText(r.data.raw_text);
       if (seen.has(text)) { skipped++; return; }
       seen.add(text);
       unique.push({ eventId: fact.sourceEventIds[i], event: r.data });
@@ -298,7 +298,7 @@ function SourceMemoriesPanel({
                   className="rounded-lg border border-zinc-700/50 bg-zinc-800/40 p-3 group"
                 >
                   <p className="text-xs text-zinc-300 line-clamp-3 leading-relaxed">
-                    {event.summary ?? event.raw_text}
+                    {event.raw_text}
                   </p>
                   <div className="flex items-center justify-between mt-2">
                     <span className="text-xs text-zinc-600">

@@ -35,10 +35,14 @@ MIN_EVENTS_TO_CONSOLIDATE = 5     # skip if fewer unconsolidated events exist
 BATCH_SIZE = 10                    # events processed per LLM call
 
 _CONSOLIDATION_SCHEMA = (
-    "summary (string), "
+    "summary (string): 1-2 sentence overview of the entire batch. "
+    "event_summaries (list of strings): one concise sentence per interaction, "
+    "in the same order as the input list — must have exactly the same length. "
     "facts: list of objects with: "
     "category (preference|interest|role|project|skill|goal|relationship), "
-    "key (short snake_case label), value (concise string), confidence (0.0–1.0). "
+    "key (short snake_case label), value (concise string), confidence (0.0–1.0), "
+    "source_indices (list of 0-based ints): the interaction numbers this fact was "
+    "directly derived from — only include interactions that actually mention this fact. "
     "links: optional list of objects with: "
     "from_index (0-based int matching the interaction number), "
     "to_index (0-based int), "
@@ -48,9 +52,13 @@ _CONSOLIDATION_SCHEMA = (
 
 _CONSOLIDATION_EXAMPLE = {
     "summary": "User is building an AI memory startup called smritikosh, prefers green UI.",
+    "event_summaries": [
+        "User introduced smritikosh, an AI memory startup.",
+        "User mentioned a preference for green UI colours.",
+    ],
     "facts": [
-        {"category": "project",    "key": "active",   "value": "smritikosh",  "confidence": 0.95},
-        {"category": "preference", "key": "ui_color", "value": "green",       "confidence": 0.9},
+        {"category": "project",    "key": "active",   "value": "smritikosh",  "confidence": 0.95, "source_indices": [0]},
+        {"category": "preference", "key": "ui_color", "value": "green",       "confidence": 0.9,  "source_indices": [1]},
     ],
     "links": [
         {"from_index": 0, "to_index": 1, "relation_type": "preceded"},
@@ -227,14 +235,18 @@ class Consolidator:
             return 0, 0, 0, "", [], False
 
         summary = extracted.get("summary", "")
+        event_summaries: list[str] = extracted.get("event_summaries", [])
         fact_dicts = extracted.get("facts", [])
         link_dicts = extracted.get("links", [])
 
-        # Mark events consolidated in Postgres
+        # Mark all events consolidated; write per-event summaries individually
+        # so each event keeps a summary of its own content, not the whole batch.
         event_ids = [e.id for e in batch]
-        await self.episodic.mark_consolidated(
-            pg_session, event_ids, summary=summary or None
-        )
+        await self.episodic.mark_consolidated(pg_session, event_ids)
+        for i, event in enumerate(batch):
+            per_summary = event_summaries[i] if i < len(event_summaries) else None
+            if per_summary:
+                await self.episodic.update_summary(pg_session, event.id, per_summary)
 
         # Re-embed the consolidated summary so hybrid search uses the clean,
         # distilled signal rather than the original noisy raw_text embeddings.
@@ -259,11 +271,18 @@ class Consolidator:
                     extra={"user_id": user_id, "event_id": str(batch[0].id), "error": str(exc)},
                 )
 
-        # Upsert distilled facts to Neo4j — link back to all events in this batch
+        # Upsert distilled facts to Neo4j — link each fact only to the specific
+        # events that mention it, using source_indices from the LLM response.
         batch_event_ids = [str(e.id) for e in batch]
         facts_stored = 0
         for fd in fact_dicts:
             try:
+                raw_indices = fd.get("source_indices") or []
+                fact_source_ids = [
+                    batch_event_ids[i]
+                    for i in raw_indices
+                    if isinstance(i, int) and 0 <= i < len(batch)
+                ] or batch_event_ids  # fall back to full batch if LLM omits indices
                 await self.semantic.upsert_fact(
                     neo_session,
                     user_id=user_id,
@@ -272,7 +291,7 @@ class Consolidator:
                     key=fd["key"],
                     value=fd["value"],
                     confidence=float(fd.get("confidence", 0.8)),
-                    source_event_ids=batch_event_ids,
+                    source_event_ids=fact_source_ids,
                 )
                 facts_stored += 1
             except (KeyError, ValueError) as exc:
@@ -337,7 +356,9 @@ def _build_consolidation_prompt(
             lines.append(f"  - {f.category}/{f.key}: {f.value}")
 
     lines.append(
-        "\nReturn JSON with: summary (1-2 sentences) and facts (list of structured facts)."
+        f"\nReturn JSON with: summary (1-2 sentence overview of all {len(batch)} interactions), "
+        f"event_summaries (list of exactly {len(batch)} concise one-sentence summaries, "
+        "one per interaction in order), and facts (list of structured facts)."
     )
     return "\n".join(lines)
 
