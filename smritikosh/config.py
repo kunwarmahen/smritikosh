@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     llm_api_key: str | None = None
     # For ollama (http://localhost:11434) or vllm (http://localhost:8000/v1)
     llm_base_url: str | None = None
+    # Set to an integer to cap token output; leave as None for no limit
+    llm_max_tokens: int | None = None
 
     # ── Embeddings ─────────────────────────────────────────────────────────
     embedding_provider: str = "openai"

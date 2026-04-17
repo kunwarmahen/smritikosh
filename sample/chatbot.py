@@ -33,10 +33,12 @@ from client import SmritikoshClient  # noqa: E402 (import after env load)
 
 # ── LLM config from .env ──────────────────────────────────────────────────────
 
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").lower()
-LLM_MODEL    = os.getenv("LLM_MODEL", "qwen2.5:14b")
-LLM_API_KEY  = os.getenv("LLM_API_KEY", "")
-LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434")
+LLM_PROVIDER    = os.getenv("LLM_PROVIDER", "ollama").lower()
+LLM_MODEL       = os.getenv("LLM_MODEL", "qwen2.5:14b")
+LLM_API_KEY     = os.getenv("LLM_API_KEY", "")
+LLM_BASE_URL    = os.getenv("LLM_BASE_URL", "http://localhost:11434")
+_raw            = os.getenv("LLM_MAX_TOKENS", "")
+LLM_MAX_TOKENS  = int(_raw) if _raw.strip() else None
 
 # ── Build the LLM client based on provider ────────────────────────────────────
 
@@ -82,21 +84,15 @@ conversation: list[dict] = []
 # ── LLM call (normalised across providers) ────────────────────────────────────
 
 def _llm_call(system: str, messages: list[dict]) -> str:
+    kwargs = {"model": LLM_MODEL}
+    if LLM_MAX_TOKENS is not None:
+        kwargs["max_tokens"] = LLM_MAX_TOKENS
     if _provider_type == "anthropic":
-        response = _llm.messages.create(
-            model=LLM_MODEL,
-            # max_tokens=4096,
-            system=system,
-            messages=messages,
-        )
+        response = _llm.messages.create(system=system, messages=messages, **kwargs)
         return response.content[0].text
     else:
         full_messages = [{"role": "system", "content": system}] + messages
-        response = _llm.chat.completions.create(
-            model=LLM_MODEL,
-            # max_tokens=4096,
-            messages=full_messages,
-        )
+        response = _llm.chat.completions.create(messages=full_messages, **kwargs)
         return response.choices[0].message.content
 
 # ── Core chat logic ───────────────────────────────────────────────────────────

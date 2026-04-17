@@ -57,15 +57,15 @@ class LLMAdapter:
         self,
         messages: list[dict[str, str]],
         temperature: float = 0.2,
-        # max_tokens: int = 4096,
         **kwargs: Any,
     ) -> str:
         """Send a chat completion request and return the response text."""
+        if self._cfg.llm_max_tokens is not None:
+            kwargs.setdefault("max_tokens", self._cfg.llm_max_tokens)
         response = await litellm.acompletion(
             model=self._chat_model,
             messages=messages,
             temperature=temperature,
-            max_tokens=max_tokens,
             api_key=self._cfg.llm_api_key,
             api_base=self._cfg.llm_base_url,
             **kwargs,
@@ -119,7 +119,6 @@ class LLMAdapter:
                 {"role": "user", "content": prompt},
             ],
             temperature=0.0,  # deterministic extraction
-            # max_tokens=4096,
             response_format={"type": "json_object"},
             **extra,
         )
