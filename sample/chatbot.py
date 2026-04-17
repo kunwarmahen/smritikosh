@@ -97,6 +97,28 @@ def _llm_call(system: str, messages: list[dict]) -> str:
 
 # ── Core chat logic ───────────────────────────────────────────────────────────
 
+_EXTRACT_SYSTEM = (
+    "You extract memorable facts about the user from a conversation turn. "
+    "A memorable fact is something personal, preferential, or biographical about the user "
+    "(e.g. their name, job, location, interests, goals, relationships, opinions). "
+    "Generic questions, small talk, and factual lookups contain no memorable facts.\n\n"
+    "Reply with ONLY one of:\n"
+    "  REMEMBER: <concise fact in third-person, e.g. 'User likes hiking'>\n"
+    "  SKIP\n"
+    "No other text."
+)
+
+
+def _extract_memorable_fact(user_message: str, assistant_message: str) -> str | None:
+    """Return a concise fact string if the exchange is worth storing, else None."""
+    prompt = f"User: {user_message}\nAssistant: {assistant_message}"
+    result = _llm_call(_EXTRACT_SYSTEM, [{"role": "user", "content": prompt}])
+    result = result.strip()
+    if result.startswith("REMEMBER:"):
+        return result[len("REMEMBER:"):].strip()
+    return None
+
+
 def chat(user_message: str) -> str:
     context = memory.get_context(SMRITIKOSH_USER, user_message)
 
@@ -112,10 +134,10 @@ def chat(user_message: str) -> str:
     assistant_message = _llm_call(system_prompt, conversation)
     conversation.append({"role": "assistant", "content": assistant_message})
 
-    memory.remember(
-        SMRITIKOSH_USER,
-        f"User asked: {user_message}\nAssistant replied: {assistant_message}",
-    )
+    fact = _extract_memorable_fact(user_message, assistant_message)
+    if fact:
+        memory.remember(SMRITIKOSH_USER, fact)
+
     return assistant_message
 
 
