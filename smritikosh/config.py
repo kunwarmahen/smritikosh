@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     # ── App ────────────────────────────────────────────────────────────────
     app_env: str = "development"
     log_level: str = "INFO"
+    sqlalchemy_log_level: str = "WARNING"
 
     # ── Connectors ─────────────────────────────────────────────────────────
     # Set SLACK_SIGNING_SECRET in .env to enable Slack event verification

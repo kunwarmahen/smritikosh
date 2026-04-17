@@ -43,6 +43,8 @@ from smritikosh.processing.scheduler import MemoryScheduler
 
 logger = logging.getLogger(__name__)
 
+logging.getLogger("sqlalchemy").setLevel(settings.sqlalchemy_log_level)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
