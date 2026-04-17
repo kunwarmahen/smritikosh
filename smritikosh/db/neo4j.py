@@ -46,6 +46,7 @@ def get_driver() -> AsyncDriver:
             settings.neo4j_uri,
             auth=(settings.neo4j_user, settings.neo4j_password),
             max_connection_pool_size=50,
+            notifications_min_severity="OFF",
         )
     return _driver
 

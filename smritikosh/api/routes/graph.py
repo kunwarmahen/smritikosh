@@ -81,7 +81,8 @@ async def get_fact_graph(
         fact_rel_query = """
         MATCH (u:User {user_id: $user_id, app_id: $app_id})-[]->(f1:Fact)
         MATCH (u)-[]->(f2:Fact)
-        MATCH (f1)-[r:RELATED_TO]->(f2)
+        OPTIONAL MATCH (f1)-[r:RELATED_TO]->(f2)
+        WITH f1, f2, r WHERE r IS NOT NULL
         RETURN
             f1.category AS from_cat,
             f1.key      AS from_key,
