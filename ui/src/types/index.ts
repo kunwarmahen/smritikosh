@@ -136,6 +136,7 @@ export interface FactGraphNode {
   category?: string | null;
   confidence?: number | null;
   frequency_count?: number | null;
+  source_event_ids?: string[];
 }
 
 export interface FactGraphEdge {

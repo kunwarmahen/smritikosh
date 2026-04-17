@@ -52,12 +52,13 @@ async def get_fact_graph(
         MATCH (u:User {user_id: $user_id, app_id: $app_id})-[r]->(f:Fact)
         WHERE r.confidence >= $min_confidence
         RETURN
-            f.category   AS category,
-            f.key        AS key,
-            f.value      AS value,
-            r.confidence AS confidence,
-            r.frequency_count AS frequency_count,
-            type(r)      AS rel_type
+            f.category          AS category,
+            f.key               AS key,
+            f.value             AS value,
+            r.confidence        AS confidence,
+            r.frequency_count   AS frequency_count,
+            r.source_event_ids  AS source_event_ids,
+            type(r)             AS rel_type
         ORDER BY r.frequency_count DESC
         """
         user_fact_result = await neo.run(
@@ -125,6 +126,7 @@ async def get_fact_graph(
                     category=rec["category"],
                     confidence=rec["confidence"],
                     frequency_count=rec["frequency_count"],
+                    source_event_ids=list(rec.get("source_event_ids") or []),
                 )
             )
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ReactFlow,
   Background,
@@ -12,12 +12,17 @@ import {
   type Node,
   type Edge,
   type Connection,
+  type NodeMouseHandler,
   BackgroundVariant,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Loader2, Network } from "lucide-react";
+import { Loader2, Network, X, ExternalLink, BookOpen } from "lucide-react";
+import Link from "next/link";
 import { useFactGraph } from "@/hooks/useFactGraph";
-import type { FactGraph, FactGraphNode, FactGraphEdge } from "@/types";
+import { useQueries } from "@tanstack/react-query";
+import { useSession } from "next-auth/react";
+import { createApiClient } from "@/lib/api-client";
+import type { FactGraph, FactGraphNode, FactGraphEdge, MemoryEvent } from "@/types";
 
 // ── Category colour palette ───────────────────────────────────────────────────
 const CATEGORY_STYLES: Record<string, { bg: string; border: string; text: string }> = {
@@ -44,6 +49,17 @@ const EDGE_COLORS: Record<string, string> = {
   RELATED_TO:      "#f97316",
 };
 
+// ── Node extra data stored for panel use ──────────────────────────────────────
+interface FactNodeData {
+  label: string;
+  factLabel: string;
+  category: string;
+  confidence: number | null;
+  frequency_count: number | null;
+  sourceEventIds: string[];
+  isSelected?: boolean;
+}
+
 // ── Layout: radial by category ────────────────────────────────────────────────
 function buildLayout(graph: FactGraph): { nodes: Node[]; edges: Edge[] } {
   const factsByCat = new Map<string, FactGraphNode[]>();
@@ -63,7 +79,6 @@ function buildLayout(graph: FactGraph): { nodes: Node[]; edges: Edge[] } {
 
   const rfNodes: Node[] = [];
 
-  // User node at center
   if (userNode) {
     rfNodes.push({
       id: userNode.id,
@@ -87,7 +102,6 @@ function buildLayout(graph: FactGraph): { nodes: Node[]; edges: Edge[] } {
     });
   }
 
-  // Category cluster nodes
   categories.forEach((cat, catIdx) => {
     const catAngle = (2 * Math.PI * catIdx) / categories.length - Math.PI / 2;
     const catX = Math.cos(catAngle) * CAT_RADIUS;
@@ -100,13 +114,20 @@ function buildLayout(graph: FactGraph): { nodes: Node[]; edges: Edge[] } {
       const x = catX + Math.cos(fanAngle) * FACT_RADIUS;
       const y = catY + Math.sin(fanAngle) * FACT_RADIUS;
 
-      const confPct = fn.confidence != null ? ` · ${(fn.confidence * 100).toFixed(0)}%` : "";
+      const sourceEventIds = fn.source_event_ids ?? [];
+      const hasSource = sourceEventIds.length > 0;
+
       rfNodes.push({
         id: fn.id,
         type: "default",
         position: { x, y },
         data: {
           label: fn.label.length > 28 ? fn.label.slice(0, 26) + "…" : fn.label,
+          factLabel: fn.label,
+          category: cat,
+          confidence: fn.confidence ?? null,
+          frequency_count: fn.frequency_count ?? null,
+          sourceEventIds,
         },
         style: {
           background: style.bg,
@@ -117,13 +138,16 @@ function buildLayout(graph: FactGraph): { nodes: Node[]; edges: Edge[] } {
           padding: "6px 10px",
           maxWidth: 160,
           textAlign: "center" as const,
-          boxShadow: `0 0 8px ${style.border}30`,
+          boxShadow: hasSource
+            ? `0 0 12px ${style.border}60`
+            : `0 0 8px ${style.border}30`,
+          cursor: hasSource ? "pointer" : "default",
+          outline: hasSource ? `1px dashed ${style.border}80` : "none",
         },
       });
     });
   });
 
-  // Edges
   const rfEdges: Edge[] = graph.edges.map((e: FactGraphEdge) => ({
     id: e.id,
     source: e.source,
@@ -162,9 +186,150 @@ function Legend() {
   );
 }
 
+// ── Source memories panel ─────────────────────────────────────────────────────
+interface SelectedFact {
+  label: string;
+  category: string;
+  confidence: number | null;
+  frequency_count: number | null;
+  sourceEventIds: string[];
+}
+
+function normalizeText(text: string): string {
+  return text.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function SourceMemoriesPanel({
+  fact,
+  onClose,
+}: {
+  fact: SelectedFact;
+  onClose: () => void;
+}) {
+  const { data: session } = useSession();
+  const token = session?.accessToken;
+  const style = CATEGORY_STYLES[fact.category] ?? DEFAULT_STYLE;
+
+  const results = useQueries({
+    queries: fact.sourceEventIds.map((id) => ({
+      queryKey: ["event", id],
+      queryFn: () => createApiClient(token).getEvent(id) as Promise<MemoryEvent>,
+      enabled: !!token,
+      staleTime: 120_000,
+    })),
+  });
+
+  const isLoading = results.some((r) => r.isLoading);
+
+  // Deduplicate loaded events by normalised text content; keep earliest seen.
+  const { unique, skipped } = useMemo(() => {
+    const seen = new Set<string>();
+    const unique: Array<{ eventId: string; event: MemoryEvent }> = [];
+    let skipped = 0;
+    results.forEach((r, i) => {
+      if (!r.data) return;
+      const text = normalizeText(r.data.summary ?? r.data.raw_text);
+      if (seen.has(text)) { skipped++; return; }
+      seen.add(text);
+      unique.push({ eventId: fact.sourceEventIds[i], event: r.data });
+    });
+    return { unique, skipped };
+  }, [results, fact.sourceEventIds]);
+
+  return (
+    <div className="absolute top-0 right-0 h-full w-80 z-20 flex flex-col
+                    bg-zinc-900/95 border-l border-zinc-700/50 backdrop-blur-sm">
+      {/* Header */}
+      <div className="flex items-start justify-between p-4 border-b border-zinc-700/50">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            <span
+              className="inline-block w-2 h-2 rounded-sm flex-shrink-0"
+              style={{ background: style.border }}
+            />
+            <span className="text-xs text-zinc-500 capitalize">{fact.category}</span>
+          </div>
+          <p className="text-sm font-semibold text-zinc-100 truncate">{fact.label}</p>
+          <div className="flex items-center gap-3 mt-1.5">
+            {fact.confidence != null && (
+              <span className="text-xs text-zinc-500">
+                {(fact.confidence * 100).toFixed(0)}% confidence
+              </span>
+            )}
+            {fact.frequency_count != null && (
+              <span className="text-xs text-zinc-500">
+                seen {fact.frequency_count}×
+              </span>
+            )}
+          </div>
+        </div>
+        <button
+          onClick={onClose}
+          className="ml-2 p-1 rounded-md text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700/50 transition-colors flex-shrink-0"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Body */}
+      <div className="flex-1 overflow-y-auto p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <BookOpen className="w-3.5 h-3.5 text-zinc-500" />
+          <p className="text-xs font-medium text-zinc-500 uppercase tracking-wide">
+            Contributing memories
+          </p>
+        </div>
+
+        {isLoading ? (
+          <div className="flex items-center gap-2 text-zinc-500 py-6 justify-center">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span className="text-xs">Loading…</span>
+          </div>
+        ) : unique.length === 0 ? (
+          <p className="text-xs text-zinc-600 text-center py-6">
+            No source memories tracked for this fact.
+          </p>
+        ) : (
+          <>
+            <div className="space-y-2">
+              {unique.map(({ event }) => (
+                <div
+                  key={event.event_id}
+                  className="rounded-lg border border-zinc-700/50 bg-zinc-800/40 p-3 group"
+                >
+                  <p className="text-xs text-zinc-300 line-clamp-3 leading-relaxed">
+                    {event.summary ?? event.raw_text}
+                  </p>
+                  <div className="flex items-center justify-between mt-2">
+                    <span className="text-xs text-zinc-600">
+                      {new Date(event.created_at).toLocaleDateString()}
+                    </span>
+                    <Link
+                      href={`/dashboard/memories/${event.event_id}`}
+                      className="flex items-center gap-1 text-xs text-violet-400 hover:text-violet-300 transition-colors opacity-0 group-hover:opacity-100"
+                    >
+                      View <ExternalLink className="w-3 h-3" />
+                    </Link>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {skipped > 0 && (
+              <p className="text-xs text-zinc-600 text-center mt-3">
+                +{skipped} duplicate{skipped !== 1 ? "s" : ""} hidden
+              </p>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 export function IdentityFactGraph() {
   const { data, isLoading, isError } = useFactGraph();
+  const [selectedFact, setSelectedFact] = useState<SelectedFact | null>(null);
 
   const { nodes: initialNodes, edges: initialEdges } = useMemo(
     () => (data ? buildLayout(data) : { nodes: [], edges: [] }),
@@ -174,7 +339,6 @@ export function IdentityFactGraph() {
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
-  // Sync when data loads (useNodesState only initialises once on mount)
   useEffect(() => { setNodes(initialNodes); }, [initialNodes, setNodes]);
   useEffect(() => { setEdges(initialEdges); }, [initialEdges, setEdges]);
 
@@ -182,6 +346,20 @@ export function IdentityFactGraph() {
     (connection: Connection) => setEdges((eds) => addEdge(connection, eds)),
     [setEdges],
   );
+
+  const onNodeClick: NodeMouseHandler = useCallback((_evt, node) => {
+    const d = node.data as unknown as FactNodeData;
+    if (!d.sourceEventIds || d.sourceEventIds.length === 0) return;
+    setSelectedFact({
+      label: d.factLabel,
+      category: d.category,
+      confidence: d.confidence,
+      frequency_count: d.frequency_count,
+      sourceEventIds: d.sourceEventIds,
+    });
+  }, []);
+
+  const onPaneClick = useCallback(() => setSelectedFact(null), []);
 
   if (isLoading) {
     return (
@@ -221,6 +399,8 @@ export function IdentityFactGraph() {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        onNodeClick={onNodeClick}
+        onPaneClick={onPaneClick}
         fitView
         fitViewOptions={{ padding: 0.15 }}
         minZoom={0.2}
@@ -254,12 +434,21 @@ export function IdentityFactGraph() {
         />
       </ReactFlow>
       <Legend />
-      <div className="absolute top-3 right-3 z-10">
+      <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
+        {selectedFact === null && (
+          <span className="text-xs text-zinc-500 bg-zinc-900/80 border border-zinc-700/50
+                           rounded-lg px-2 py-1 backdrop-blur-sm">
+            Click a fact to see source memories
+          </span>
+        )}
         <span className="text-xs text-zinc-500 bg-zinc-900/80 border border-zinc-700/50
                          rounded-lg px-2 py-1 backdrop-blur-sm">
           {data.nodes.length - 1} fact{data.nodes.length !== 2 ? "s" : ""} · {data.edges.length} link{data.edges.length !== 1 ? "s" : ""}
         </span>
       </div>
+      {selectedFact && (
+        <SourceMemoriesPanel fact={selectedFact} onClose={() => setSelectedFact(null)} />
+      )}
     </div>
   );
 }

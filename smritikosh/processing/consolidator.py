@@ -259,7 +259,8 @@ class Consolidator:
                     extra={"user_id": user_id, "event_id": str(batch[0].id), "error": str(exc)},
                 )
 
-        # Upsert distilled facts to Neo4j
+        # Upsert distilled facts to Neo4j — link back to all events in this batch
+        batch_event_ids = [str(e.id) for e in batch]
         facts_stored = 0
         for fd in fact_dicts:
             try:
@@ -271,6 +272,7 @@ class Consolidator:
                     key=fd["key"],
                     value=fd["value"],
                     confidence=float(fd.get("confidence", 0.8)),
+                    source_event_ids=batch_event_ids,
                 )
                 facts_stored += 1
             except (KeyError, ValueError) as exc:

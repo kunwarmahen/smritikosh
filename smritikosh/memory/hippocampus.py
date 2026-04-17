@@ -193,7 +193,7 @@ class Hippocampus:
 
         # ── 5. Upsert semantic facts ──────────────────────────────────────
         stored_facts = await self._upsert_facts(
-            neo_session, user_id, app_id, extracted_facts
+            neo_session, user_id, app_id, extracted_facts, event_id=str(event.id)
         )
 
         result = EncodedMemory(
@@ -295,8 +295,10 @@ class Hippocampus:
         user_id: str,
         app_id: str,
         fact_dicts: list[dict],
+        event_id: str | None = None,
     ) -> list[FactRecord]:
         """Upsert each extracted fact dict to SemanticMemory. Skips invalid entries."""
+        source_ids = [event_id] if event_id else []
         stored: list[FactRecord] = []
         for fd in fact_dicts:
             try:
@@ -308,6 +310,7 @@ class Hippocampus:
                     key=fd["key"],
                     value=fd["value"],
                     confidence=float(fd.get("confidence", 1.0)),
+                    source_event_ids=source_ids,
                 )
                 stored.append(fact)
             except (KeyError, ValueError) as exc:

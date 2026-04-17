@@ -78,6 +78,7 @@ class FactRecord:
     frequency_count: int
     first_seen_at: str
     last_seen_at: str
+    source_event_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -146,6 +147,7 @@ class SemanticMemory:
         value: str,
         app_id: str = "default",
         confidence: float = 1.0,
+        source_event_ids: list[str] | None = None,
     ) -> FactRecord:
         """
         Insert or strengthen a fact about a user.
@@ -154,10 +156,14 @@ class SemanticMemory:
           - First time: creates User node, Fact node, and relationship.
           - Subsequent times: increments frequency_count and updates confidence.
 
+        source_event_ids: episodic event IDs that contributed to this fact.
+          New IDs are appended (deduplicated) to the existing list, capped at 50.
+
         Returns the final state of the fact as a FactRecord.
         """
         rel = _rel_type(category)
         now = _now_iso()
+        new_ids = source_event_ids or []
 
         # Note: relationship type must be string-interpolated (Cypher limitation).
         # The value is safe — it comes from _CATEGORY_TO_REL, not user input.
@@ -172,18 +178,24 @@ class SemanticMemory:
 
             MERGE (u)-[r:{rel}]->(f)
             ON CREATE SET
-                r.confidence     = $confidence,
-                r.frequency_count = 1,
-                r.first_seen_at  = $now,
-                r.last_seen_at   = $now
+                r.confidence       = $confidence,
+                r.frequency_count  = 1,
+                r.first_seen_at    = $now,
+                r.last_seen_at     = $now,
+                r.source_event_ids = $new_ids
             ON MATCH SET
-                r.confidence     = $confidence,
-                r.frequency_count = r.frequency_count + 1,
-                r.last_seen_at   = $now
+                r.confidence       = $confidence,
+                r.frequency_count  = r.frequency_count + 1,
+                r.last_seen_at     = $now,
+                r.source_event_ids = (
+                    coalesce(r.source_event_ids, []) +
+                    [x IN $new_ids WHERE NOT x IN coalesce(r.source_event_ids, [])]
+                )[0..50]
 
             RETURN f.category AS category, f.key AS key, f.value AS value,
                    r.confidence AS confidence, r.frequency_count AS frequency_count,
-                   r.first_seen_at AS first_seen_at, r.last_seen_at AS last_seen_at
+                   r.first_seen_at AS first_seen_at, r.last_seen_at AS last_seen_at,
+                   r.source_event_ids AS source_event_ids
             """,
             user_id=user_id,
             app_id=app_id,
@@ -192,6 +204,7 @@ class SemanticMemory:
             value=value,
             confidence=confidence,
             now=now,
+            new_ids=new_ids,
         )
         record = await result.single()
         return _record_to_fact(record)
@@ -276,7 +289,8 @@ class SemanticMemory:
                 WHERE r.confidence >= $min_confidence
                 RETURN f.category AS category, f.key AS key, f.value AS value,
                        r.confidence AS confidence, r.frequency_count AS frequency_count,
-                       r.first_seen_at AS first_seen_at, r.last_seen_at AS last_seen_at
+                       r.first_seen_at AS first_seen_at, r.last_seen_at AS last_seen_at,
+                       r.source_event_ids AS source_event_ids
                 ORDER BY r.frequency_count DESC
             """
         else:
@@ -286,7 +300,8 @@ class SemanticMemory:
                 WHERE r.confidence >= $min_confidence
                 RETURN f.category AS category, f.key AS key, f.value AS value,
                        r.confidence AS confidence, r.frequency_count AS frequency_count,
-                       r.first_seen_at AS first_seen_at, r.last_seen_at AS last_seen_at
+                       r.first_seen_at AS first_seen_at, r.last_seen_at AS last_seen_at,
+                       r.source_event_ids AS source_event_ids
                 ORDER BY r.frequency_count DESC
             """
 
@@ -453,4 +468,5 @@ def _record_to_fact(record: dict) -> FactRecord:
         frequency_count=int(record["frequency_count"]),
         first_seen_at=str(record["first_seen_at"]),
         last_seen_at=str(record["last_seen_at"]),
+        source_event_ids=list(record.get("source_event_ids") or []),
     )

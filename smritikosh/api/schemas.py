@@ -204,6 +204,7 @@ class FactGraphNode(BaseModel):
     category: str | None = None
     confidence: float | None = None
     frequency_count: int | None = None
+    source_event_ids: list[str] = []
 
 
 class FactGraphEdge(BaseModel):
