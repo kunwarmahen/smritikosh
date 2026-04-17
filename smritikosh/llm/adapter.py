@@ -57,7 +57,7 @@ class LLMAdapter:
         self,
         messages: list[dict[str, str]],
         temperature: float = 0.2,
-        max_tokens: int = 1024,
+        # max_tokens: int = 4096,
         **kwargs: Any,
     ) -> str:
         """Send a chat completion request and return the response text."""
@@ -119,7 +119,7 @@ class LLMAdapter:
                 {"role": "user", "content": prompt},
             ],
             temperature=0.0,  # deterministic extraction
-            max_tokens=4096,
+            # max_tokens=4096,
             response_format={"type": "json_object"},
             **extra,
         )

@@ -85,7 +85,7 @@ def _llm_call(system: str, messages: list[dict]) -> str:
     if _provider_type == "anthropic":
         response = _llm.messages.create(
             model=LLM_MODEL,
-            max_tokens=1024,
+            # max_tokens=4096,
             system=system,
             messages=messages,
         )
@@ -94,7 +94,7 @@ def _llm_call(system: str, messages: list[dict]) -> str:
         full_messages = [{"role": "system", "content": system}] + messages
         response = _llm.chat.completions.create(
             model=LLM_MODEL,
-            max_tokens=1024,
+            # max_tokens=4096,
             messages=full_messages,
         )
         return response.choices[0].message.content
