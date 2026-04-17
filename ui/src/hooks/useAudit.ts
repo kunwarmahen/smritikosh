@@ -49,7 +49,9 @@ export function useEventLineage(eventId?: string) {
   return useQuery<AuditEvent[]>({
     queryKey: ["audit", "lineage", eventId],
     queryFn: () =>
-      createApiClient(token).getEventLineage(eventId!) as Promise<AuditEvent[]>,
+      createApiClient(token).getEventLineage(eventId!).then(
+        (res: any) => res?.lineage ?? []
+      ) as Promise<AuditEvent[]>,
     enabled: !!eventId && !!token,
   });
 }

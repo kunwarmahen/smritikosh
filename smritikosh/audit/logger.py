@@ -191,20 +191,30 @@ class AuditLogger:
             filt["timestamp"] = ts_clause
 
         cursor = (
-            self._col.find(filt, {"_id": 0})
+            self._col.find(filt)
             .sort("timestamp", -1)
             .skip(offset)
             .limit(limit)
         )
-        return [_normalize_record(r) for r in await cursor.to_list(length=limit)]
+
+        def _with_id(r: dict) -> dict:
+            r["id"] = str(r.pop("_id", ""))
+            return _normalize_record(r)
+
+        return [_with_id(r) for r in await cursor.to_list(length=limit)]
 
     async def get_event_lineage(self, event_id: str) -> list[dict]:
         """Return all audit records linked to one episodic event_id."""
         cursor = (
-            self._col.find({"event_id": event_id}, {"_id": 0})
+            self._col.find({"event_id": event_id})
             .sort("timestamp", 1)
         )
-        return [_normalize_record(r) for r in await cursor.to_list(length=200)]
+
+        def _with_id(r: dict) -> dict:
+            r["id"] = str(r.pop("_id", ""))
+            return _normalize_record(r)
+
+        return [_with_id(r) for r in await cursor.to_list(length=200)]
 
     async def get_stats(
         self, user_id: str, app_id: str = "default"
