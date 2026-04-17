@@ -24,7 +24,7 @@ function DimensionCard({ dim }: { dim: IdentityDimension }) {
     <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-3.5">
       <div className="flex items-start justify-between gap-2 mb-1">
         <p className="section-heading">{dim.category}</p>
-        <span className="mono text-zinc-600">{dim.fact_count}f</span>
+        <span className="mono text-zinc-600" title={`${dim.fact_count} facts`}>{dim.fact_count}f</span>
       </div>
       <p className="text-sm text-zinc-200 font-medium leading-snug">{dim.dominant_value}</p>
       <ConfidenceBar value={dim.confidence} />
