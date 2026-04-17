@@ -119,6 +119,7 @@ class LLMAdapter:
                 {"role": "user", "content": prompt},
             ],
             temperature=0.0,  # deterministic extraction
+            max_tokens=4096,
             response_format={"type": "json_object"},
             **extra,
         )
