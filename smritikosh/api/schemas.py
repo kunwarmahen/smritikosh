@@ -364,6 +364,9 @@ class HealthResponse(BaseModel):
     version: str = "0.1.0"
     postgres: str = "unknown"    # "ok" | "error"
     neo4j: str = "unknown"       # "ok" | "error"
+    mongodb: str = "unknown"     # "ok" | "error" | "not_configured"
+    llm_model: str = "unknown"
+    llm_status: str = "unknown"  # "ok" | "error"
 
 
 # ── POST /memory/search ───────────────────────────────────────────────────────

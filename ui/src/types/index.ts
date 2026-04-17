@@ -104,6 +104,9 @@ export interface HealthStatus {
   version: string;
   postgres: "ok" | "error";
   neo4j: "ok" | "error";
+  mongodb: "ok" | "error" | "not_configured";
+  llm_model: string;
+  llm_status: "ok" | "error";
 }
 
 export interface AdminUser {
