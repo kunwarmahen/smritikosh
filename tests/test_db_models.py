@@ -145,13 +145,29 @@ class TestMemoryLinkModel:
 
 class TestEnums:
     def test_fact_category_values(self):
-        assert FactCategory.PREFERENCE == "preference"
-        assert FactCategory.INTEREST == "interest"
-        assert FactCategory.ROLE == "role"
-        assert FactCategory.PROJECT == "project"
-        assert FactCategory.SKILL == "skill"
-        assert FactCategory.GOAL == "goal"
+        assert FactCategory.IDENTITY     == "identity"
+        assert FactCategory.LOCATION     == "location"
+        assert FactCategory.ROLE         == "role"
+        assert FactCategory.SKILL        == "skill"
+        assert FactCategory.EDUCATION    == "education"
+        assert FactCategory.PROJECT      == "project"
+        assert FactCategory.GOAL         == "goal"
+        assert FactCategory.INTEREST     == "interest"
+        assert FactCategory.HOBBY        == "hobby"
+        assert FactCategory.HABIT        == "habit"
+        assert FactCategory.PREFERENCE   == "preference"
+        assert FactCategory.PERSONALITY  == "personality"
         assert FactCategory.RELATIONSHIP == "relationship"
+        assert FactCategory.PET          == "pet"
+        assert FactCategory.HEALTH       == "health"
+        assert FactCategory.DIET         == "diet"
+        assert FactCategory.BELIEF       == "belief"
+        assert FactCategory.VALUE        == "value"
+        assert FactCategory.RELIGION     == "religion"
+        assert FactCategory.FINANCE      == "finance"
+        assert FactCategory.LIFESTYLE    == "lifestyle"
+        assert FactCategory.EVENT        == "event"
+        assert FactCategory.TOOL         == "tool"
 
     def test_enum_is_str(self):
         # Enums inherit from str so they serialise cleanly to JSON

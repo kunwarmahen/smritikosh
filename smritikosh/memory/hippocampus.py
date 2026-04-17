@@ -47,7 +47,30 @@ logger = logging.getLogger(__name__)
 
 _EXTRACTION_SCHEMA = (
     "facts: list of objects with fields: "
-    "category (one of: preference, interest, role, project, skill, goal, relationship), "
+    "category — must be exactly one of: "
+    "identity (name/age/gender/nationality/languages), "
+    "location (city/country/timezone/places), "
+    "role (job title/profession/career stage), "
+    "skill (professional or personal ability/expertise), "
+    "education (degrees/schools/certifications), "
+    "project (active work initiative), "
+    "goal (aspiration/target/deadline), "
+    "interest (topic/domain they follow or are curious about), "
+    "hobby (active leisure pursuit — sport/art/game), "
+    "habit (routine/recurring behaviour/ritual), "
+    "preference (stated taste — food/aesthetic/UI/style), "
+    "personality (self-described trait/tendency), "
+    "relationship (family member/friend/partner/colleague), "
+    "pet (animal companion), "
+    "health (medical condition/medication/allergy/disability), "
+    "diet (dietary restriction/food allergy/eating pattern), "
+    "belief (opinion/worldview/philosophical or political stance), "
+    "value (core principle/priority/ethic), "
+    "religion (spiritual or religious affiliation/practice), "
+    "finance (financial situation/budget constraint/money goal), "
+    "lifestyle (overall life pattern — nomadic/minimalist/urban), "
+    "event (life milestone/anniversary/upcoming appointment), "
+    "tool (software/app/platform/tech stack used). "
     "key (short snake_case label e.g. ui_color, current_project), "
     "value (concise string), "
     "confidence (float 0.0–1.0). "
@@ -56,11 +79,15 @@ _EXTRACTION_SCHEMA = (
 
 _EXTRACTION_EXAMPLE = {
     "facts": [
-        {"category": "preference", "key": "ui_color",        "value": "green",            "confidence": 0.9},
-        {"category": "interest",   "key": "domain",          "value": "AI agents",        "confidence": 0.95},
         {"category": "role",       "key": "current",         "value": "entrepreneur",     "confidence": 1.0},
         {"category": "project",    "key": "active",          "value": "smritikosh",       "confidence": 0.85},
         {"category": "skill",      "key": "rag",             "value": "experienced",      "confidence": 0.8},
+        {"category": "interest",   "key": "domain",          "value": "AI agents",        "confidence": 0.95},
+        {"category": "preference", "key": "ui_color",        "value": "green",            "confidence": 0.9},
+        {"category": "diet",       "key": "restriction",     "value": "vegetarian",       "confidence": 0.95},
+        {"category": "health",     "key": "condition",       "value": "diabetic",         "confidence": 0.9},
+        {"category": "location",   "key": "city",            "value": "Mumbai",           "confidence": 0.95},
+        {"category": "tool",       "key": "editor",          "value": "VS Code",          "confidence": 0.85},
     ]
 }
 

@@ -54,13 +54,36 @@ class Base(DeclarativeBase):
 
 class FactCategory(StrEnum):
     """Categories for structured facts extracted from conversations."""
-    PREFERENCE = "preference"      # e.g. prefers dark mode, green color
-    INTEREST = "interest"          # e.g. interested in AI agents
-    ROLE = "role"                  # e.g. entrepreneur, engineer
-    PROJECT = "project"            # e.g. building smritikosh
-    SKILL = "skill"                # e.g. RAG, LangGraph
-    GOAL = "goal"                  # e.g. wants to launch in 3 months
-    RELATIONSHIP = "relationship"  # e.g. works with Alice
+    # Identity & demographics
+    IDENTITY     = "identity"      # e.g. name, age, gender, nationality, languages
+    LOCATION     = "location"      # e.g. lives in Mumbai, timezone IST
+    # Work & professional
+    ROLE         = "role"          # e.g. entrepreneur, software engineer
+    SKILL        = "skill"         # e.g. RAG, LangGraph, piano
+    EDUCATION    = "education"     # e.g. B.Tech IIT Delhi, AWS certified
+    PROJECT      = "project"       # e.g. building smritikosh
+    GOAL         = "goal"          # e.g. wants to launch in 3 months
+    # Personal interests & activities
+    INTEREST     = "interest"      # e.g. interested in AI agents, astronomy
+    HOBBY        = "hobby"         # e.g. plays chess, oil painting, hiking
+    HABIT        = "habit"         # e.g. wakes at 6am, meditates daily
+    PREFERENCE   = "preference"    # e.g. prefers dark mode, green colour
+    PERSONALITY  = "personality"   # e.g. introvert, detail-oriented
+    # Relationships & social
+    RELATIONSHIP = "relationship"  # e.g. married to Priya, best friend Arjun
+    PET          = "pet"           # e.g. has a golden retriever named Max
+    # Health & wellness
+    HEALTH       = "health"        # e.g. diabetic, on metformin, nut allergy
+    DIET         = "diet"          # e.g. vegetarian, lactose intolerant
+    # Beliefs & values
+    BELIEF       = "belief"        # e.g. thinks remote work increases productivity
+    VALUE        = "value"         # e.g. values family above career
+    RELIGION     = "religion"      # e.g. Hindu, practises Zen Buddhism
+    # Lifestyle & context
+    FINANCE      = "finance"       # e.g. bootstrapped, budget-conscious
+    LIFESTYLE    = "lifestyle"     # e.g. digital nomad, minimalist
+    EVENT        = "event"         # e.g. wedding on June 5th, born in 1990
+    TOOL         = "tool"          # e.g. uses VS Code, Notion, Postgres
 
 
 class RelationType(StrEnum):

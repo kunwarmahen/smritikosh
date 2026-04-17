@@ -78,26 +78,74 @@ def make_fact_record(**kwargs) -> dict:
 
 
 class TestRelType:
-    def test_preference(self):
-        assert _rel_type("preference") == "HAS_PREFERENCE"
+    def test_identity(self):
+        assert _rel_type("identity") == "HAS_IDENTITY"
 
-    def test_interest(self):
-        assert _rel_type("interest") == "HAS_INTEREST"
+    def test_location(self):
+        assert _rel_type("location") == "LIVES_IN"
 
     def test_role(self):
         assert _rel_type("role") == "HAS_ROLE"
 
-    def test_project(self):
-        assert _rel_type("project") == "WORKS_ON"
-
     def test_skill(self):
         assert _rel_type("skill") == "HAS_SKILL"
+
+    def test_education(self):
+        assert _rel_type("education") == "STUDIED_AT"
+
+    def test_project(self):
+        assert _rel_type("project") == "WORKS_ON"
 
     def test_goal(self):
         assert _rel_type("goal") == "HAS_GOAL"
 
+    def test_interest(self):
+        assert _rel_type("interest") == "HAS_INTEREST"
+
+    def test_hobby(self):
+        assert _rel_type("hobby") == "ENJOYS"
+
+    def test_habit(self):
+        assert _rel_type("habit") == "HAS_HABIT"
+
+    def test_preference(self):
+        assert _rel_type("preference") == "HAS_PREFERENCE"
+
+    def test_personality(self):
+        assert _rel_type("personality") == "HAS_TRAIT"
+
     def test_relationship(self):
         assert _rel_type("relationship") == "KNOWS"
+
+    def test_pet(self):
+        assert _rel_type("pet") == "HAS_PET"
+
+    def test_health(self):
+        assert _rel_type("health") == "HAS_HEALTH_CONDITION"
+
+    def test_diet(self):
+        assert _rel_type("diet") == "FOLLOWS_DIET"
+
+    def test_belief(self):
+        assert _rel_type("belief") == "BELIEVES"
+
+    def test_value(self):
+        assert _rel_type("value") == "VALUES"
+
+    def test_religion(self):
+        assert _rel_type("religion") == "PRACTICES"
+
+    def test_finance(self):
+        assert _rel_type("finance") == "HAS_FINANCE"
+
+    def test_lifestyle(self):
+        assert _rel_type("lifestyle") == "HAS_LIFESTYLE"
+
+    def test_event(self):
+        assert _rel_type("event") == "EXPERIENCED"
+
+    def test_tool(self):
+        assert _rel_type("tool") == "USES"
 
     def test_unknown_raises(self):
         with pytest.raises(ValueError, match="Unknown fact category"):

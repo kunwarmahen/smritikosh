@@ -39,7 +39,30 @@ _CONSOLIDATION_SCHEMA = (
     "event_summaries (list of strings): one concise sentence per interaction, "
     "in the same order as the input list — must have exactly the same length. "
     "facts: list of objects with: "
-    "category (preference|interest|role|project|skill|goal|relationship), "
+    "category — must be exactly one of: "
+    "identity (name/age/gender/nationality/languages), "
+    "location (city/country/timezone/places), "
+    "role (job title/profession/career stage), "
+    "skill (professional or personal ability/expertise), "
+    "education (degrees/schools/certifications), "
+    "project (active work initiative), "
+    "goal (aspiration/target/deadline), "
+    "interest (topic/domain they follow or are curious about), "
+    "hobby (active leisure pursuit — sport/art/game), "
+    "habit (routine/recurring behaviour/ritual), "
+    "preference (stated taste — food/aesthetic/UI/style), "
+    "personality (self-described trait/tendency), "
+    "relationship (family member/friend/partner/colleague), "
+    "pet (animal companion), "
+    "health (medical condition/medication/allergy/disability), "
+    "diet (dietary restriction/food allergy/eating pattern), "
+    "belief (opinion/worldview/philosophical or political stance), "
+    "value (core principle/priority/ethic), "
+    "religion (spiritual or religious affiliation/practice), "
+    "finance (financial situation/budget constraint/money goal), "
+    "lifestyle (overall life pattern — nomadic/minimalist/urban), "
+    "event (life milestone/anniversary/upcoming appointment), "
+    "tool (software/app/platform/tech stack used). "
     "key (short snake_case label), value (concise string), confidence (0.0–1.0), "
     "source_indices (list of 0-based ints): the interaction numbers this fact was "
     "directly derived from — only include interactions that actually mention this fact. "
@@ -51,14 +74,16 @@ _CONSOLIDATION_SCHEMA = (
 )
 
 _CONSOLIDATION_EXAMPLE = {
-    "summary": "User is building an AI memory startup called smritikosh, prefers green UI.",
+    "summary": "User is building an AI memory startup called smritikosh, prefers green UI, and is vegetarian.",
     "event_summaries": [
         "User introduced smritikosh, an AI memory startup.",
         "User mentioned a preference for green UI colours.",
+        "User mentioned they are vegetarian.",
     ],
     "facts": [
-        {"category": "project",    "key": "active",   "value": "smritikosh",  "confidence": 0.95, "source_indices": [0]},
-        {"category": "preference", "key": "ui_color", "value": "green",       "confidence": 0.9,  "source_indices": [1]},
+        {"category": "project",    "key": "active",      "value": "smritikosh", "confidence": 0.95, "source_indices": [0]},
+        {"category": "preference", "key": "ui_color",    "value": "green",      "confidence": 0.9,  "source_indices": [1]},
+        {"category": "diet",       "key": "restriction", "value": "vegetarian", "confidence": 0.95, "source_indices": [2]},
     ],
     "links": [
         {"from_index": 0, "to_index": 1, "relation_type": "preceded"},

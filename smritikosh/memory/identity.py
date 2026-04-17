@@ -31,13 +31,16 @@ from smritikosh.memory.semantic import FactRecord, SemanticMemory
 logger = logging.getLogger(__name__)
 
 _IDENTITY_SCHEMA = (
-    "summary (string): a 1-2 sentence narrative describing who this user is, "
-    "their role, main interests, and active projects"
+    "summary (string): a 1-2 sentence narrative describing who this user is — "
+    "weave in their role, location, skills, interests, hobbies, health context, "
+    "values, lifestyle, and any other dimensions present in the facts below. "
+    "Be concise but holistic; omit dimensions with no data."
 )
 _IDENTITY_EXAMPLE = {
     "summary": (
-        "This user is an entrepreneur building an AI memory startup called smritikosh, "
-        "with strong interests in LangGraph and RAG systems."
+        "This user is a vegetarian entrepreneur based in Mumbai building an AI memory "
+        "startup called smritikosh, with deep expertise in LangGraph and RAG, "
+        "who values family and meditates daily."
     )
 }
 

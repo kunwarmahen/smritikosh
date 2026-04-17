@@ -40,13 +40,36 @@ from smritikosh.db.models import FactCategory
 # Cypher does not allow parameterised relationship types, so we map explicitly.
 
 _CATEGORY_TO_REL: dict[str, str] = {
-    FactCategory.PREFERENCE: "HAS_PREFERENCE",
-    FactCategory.INTEREST: "HAS_INTEREST",
-    FactCategory.ROLE: "HAS_ROLE",
-    FactCategory.PROJECT: "WORKS_ON",
-    FactCategory.SKILL: "HAS_SKILL",
-    FactCategory.GOAL: "HAS_GOAL",
+    # Identity & demographics
+    FactCategory.IDENTITY:     "HAS_IDENTITY",
+    FactCategory.LOCATION:     "LIVES_IN",
+    # Work & professional
+    FactCategory.ROLE:         "HAS_ROLE",
+    FactCategory.SKILL:        "HAS_SKILL",
+    FactCategory.EDUCATION:    "STUDIED_AT",
+    FactCategory.PROJECT:      "WORKS_ON",
+    FactCategory.GOAL:         "HAS_GOAL",
+    # Personal interests & activities
+    FactCategory.INTEREST:     "HAS_INTEREST",
+    FactCategory.HOBBY:        "ENJOYS",
+    FactCategory.HABIT:        "HAS_HABIT",
+    FactCategory.PREFERENCE:   "HAS_PREFERENCE",
+    FactCategory.PERSONALITY:  "HAS_TRAIT",
+    # Relationships & social
     FactCategory.RELATIONSHIP: "KNOWS",
+    FactCategory.PET:          "HAS_PET",
+    # Health & wellness
+    FactCategory.HEALTH:       "HAS_HEALTH_CONDITION",
+    FactCategory.DIET:         "FOLLOWS_DIET",
+    # Beliefs & values
+    FactCategory.BELIEF:       "BELIEVES",
+    FactCategory.VALUE:        "VALUES",
+    FactCategory.RELIGION:     "PRACTICES",
+    # Lifestyle & context
+    FactCategory.FINANCE:      "HAS_FINANCE",
+    FactCategory.LIFESTYLE:    "HAS_LIFESTYLE",
+    FactCategory.EVENT:        "EXPERIENCED",
+    FactCategory.TOOL:         "USES",
 }
 
 
