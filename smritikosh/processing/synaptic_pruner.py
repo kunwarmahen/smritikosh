@@ -267,8 +267,9 @@ class SynapticPruner:
                 )
             except Exception as exc:
                 logger.warning(
-                    "Fact GC failed — skipping",
-                    extra={"user_id": user_id, "error": str(exc)},
+                    "Fact GC failed — skipping: %s",
+                    exc,
+                    extra={"user_id": user_id},
                 )
 
         logger.info(

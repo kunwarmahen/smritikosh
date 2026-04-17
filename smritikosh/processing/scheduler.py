@@ -147,32 +147,46 @@ class MemoryScheduler:
         Called automatically by the scheduler or manually via admin endpoints.
         """
         user_app_pairs = await self._get_active_users()
+        logger.info(
+            "Consolidation job triggered — %d active user(s) found",
+            len(user_app_pairs),
+        )
         results: list[ConsolidationResult] = []
 
         for user_id, app_id in user_app_pairs:
+            logger.debug("Consolidating user=%s app=%s", user_id, app_id)
             result = await self.run_consolidation_now(user_id=user_id, app_id=app_id)
             results.append(result)
 
+        skipped = sum(1 for r in results if r.skipped)
         logger.info(
-            "Batch consolidation complete",
-            extra={"users_processed": len(results)},
+            "Consolidation job complete — processed=%d skipped=%d",
+            len(results) - skipped,
+            skipped,
         )
         return results
 
     async def run_pruning_for_all_users(self, override_thresholds=None) -> list[PruningResult]:
         """Run pruning for all users that have consolidated events."""
         user_app_pairs = await self._get_all_users()
+        logger.info(
+            "Pruning job triggered — %d user(s) found",
+            len(user_app_pairs),
+        )
         results: list[PruningResult] = []
 
         for user_id, app_id in user_app_pairs:
+            logger.debug("Pruning user=%s app=%s", user_id, app_id)
             result = await self.run_pruning_now(
                 user_id=user_id, app_id=app_id, override_thresholds=override_thresholds
             )
             results.append(result)
 
+        skipped = sum(1 for r in results if r.skipped)
         logger.info(
-            "Batch pruning complete",
-            extra={"users_processed": len(results)},
+            "Pruning job complete — processed=%d skipped=%d",
+            len(results) - skipped,
+            skipped,
         )
         return results
 
@@ -221,15 +235,22 @@ class MemoryScheduler:
         if self.belief_miner is None:
             return []
         user_app_pairs = await self._get_all_users()
+        logger.info(
+            "Belief mining job triggered — %d user(s) found",
+            len(user_app_pairs),
+        )
         results: list[MiningResult] = []
 
         for user_id, app_id in user_app_pairs:
+            logger.debug("Belief mining user=%s app=%s", user_id, app_id)
             result = await self.run_belief_mining_now(user_id=user_id, app_id=app_id)
             results.append(result)
 
+        skipped = sum(1 for r in results if r.skipped)
         logger.info(
-            "Batch belief mining complete",
-            extra={"users_processed": len(results)},
+            "Belief mining job complete — processed=%d skipped=%d",
+            len(results) - skipped,
+            skipped,
         )
         return results
 
@@ -260,15 +281,22 @@ class MemoryScheduler:
         if self.clusterer is None:
             return []
         user_app_pairs = await self._get_all_users()
+        logger.info(
+            "Clustering job triggered — %d user(s) found",
+            len(user_app_pairs),
+        )
         results: list[ClusterResult] = []
 
         for user_id, app_id in user_app_pairs:
+            logger.debug("Clustering user=%s app=%s", user_id, app_id)
             result = await self.run_clustering_now(user_id=user_id, app_id=app_id)
             results.append(result)
 
+        skipped = sum(1 for r in results if r.skipped)
         logger.info(
-            "Batch clustering complete",
-            extra={"users_processed": len(results)},
+            "Clustering job complete — processed=%d skipped=%d",
+            len(results) - skipped,
+            skipped,
         )
         return results
 
@@ -301,11 +329,14 @@ class MemoryScheduler:
             result = DecayResult(skipped=True)
             result.skip_reason = "No fact_decayer configured."
             return result
+        logger.info("Fact decay job triggered")
         try:
             async with neo4j_session() as neo:
-                return await self.fact_decayer.run(neo)
+                result = await self.fact_decayer.run(neo)
+            logger.info("Fact decay job complete")
+            return result
         except Exception as exc:
-            logger.error("Fact decay failed", extra={"error": str(exc)})
+            logger.error("Fact decay failed: %s", exc)
             result = DecayResult(skipped=True)
             result.skip_reason = str(exc)
             return result

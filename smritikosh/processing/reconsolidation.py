@@ -158,8 +158,9 @@ class ReconsolidationEngine:
                         )
         except Exception as exc:
             logger.error(
-                "Reconsolidation background task failed",
-                extra={"user_id": user_id, "error": str(exc)},
+                "Reconsolidation background task failed: %s",
+                exc,
+                extra={"user_id": user_id},
                 exc_info=True,
             )
             return batch
@@ -269,8 +270,9 @@ class ReconsolidationEngine:
             result.skipped = True
             result.skip_reason = f"LLM call failed: {exc}"
             logger.warning(
-                "Reconsolidation LLM call failed",
-                extra={"event_id": str(event.id), "error": str(exc)},
+                "Reconsolidation LLM call failed: %s",
+                exc,
+                extra={"event_id": str(event.id)},
             )
             return result
 

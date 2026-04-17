@@ -258,8 +258,9 @@ class Consolidator:
             )
         except Exception as exc:
             logger.warning(
-                "Consolidation LLM call failed — batch skipped",
-                extra={"user_id": user_id, "batch_size": len(batch), "error": str(exc)},
+                "Consolidation LLM call failed — batch skipped: %s",
+                exc,
+                extra={"user_id": user_id, "batch_size": len(batch)},
             )
             return 0, 0, 0, "", [], False
 
@@ -296,8 +297,9 @@ class Consolidator:
                 )
             except Exception as exc:
                 logger.warning(
-                    "Summary re-embedding failed — original embedding retained",
-                    extra={"user_id": user_id, "event_id": str(batch[0].id), "error": str(exc)},
+                    "Summary re-embedding failed — original embedding retained: %s",
+                    exc,
+                    extra={"user_id": user_id, "event_id": str(batch[0].id)},
                 )
 
         # Upsert distilled facts to Neo4j — link each fact only to the specific
@@ -327,8 +329,9 @@ class Consolidator:
                 facts_stored += 1
             except (KeyError, ValueError) as exc:
                 logger.warning(
-                    "Skipping invalid distilled fact",
-                    extra={"fact": fd, "error": str(exc)},
+                    "Skipping invalid distilled fact: %s",
+                    exc,
+                    extra={"fact": fd},
                 )
 
         # Create narrative links between events in this batch

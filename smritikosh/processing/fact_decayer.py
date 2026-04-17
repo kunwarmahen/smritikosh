@@ -80,7 +80,7 @@ class FactDecayer:
                 confidence_floor=self.confidence_floor,
             )
         except Exception as exc:
-            logger.error("Fact decay failed", extra={"error": str(exc)})
+            logger.error("Fact decay failed: %s", exc, exc_info=True)
             result = DecayResult(skipped=True)
             result.skip_reason = str(exc)
             return result

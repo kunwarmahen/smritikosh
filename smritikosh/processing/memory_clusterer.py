@@ -207,8 +207,9 @@ class MemoryClusterer:
             return label or f"cluster_{cluster_id}"
         except Exception as exc:
             logger.warning(
-                "Cluster labelling failed — using fallback",
-                extra={"user_id": user_id, "cluster_id": cluster_id, "error": str(exc)},
+                "Cluster labelling failed — using fallback: %s",
+                exc,
+                extra={"user_id": user_id, "cluster_id": cluster_id},
             )
             return f"cluster_{cluster_id}"
 

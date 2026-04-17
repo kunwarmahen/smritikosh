@@ -19,6 +19,7 @@ API docs:
 """
 
 import logging
+import logging.config
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -41,9 +42,20 @@ from smritikosh.db.postgres import close_db, init_db
 from smritikosh.config import settings
 from smritikosh.processing.scheduler import MemoryScheduler
 
+logging.basicConfig(
+    level=getattr(logging, settings.log_level.upper(), logging.INFO),
+    format="%(asctime)s %(levelname)-8s %(name)s:%(lineno)d  %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    force=True,  # override any handlers uvicorn set before importing this module
+)
+
 logger = logging.getLogger(__name__)
 
 logging.getLogger("sqlalchemy").setLevel(settings.sqlalchemy_log_level)
+logging.getLogger("apscheduler.executors").setLevel(logging.WARNING)
+logging.getLogger("apscheduler.scheduler").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("litellm").setLevel(logging.WARNING)
 
 
 @asynccontextmanager

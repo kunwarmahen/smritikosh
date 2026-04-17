@@ -17,7 +17,7 @@ import logging
 from typing import Any
 
 import litellm
-from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wait_exponential
+from tenacity import before_sleep_log, retry, retry_if_not_exception_type, stop_after_attempt, wait_exponential
 
 from smritikosh.config import Settings, settings as default_settings
 
@@ -52,7 +52,11 @@ class LLMAdapter:
 
     # ── Public interface ───────────────────────────────────────────────────
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+    )
     async def complete(
         self,
         messages: list[dict[str, str]],
@@ -62,6 +66,7 @@ class LLMAdapter:
         """Send a chat completion request and return the response text."""
         if self._cfg.llm_max_tokens is not None:
             kwargs.setdefault("max_tokens", self._cfg.llm_max_tokens)
+        logger.debug("LLM complete: model=%s messages=%d", self._chat_model, len(messages))
         response = await litellm.acompletion(
             model=self._chat_model,
             messages=messages,
@@ -70,13 +75,16 @@ class LLMAdapter:
             api_base=self._cfg.llm_base_url,
             **kwargs,
         )
-        return response.choices[0].message.content
+        content = response.choices[0].message.content
+        logger.debug("LLM response: %d chars", len(content or ""))
+        return content
 
     # ValueError means the LLM returned bad JSON — deterministic failure, no point retrying.
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
         retry=retry_if_not_exception_type(ValueError),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
     )
     async def extract_structured(
         self,
@@ -124,9 +132,14 @@ class LLMAdapter:
         )
         return self._parse_json(raw)
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+    )
     async def embed(self, text: str) -> list[float]:
         """Generate a float vector for the given text using the configured embedding model."""
+        logger.debug("Embedding: model=%s text_len=%d", self._embed_model, len(text))
         response = await litellm.aembedding(
             model=self._embed_model,
             input=text,
@@ -194,4 +207,5 @@ class LLMAdapter:
         try:
             return json.loads(text)
         except json.JSONDecodeError as exc:
+            logger.warning("LLM returned invalid JSON (len=%d): %.200s", len(raw), raw)
             raise ValueError(f"LLM returned invalid JSON: {raw!r}") from exc

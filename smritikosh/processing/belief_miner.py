@@ -171,8 +171,9 @@ class BeliefMiner:
             )
         except Exception as exc:
             logger.warning(
-                "Belief mining LLM call failed",
-                extra={"user_id": user_id, "error": str(exc)},
+                "Belief mining LLM call failed: %s",
+                exc,
+                extra={"user_id": user_id},
             )
             result.skipped = True
             result.skip_reason = f"LLM call failed: {exc}"
@@ -190,8 +191,9 @@ class BeliefMiner:
                     result.beliefs_upserted += 1
             except (KeyError, ValueError, TypeError) as exc:
                 logger.warning(
-                    "Skipping invalid belief",
-                    extra={"belief": bd, "error": str(exc)},
+                    "Skipping invalid belief: %s",
+                    exc,
+                    extra={"belief": bd},
                 )
 
         logger.info(
