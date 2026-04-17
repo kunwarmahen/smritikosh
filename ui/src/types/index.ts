@@ -134,6 +134,7 @@ export interface FactGraphNode {
   label: string;
   node_type: "user" | "fact";
   category?: string | null;
+  key?: string | null;
   confidence?: number | null;
   frequency_count?: number | null;
   source_event_ids?: string[];

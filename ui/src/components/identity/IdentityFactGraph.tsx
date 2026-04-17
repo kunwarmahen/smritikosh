@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ReactFlow,
   Background,
@@ -9,6 +9,8 @@ import {
   useNodesState,
   useEdgesState,
   addEdge,
+  Handle,
+  Position,
   type Node,
   type Edge,
   type Connection,
@@ -99,12 +101,33 @@ const EDGE_COLORS: Record<string, string> = {
 interface FactNodeData {
   label: string;
   factLabel: string;
+  factKey: string;
   category: string;
   confidence: number | null;
   frequency_count: number | null;
   sourceEventIds: string[];
   isSelected?: boolean;
+  style?: React.CSSProperties;
 }
+
+// ── Custom fact node: renders key label above value ───────────────────────────
+function FactNode({ data }: { data: FactNodeData }) {
+  const humanKey = data.factKey.replace(/_/g, " ");
+  return (
+    <div style={data.style}>
+      <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
+      <div style={{ fontSize: 9, opacity: 0.55, marginBottom: 2, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+        {humanKey}
+      </div>
+      <div style={{ fontSize: 11, lineHeight: 1.3 }}>
+        {data.label}
+      </div>
+      <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
+    </div>
+  );
+}
+
+const NODE_TYPES = { fact: FactNode };
 
 // ── Layout: radial by category ────────────────────────────────────────────────
 function buildLayout(graph: FactGraph): { nodes: Node[]; edges: Edge[] } {
@@ -165,30 +188,30 @@ function buildLayout(graph: FactGraph): { nodes: Node[]; edges: Edge[] } {
 
       rfNodes.push({
         id: fn.id,
-        type: "default",
+        type: "fact",
         position: { x, y },
         data: {
           label: fn.label.length > 28 ? fn.label.slice(0, 26) + "…" : fn.label,
           factLabel: fn.label,
+          factKey: fn.key ?? "",
           category: cat,
           confidence: fn.confidence ?? null,
           frequency_count: fn.frequency_count ?? null,
           sourceEventIds,
-        },
-        style: {
-          background: style.bg,
-          border: `1.5px solid ${style.border}`,
-          color: style.text,
-          borderRadius: 8,
-          fontSize: 11,
-          padding: "6px 10px",
-          maxWidth: 160,
-          textAlign: "center" as const,
-          boxShadow: hasSource
-            ? `0 0 12px ${style.border}60`
-            : `0 0 8px ${style.border}30`,
-          cursor: hasSource ? "pointer" : "default",
-          outline: hasSource ? `1px dashed ${style.border}80` : "none",
+          style: {
+            background: style.bg,
+            border: `1.5px solid ${style.border}`,
+            color: style.text,
+            borderRadius: 8,
+            padding: "6px 10px",
+            maxWidth: 160,
+            textAlign: "center" as const,
+            boxShadow: hasSource
+              ? `0 0 12px ${style.border}60`
+              : `0 0 8px ${style.border}30`,
+            cursor: hasSource ? "pointer" : "default",
+            outline: hasSource ? `1px dashed ${style.border}80` : "none",
+          },
         },
       });
     });
@@ -442,6 +465,7 @@ export function IdentityFactGraph() {
       <ReactFlow
         nodes={nodes}
         edges={edges}
+        nodeTypes={NODE_TYPES}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}

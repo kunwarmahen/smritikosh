@@ -202,6 +202,7 @@ class FactGraphNode(BaseModel):
     label: str
     node_type: str          # "user" | "fact"
     category: str | None = None
+    key: str | None = None
     confidence: float | None = None
     frequency_count: int | None = None
     source_event_ids: list[str] = []

@@ -124,6 +124,7 @@ async def get_fact_graph(
                     label=str(rec["value"]),
                     node_type="fact",
                     category=rec["category"],
+                    key=rec.get("key"),
                     confidence=rec["confidence"],
                     frequency_count=rec["frequency_count"],
                     source_event_ids=list(rec.get("source_event_ids") or []),
