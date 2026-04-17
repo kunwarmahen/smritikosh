@@ -269,42 +269,52 @@ class ContextBuilder:
         embedding, embedding_failed = await self._embed_query(query, user_id)
 
         # ── 3. Concurrent retrieval ───────────────────────────────────────
-        similar_task = (
-            self.episodic.hybrid_search(
-                pg_session,
-                user_id,
-                embedding,
-                app_ids=app_ids,
-                top_k=self.top_k_similar,
-                weights_override=intent_result.weights if intent_result else None,
-                from_date=from_date,
-                to_date=to_date,
-            )
-            if embedding is not None
-            else _empty()
-        )
-        # Use first app_id for Neo4j profile lookup (graph is scoped by single namespace)
+        # Neo4j profile runs as a background task (separate connection pool).
+        # PostgreSQL queries run sequentially on the shared session —
+        # AsyncSession raises InvalidRequestError on concurrent operations.
         neo4j_app_id = app_ids[0] if app_ids else "default"
-        profile_task = self.semantic.get_user_profile(
-            neo_session, user_id, neo4j_app_id,
-            min_confidence=self.min_profile_confidence,
-        )
-        recent_task = self.episodic.get_recent(
-            pg_session, user_id, app_ids, limit=self.recent_limit,
-            from_date=from_date, to_date=to_date,
-        )
-        procedural_task = (
-            self.procedural.search_by_query(
-                pg_session, user_id, query, app_ids=app_ids, top_k=self.top_k_procedures
+        profile_task = asyncio.create_task(
+            self.semantic.get_user_profile(
+                neo_session, user_id, neo4j_app_id,
+                min_confidence=self.min_profile_confidence,
             )
-            if self.procedural is not None
-            else _empty()
         )
 
-        similar, profile, recent, procedures_raw = await asyncio.gather(
-            similar_task, profile_task, recent_task, procedural_task,
-            return_exceptions=True,
-        )
+        try:
+            similar = (
+                await self.episodic.hybrid_search(
+                    pg_session, user_id, embedding, app_ids=app_ids,
+                    top_k=self.top_k_similar,
+                    weights_override=intent_result.weights if intent_result else None,
+                    from_date=from_date, to_date=to_date,
+                )
+                if embedding is not None else []
+            )
+        except Exception as e:
+            similar = e
+
+        try:
+            recent = await self.episodic.get_recent(
+                pg_session, user_id, app_ids, limit=self.recent_limit,
+                from_date=from_date, to_date=to_date,
+            )
+        except Exception as e:
+            recent = e
+
+        try:
+            procedures_raw = (
+                await self.procedural.search_by_query(
+                    pg_session, user_id, query, app_ids=app_ids, top_k=self.top_k_procedures,
+                )
+                if self.procedural is not None else []
+            )
+        except Exception as e:
+            procedures_raw = e
+
+        try:
+            profile = await profile_task
+        except Exception as e:
+            profile = e
 
         # ── 4. Handle partial failures gracefully ─────────────────────────
         similar_events = _safe_result(similar, [], "hybrid_search", user_id)
@@ -485,8 +495,10 @@ def _safe_result(result, fallback, operation: str, user_id: str):
     """Return result if not an exception, else log and return fallback."""
     if isinstance(result, Exception):
         logger.warning(
-            f"ContextBuilder: {operation} failed",
-            extra={"user_id": user_id, "error": str(result)},
+            "ContextBuilder: %s failed — %s: %s",
+            operation, type(result).__name__, result,
+            extra={"user_id": user_id},
+            exc_info=result,
         )
         return fallback
     return result

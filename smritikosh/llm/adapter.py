@@ -66,6 +66,10 @@ class LLMAdapter:
         """Send a chat completion request and return the response text."""
         if self._cfg.llm_max_tokens is not None:
             kwargs.setdefault("max_tokens", self._cfg.llm_max_tokens)
+        # Disable thinking tokens for all Ollama calls — thinking consumes the token
+        # budget and leaves content empty when max_tokens is low (e.g. intent classifier).
+        if self._cfg.llm_provider.lower() == "ollama":
+            kwargs.setdefault("extra_body", {"think": False})
         logger.debug("LLM complete: model=%s messages=%d", self._chat_model, len(messages))
         response = await litellm.acompletion(
             model=self._chat_model,
@@ -75,8 +79,21 @@ class LLMAdapter:
             api_base=self._cfg.llm_base_url,
             **kwargs,
         )
-        content = response.choices[0].message.content
-        logger.debug("LLM response: %d chars", len(content or ""))
+        msg = response.choices[0].message
+        content = msg.content
+        if not content:
+            # Some thinking models (e.g. gemma4 via ollama_chat) put their
+            # output in reasoning_content and leave content None/empty.
+            reasoning = getattr(msg, "reasoning_content", None)
+            logger.warning(
+                "LLM returned empty content (model=%s) reasoning_content_len=%d",
+                self._chat_model,
+                len(reasoning) if reasoning else 0,
+            )
+            raise RuntimeError(
+                f"LLM returned empty content (model={self._chat_model})"
+            )
+        logger.debug("LLM response: %d chars", len(content))
         return content
 
     # ValueError means the LLM returned bad JSON — deterministic failure, no point retrying.
@@ -112,22 +129,18 @@ class LLMAdapter:
             f"Schema: {schema_description}. "
             f"Example: {json.dumps(example_output)}"
         )
-        # response_format={"type": "json_object"} enables grammar-constrained JSON
-        # generation in Ollama (format: "json") and native JSON mode for OpenAI/Claude.
-        # This prevents models from returning empty responses or wrapping JSON in prose.
-        # For Ollama thinking models (qwen3.5, deepseek-r1) we also disable thinking via
-        # extra_body={"think": false} — thinking tokens consume the token budget and leave
-        # content empty when the schema is complex.
+        # response_format={"type": "json_object"} enables native JSON mode for
+        # OpenAI/Claude/Gemini. For Ollama it maps to format="json" which causes
+        # some models to hang — Ollama relies on the system prompt instruction instead.
         extra: dict = {}
-        if self._cfg.llm_provider.lower() == "ollama":
-            extra["extra_body"] = {"think": False}
+        if self._cfg.llm_provider.lower() != "ollama":
+            extra["response_format"] = {"type": "json_object"}
         raw = await self.complete(
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.0,  # deterministic extraction
-            response_format={"type": "json_object"},
             **extra,
         )
         return self._parse_json(raw)
@@ -159,7 +172,7 @@ class LLMAdapter:
             claude  → model string as-is          (e.g. "claude-haiku-4-5-20251001")
             openai  → model string as-is          (e.g. "gpt-4o")
             gemini  → "gemini/<model>"            (e.g. "gemini/gemini-1.5-pro")
-            ollama  → "ollama/<model>"            (e.g. "ollama/qwen2.5:7b")
+            ollama  → "ollama_chat/<model>"        (e.g. "ollama_chat/gemma4:26b")
             vllm    → "openai/<model>" + base_url (vLLM mimics OpenAI API)
         """
         provider = cfg.llm_provider.lower()

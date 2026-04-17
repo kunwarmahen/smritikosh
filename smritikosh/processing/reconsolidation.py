@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 # ── Default gate thresholds ───────────────────────────────────────────────────
 
-DEFAULT_MIN_RECALL_COUNT = 2      # recalled at least twice before
+DEFAULT_MIN_RECALL_COUNT = 1      # recalled at least once before
 DEFAULT_MIN_IMPORTANCE = 0.4      # non-trivial importance score
 DEFAULT_COOLDOWN_HOURS = 1        # re-consolidate at most once per hour per event
 DEFAULT_MAX_EVENTS = 1            # how many top recalled events to process
