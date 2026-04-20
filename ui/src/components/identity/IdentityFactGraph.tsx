@@ -123,7 +123,7 @@ function SourceMemoriesPanel({ fact, onClose }: { fact: SelectedFact; onClose: (
     })),
   });
 
-  const isLoading = results.some((r) => r.isLoading);
+  const isLoading = !token || results.some((r) => r.isPending);
 
   const { unique, skipped } = useMemo(() => {
     const seen = new Set<string>();
@@ -218,11 +218,21 @@ export function IdentityFactGraph() {
 
   const graphData = useMemo(() => {
     if (!data) return { nodes: [], links: [] };
+    const factNodes = data.nodes.filter((n) => n.node_type !== "user");
+    const total = factNodes.length;
+    const radius = Math.max(180, total * 14);
+    let factIdx = 0;
+    const nodes = data.nodes.map((n) => {
+      if (n.node_type === "user") return { ...n, x: 0, y: 0 } as GraphNode;
+      const angle = (2 * Math.PI * factIdx++) / total;
+      return { ...n, x: radius * Math.cos(angle), y: radius * Math.sin(angle) } as GraphNode;
+    });
     return {
-      nodes: data.nodes.map((n) => ({ ...n })) as GraphNode[],
+      nodes,
       links: data.edges.map((e) => ({ ...e })) as GraphLink[],
     };
   }, [data]);
+
 
   const drawNode = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -304,18 +314,45 @@ export function IdentityFactGraph() {
     [],
   );
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const handleNodeClick = useCallback((raw: any) => {
-    const node = raw as GraphNode;
-    if (node.node_type === "user") return;
-    setSelectedFact({
-      label: node.label,
-      category: node.category ?? "other",
-      confidence: node.confidence ?? null,
-      frequency_count: node.frequency_count ?? null,
-      sourceEventIds: node.source_event_ids ?? [],
-    });
-  }, []);
+  const handleContainerClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (!graphRef.current) return;
+      const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+      const sx = e.clientX - rect.left;
+      const sy = e.clientY - rect.top;
+      // Convert screen px → graph world coords
+      const { x: wx, y: wy } = graphRef.current.screen2GraphCoords(sx, sy) as { x: number; y: number };
+      const gs: number = graphRef.current.zoom() ?? 1;
+      // Half-extents of each fact node in world space (nodes are drawn at constant 140×40 px)
+      const hw = 70 / gs;
+      const hh = 20 / gs;
+
+      let bestNode: GraphNode | null = null;
+      let bestDist = Infinity;
+      for (const n of graphData.nodes as GraphNode[]) {
+        if (n.node_type === "user") continue;
+        const nx = n.x ?? 0;
+        const ny = n.y ?? 0;
+        if (wx >= nx - hw && wx <= nx + hw && wy >= ny - hh && wy <= ny + hh) {
+          const d = (wx - nx) ** 2 + (wy - ny) ** 2;
+          if (d < bestDist) { bestDist = d; bestNode = n; }
+        }
+      }
+
+      if (bestNode) {
+        setSelectedFact({
+          label: bestNode.label,
+          category: bestNode.category ?? "other",
+          confidence: bestNode.confidence ?? null,
+          frequency_count: bestNode.frequency_count ?? null,
+          sourceEventIds: bestNode.source_event_ids ?? [],
+        });
+      } else {
+        setSelectedFact(null);
+      }
+    },
+    [graphData],
+  );
 
   const getLinkColor = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -368,21 +405,20 @@ export function IdentityFactGraph() {
     <div
       className="relative rounded-xl overflow-hidden border border-zinc-700/50 bg-zinc-950"
       style={{ height: 600 }}
+      onClick={handleContainerClick}
     >
       <ForceGraph2D
         ref={graphRef}
         graphData={graphData}
         nodeCanvasObject={drawNode}
         nodePointerAreaPaint={nodePointerArea}
-        onNodeClick={handleNodeClick}
-        onBackgroundClick={() => setSelectedFact(null)}
         linkColor={getLinkColor}
         linkWidth={getLinkWidth}
         linkDirectionalParticles={getParticleCount}
         linkDirectionalParticleWidth={1.5}
         linkDirectionalParticleColor={getLinkColor}
         backgroundColor={GRAPH_BG}
-        warmupTicks={120}
+        warmupTicks={300}
         cooldownTicks={0}
         onEngineStop={() => graphRef.current?.zoomToFit(400, 60)}
       />
