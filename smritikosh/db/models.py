@@ -160,7 +160,7 @@ class Event(Base):
     raw_text: Mapped[str] = mapped_column(Text)
     summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
     embedding: Mapped[Optional[list]] = mapped_column(
-        Vector(settings.embedding_dimensions), nullable=True, default=None
+        Vector(), nullable=True, default=None
     )
     importance_score: Mapped[float] = mapped_column(Float, default=1.0)
     recall_count: Mapped[int] = mapped_column(Integer, default=0)
