@@ -2,11 +2,12 @@
 LLM Adapter — unified interface over any provider via LiteLLM.
 
 Supported providers:
-    claude  → Anthropic Claude  (claude-haiku-4-5-20251001, claude-sonnet-4-6 …)
-    openai  → OpenAI            (gpt-4o, gpt-4o-mini …)
-    gemini  → Google Gemini     (gemini/gemini-1.5-pro …)
-    ollama  → local Ollama      (ollama/qwen2.5:7b, ollama/llama3 …)
-    vllm    → local vLLM        (openai/qwen — served at LLM_BASE_URL)
+    claude    → Anthropic Claude  (claude-haiku-4-5-20251001, claude-sonnet-4-6 …)
+    openai    → OpenAI            (gpt-4o, gpt-4o-mini …)
+    gemini    → Google Gemini     (gemini/gemini-1.5-pro …)
+    ollama    → local Ollama      (ollama/qwen2.5:7b, ollama/llama3 …)
+    vllm      → local vLLM        (openai/qwen — served at LLM_BASE_URL)
+    llamacpp  → local llama.cpp   (openai/<model> — served at LLM_BASE_URL, default http://localhost:8080/v1)
 
 LiteLLM translates all of these to one consistent interface, so the rest of
 the codebase never needs to know which provider is active.
@@ -133,7 +134,7 @@ class LLMAdapter:
         # OpenAI/Claude/Gemini. For Ollama it maps to format="json" which causes
         # some models to hang — Ollama relies on the system prompt instruction instead.
         extra: dict = {}
-        if self._cfg.llm_provider.lower() != "ollama":
+        if self._cfg.llm_provider.lower() not in ("ollama", "llamacpp"):
             extra["response_format"] = {"type": "json_object"}
         raw = await self.complete(
             messages=[
@@ -153,6 +154,8 @@ class LLMAdapter:
     async def embed(self, text: str) -> list[float]:
         """Generate a float vector for the given text using the configured embedding model."""
         logger.debug("Embedding: model=%s text_len=%d", self._embed_model, len(text))
+        if self._cfg.embedding_provider.lower() == "llamacpp":
+            return await self._embed_llamacpp(text)
         response = await litellm.aembedding(
             model=self._embed_model,
             input=text,
@@ -160,6 +163,22 @@ class LLMAdapter:
             api_base=self._cfg.embedding_base_url,
         )
         return response.data[0]["embedding"]
+
+    async def _embed_llamacpp(self, text: str) -> list[float]:
+        """Call llama.cpp native /embedding endpoint — OAI-compatible /v1/embeddings
+        fails on chat models due to chat-template processing. The native endpoint
+        bypasses the template entirely and returns embeddings directly."""
+        import httpx
+        base = (self._cfg.embedding_base_url or "http://localhost:8080/v1").rstrip("/")
+        # Strip /v1 suffix to reach the native endpoint
+        native_url = base.removesuffix("/v1") + "/embedding"
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(native_url, json={"content": text})
+            resp.raise_for_status()
+        data = resp.json()
+        # Response: [{"index": 0, "embedding": [[...floats...]]}]
+        embedding = data[0]["embedding"]
+        return embedding[0] if isinstance(embedding[0], list) else embedding
 
     # ── Model string resolution ────────────────────────────────────────────
 
@@ -169,11 +188,12 @@ class LLMAdapter:
         Map provider + model name to the LiteLLM model string format.
 
         LiteLLM routing rules:
-            claude  → model string as-is          (e.g. "claude-haiku-4-5-20251001")
-            openai  → model string as-is          (e.g. "gpt-4o")
-            gemini  → "gemini/<model>"            (e.g. "gemini/gemini-1.5-pro")
-            ollama  → "ollama_chat/<model>"        (e.g. "ollama_chat/gemma4:26b")
-            vllm    → "openai/<model>" + base_url (vLLM mimics OpenAI API)
+            claude    → model string as-is          (e.g. "claude-haiku-4-5-20251001")
+            openai    → model string as-is          (e.g. "gpt-4o")
+            gemini    → "gemini/<model>"            (e.g. "gemini/gemini-1.5-pro")
+            ollama    → "ollama_chat/<model>"        (e.g. "ollama_chat/gemma4:26b")
+            vllm      → "openai/<model>" + base_url (vLLM mimics OpenAI API)
+            llamacpp  → "openai/<model>" + base_url (llama-server mimics OpenAI API)
         """
         provider = cfg.llm_provider.lower()
         model = cfg.llm_model
@@ -185,7 +205,7 @@ class LLMAdapter:
             # responses (qwen3.5, deepseek-r1, etc.) where reasoning tokens are
             # returned in a separate field. ollama/ uses /api/generate which drops them.
             return f"ollama_chat/{model}"
-        if provider == "vllm" and not model.startswith("openai/"):
+        if provider in ("vllm", "llamacpp") and not model.startswith("openai/"):
             return f"openai/{model}"
         # claude and openai use the model name directly
         return model
@@ -200,7 +220,7 @@ class LLMAdapter:
             return f"gemini/{model}"
         if provider == "ollama" and not model.startswith("ollama/"):
             return f"ollama/{model}"
-        if provider == "vllm" and not model.startswith("openai/"):
+        if provider in ("vllm", "llamacpp") and not model.startswith("openai/"):
             return f"openai/{model}"
         return model
 
