@@ -140,48 +140,48 @@ function SourceMemoriesPanel({ fact, onClose }: { fact: SelectedFact; onClose: (
   }, [results, fact.sourceEventIds]);
 
   return (
-    <div className="rounded-xl border border-zinc-700/50 bg-zinc-900/95 mt-0">
-      {/* Header row */}
-      <div className="flex items-start justify-between px-4 py-3 border-b border-zinc-700/50">
-        <div className="flex items-center gap-3 min-w-0">
-          <span className="inline-block w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: style.border }} />
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs text-zinc-500 capitalize">{fact.category}</span>
-              {fact.confidence != null && (
-                <span className="text-xs text-zinc-600">{(fact.confidence * 100).toFixed(0)}% confidence</span>
-              )}
-              {fact.frequency_count != null && (
-                <span className="text-xs text-zinc-600">seen {fact.frequency_count}×</span>
-              )}
-            </div>
-            <p className="text-sm font-semibold text-zinc-100 mt-0.5">{fact.label}</p>
+    <div className="absolute top-0 right-0 h-full w-96 z-20 flex flex-col bg-zinc-900/95 border-l border-zinc-700/50 backdrop-blur-sm">
+      {/* Header */}
+      <div className="flex items-start justify-between p-4 border-b border-zinc-700/50 flex-shrink-0">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="inline-block w-2 h-2 rounded-sm flex-shrink-0" style={{ background: style.border }} />
+            <span className="text-xs text-zinc-500 capitalize">{fact.category}</span>
+          </div>
+          <p className="text-sm font-semibold text-zinc-100 truncate">{fact.label}</p>
+          <div className="flex items-center gap-3 mt-1.5">
+            {fact.confidence != null && (
+              <span className="text-xs text-zinc-500">{(fact.confidence * 100).toFixed(0)}% confidence</span>
+            )}
+            {fact.frequency_count != null && (
+              <span className="text-xs text-zinc-500">seen {fact.frequency_count}×</span>
+            )}
           </div>
         </div>
         <button
           onClick={onClose}
-          className="ml-3 p-1 rounded-md text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700/50 transition-colors flex-shrink-0"
+          className="ml-2 p-1 rounded-md text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700/50 transition-colors flex-shrink-0"
         >
           <X className="w-4 h-4" />
         </button>
       </div>
 
-      {/* Memories */}
-      <div className="p-4">
+      {/* Body */}
+      <div className="flex-1 overflow-y-auto p-4">
         <div className="flex items-center gap-2 mb-3">
           <BookOpen className="w-3.5 h-3.5 text-zinc-500" />
           <p className="text-xs font-medium text-zinc-500 uppercase tracking-wide">Contributing memories</p>
         </div>
         {isLoading ? (
-          <div className="flex items-center gap-2 text-zinc-500 py-4 justify-center">
+          <div className="flex items-center gap-2 text-zinc-500 py-6 justify-center">
             <Loader2 className="w-4 h-4 animate-spin" />
             <span className="text-xs">Loading…</span>
           </div>
         ) : unique.length === 0 ? (
-          <p className="text-xs text-zinc-600 text-center py-4">No source memories tracked for this fact.</p>
+          <p className="text-xs text-zinc-600 text-center py-6">No source memories tracked for this fact.</p>
         ) : (
           <>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            <div className="space-y-2">
               {unique.map(({ event }) => (
                 <div key={event.event_id} className="rounded-lg border border-zinc-700/50 bg-zinc-800/40 p-3 group">
                   <p className="text-xs text-zinc-300 line-clamp-3 leading-relaxed">{event.raw_text}</p>
@@ -365,43 +365,40 @@ export function IdentityFactGraph() {
   }
 
   return (
-    <div className="space-y-3">
-      <div
-        className="relative rounded-xl overflow-hidden border border-zinc-700/50 bg-zinc-950"
-        style={{ height: 560 }}
-      >
-        <ForceGraph2D
-          ref={graphRef}
-          graphData={graphData}
-          nodeCanvasObject={drawNode}
-          nodePointerAreaPaint={nodePointerArea}
-          onNodeClick={handleNodeClick}
-          onBackgroundClick={() => setSelectedFact(null)}
-          linkColor={getLinkColor}
-          linkWidth={getLinkWidth}
-          linkDirectionalParticles={getParticleCount}
-          linkDirectionalParticleWidth={1.5}
-          linkDirectionalParticleColor={getLinkColor}
-          backgroundColor={GRAPH_BG}
-          warmupTicks={120}
-          cooldownTicks={0}
-          onEngineStop={() => graphRef.current?.zoomToFit(400, 60)}
-        />
-        <Legend />
-        <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
-          {selectedFact === null && (
-            <span className="text-xs text-zinc-500 bg-zinc-900/80 border border-zinc-700/50
-                             rounded-lg px-2 py-1 backdrop-blur-sm">
-              Click a fact to see source memories
-            </span>
-          )}
+    <div
+      className="relative rounded-xl overflow-hidden border border-zinc-700/50 bg-zinc-950"
+      style={{ height: 600 }}
+    >
+      <ForceGraph2D
+        ref={graphRef}
+        graphData={graphData}
+        nodeCanvasObject={drawNode}
+        nodePointerAreaPaint={nodePointerArea}
+        onNodeClick={handleNodeClick}
+        onBackgroundClick={() => setSelectedFact(null)}
+        linkColor={getLinkColor}
+        linkWidth={getLinkWidth}
+        linkDirectionalParticles={getParticleCount}
+        linkDirectionalParticleWidth={1.5}
+        linkDirectionalParticleColor={getLinkColor}
+        backgroundColor={GRAPH_BG}
+        warmupTicks={120}
+        cooldownTicks={0}
+        onEngineStop={() => graphRef.current?.zoomToFit(400, 60)}
+      />
+      <Legend />
+      <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
+        {selectedFact === null && (
           <span className="text-xs text-zinc-500 bg-zinc-900/80 border border-zinc-700/50
                            rounded-lg px-2 py-1 backdrop-blur-sm">
-            {data.nodes.length - 1} fact{data.nodes.length !== 2 ? "s" : ""} · {data.edges.length} link{data.edges.length !== 1 ? "s" : ""}
+            Click a fact to see source memories
           </span>
-        </div>
+        )}
+        <span className="text-xs text-zinc-500 bg-zinc-900/80 border border-zinc-700/50
+                         rounded-lg px-2 py-1 backdrop-blur-sm">
+          {data.nodes.length - 1} fact{data.nodes.length !== 2 ? "s" : ""} · {data.edges.length} link{data.edges.length !== 1 ? "s" : ""}
+        </span>
       </div>
-
       {selectedFact && (
         <SourceMemoriesPanel fact={selectedFact} onClose={() => setSelectedFact(null)} />
       )}
