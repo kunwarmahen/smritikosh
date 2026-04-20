@@ -393,15 +393,18 @@ def _filter_source_indices(
     the fact and each cited event's text. Prevents over-attribution when the
     LLM lists batch-mates that don't actually mention the fact.
 
-    Falls back to the single best-scoring event if nothing passes, rather
-    than silently accepting the full unverified list.
+    When the LLM provides no indices (inferred facts), searches the whole
+    batch for the best keyword match rather than returning nothing.
     """
     fact_kw = _keywords(f"{fact_key} {fact_value}")
-    if not fact_kw or not raw_indices:
+    if not fact_kw:
         return raw_indices
 
+    # Use LLM-provided indices when available; otherwise search entire batch
+    candidates = raw_indices if raw_indices else list(range(len(batch)))
+
     scores: list[tuple[int, int]] = []
-    for i in raw_indices:
+    for i in candidates:
         if 0 <= i < len(batch):
             event_text = (batch[i].raw_text or "") + " " + (batch[i].summary or "")
             overlap = len(fact_kw & _keywords(event_text))
@@ -411,8 +414,9 @@ def _filter_source_indices(
     if verified:
         return verified
 
-    # No event matched — return the best-scoring candidate rather than all
-    if scores:
+    # No keyword overlap — if LLM cited specific indices trust them as-is,
+    # otherwise don't guess (avoid false attribution for fully inferred facts)
+    if raw_indices and scores:
         logger.debug(
             "Source index verification: no keyword overlap found, using best-scoring event",
             extra={"fact_key": fact_key, "fact_value": fact_value},
