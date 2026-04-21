@@ -203,8 +203,8 @@ function makeNode3D(node: GraphNode) {
   if (node.node_type === "category") {
     const style = CATEGORY_STYLES[node.category ?? ""] ?? DEFAULT_STYLE;
     const color = parseInt(style.border.slice(1), 16);
-    const geo = new THREE.SphereGeometry(5, 16, 16);
-    const mat = new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.3 });
+    const geo = new THREE.SphereGeometry(5, 8, 6);
+    const mat = new THREE.MeshBasicMaterial({ color, wireframe: true, transparent: true, opacity: 0.75 });
     const mesh = new THREE.Mesh(geo, mat);
     const label = makeTextLabel(node.label ?? node.category ?? "", "", style.text, 14);
     label.position.set(0, 10, 0);
@@ -351,7 +351,7 @@ function SourceMemoriesPanel({ fact, onClose }: { fact: SelectedFact; onClose: (
 export function IdentityFactGraph() {
   const { data, isLoading, isError } = useFactGraph();
   const [selectedFact, setSelectedFact] = useState<SelectedFact | null>(null);
-  const [is3D, setIs3D] = useState(false);
+  const [is3D, setIs3D] = useState(true);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const graphRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -488,35 +488,54 @@ export function IdentityFactGraph() {
         return;
       }
 
-      // fact node — small orb + floating text, no background box
+      // fact node — solid orb + floating text
       const style = CATEGORY_STYLES[node.category ?? ""] ?? DEFAULT_STYLE;
       const hasSource = (node.source_event_ids?.length ?? 0) > 0;
       const orbR = 6 * s;
 
       ctx.beginPath();
       ctx.arc(nx, ny, orbR, 0, 2 * Math.PI);
-      ctx.fillStyle = style.bg;
+      ctx.fillStyle = style.border;
       if (hasSource) {
         ctx.shadowColor = style.border;
-        ctx.shadowBlur = 10 * s;
+        ctx.shadowBlur = 12 * s;
       }
       ctx.fill();
       ctx.shadowBlur = 0;
-      ctx.strokeStyle = style.border;
-      ctx.lineWidth = 1.5 * s;
-      ctx.stroke();
 
       const keyLabel = (node.key ?? "").replace(/_/g, " ").toUpperCase();
       ctx.fillStyle = style.text + "cc";
-      ctx.font = `${8 * s}px system-ui, sans-serif`;
+      ctx.font = `${10 * s}px system-ui, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(keyLabel, nx, ny - orbR - 10 * s);
+      ctx.fillText(keyLabel, nx, ny - orbR - 12 * s);
 
       const label = (node.label?.length ?? 0) > 22 ? node.label!.slice(0, 20) + "…" : (node.label ?? "");
       ctx.fillStyle = style.text;
-      ctx.font = `bold ${11 * s}px system-ui, sans-serif`;
+      ctx.font = `bold ${13 * s}px system-ui, sans-serif`;
       ctx.fillText(label, nx, ny - orbR - 1 * s);
+    },
+    [],
+  );
+
+  // ── 2-D pointer area (defines drag/hover hit zones matching visual sizes) ──────
+  const paintNodeArea2D = useCallback(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (raw: any, color: string, ctx: CanvasRenderingContext2D, globalScale: number) => {
+      const node = raw as GraphNode;
+      const nx = node.x ?? 0;
+      const ny = node.y ?? 0;
+      const s = 1 / globalScale;
+      ctx.beginPath();
+      if (node.node_type === "user") {
+        ctx.arc(nx, ny, 24 * s, 0, 2 * Math.PI);
+      } else if (node.node_type === "category") {
+        ctx.arc(nx, ny, 20 * s, 0, 2 * Math.PI);
+      } else {
+        ctx.arc(nx, ny, 6 * s, 0, 2 * Math.PI);
+      }
+      ctx.fillStyle = color;
+      ctx.fill();
     },
     [],
   );
@@ -525,6 +544,7 @@ export function IdentityFactGraph() {
   const handleNodeClick3D = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (raw: any) => {
+      if (!raw) return;
       const node = raw as GraphNode;
       if (node.node_type === "fact") {
         setSelectedFact({
@@ -598,21 +618,20 @@ export function IdentityFactGraph() {
   // ── Zoom to fit after graph settles ─────────────────────────────────────────
   // useEffect is more reliable than onEngineStop; 600ms covers warmup + first render.
   useEffect(() => {
-    if (!graphData.nodes.length) return;
-    // const id = setTimeout(() => graphRef.current?.zoomToFit?.(400, 20), 600);
+    if (is3D || !graphData.nodes.length) return;
+    // Clear fx/fy that the library pins on dragged nodes — prevents frozen nodes after toggle
+    for (const n of graphData.nodes) {
+      delete (n as GraphNode).fx;
+      delete (n as GraphNode).fy;
+    }
     const id = setTimeout(() => {
       const fg = graphRef.current;
-      
-        // 1. Center the camera on the middle of the graph
-        fg.centerAt(0, 0, 400); 
-        
-        // 2. Set a specific zoom level 
-        // (1 is default, < 1 is zoomed out, > 1 is zoomed in)
-        fg.zoom(2.0, 400); 
+      if (!fg) return;
+      fg.centerAt(0, 0, 400);
+      fg.zoom(2.0, 400);
     }, 600);
-
     return () => clearTimeout(id);
-  }, [graphData]);
+  }, [is3D, graphData]);
 
   // ── Props ────────────────────────────────────────────────────────────────────
   const baseProps = {
@@ -693,9 +712,10 @@ export function IdentityFactGraph() {
           <ForceGraph2D
             ref={graphRef}
             {...props2D}
-            width={graphDims.width}
+            width={selectedFact ? graphDims.width - 384 : graphDims.width}
             height={graphDims.height}
             nodeCanvasObject={drawNode2D}
+            nodePointerAreaPaint={paintNodeArea2D}
           />
         </div>
       )}
