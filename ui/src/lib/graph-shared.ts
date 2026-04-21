@@ -2,6 +2,13 @@ import dynamic from "next/dynamic";
 
 // Single dynamic import shared by all graph views — avoids bundling aframe (3D/VR variant)
 export const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), { ssr: false });
+export const ForceGraph3D = dynamic(
+  () =>
+    import("@/components/graph/ForceGraph3DWrapper").then((m) => ({
+      default: m.ForceGraph3DWrapper,
+    })),
+  { ssr: false },
+);
 
 export const GRAPH_BG = "#09090b";
 

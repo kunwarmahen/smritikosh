@@ -1,13 +1,13 @@
 "use client";
 
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Network, BookOpen, ExternalLink, X } from "lucide-react";
 import Link from "next/link";
 import { useFactGraph } from "@/hooks/useFactGraph";
 import { useQueries } from "@tanstack/react-query";
 import { useSession } from "next-auth/react";
 import { createApiClient } from "@/lib/api-client";
-import { ForceGraph2D, GRAPH_BG, roundRect } from "@/lib/graph-shared";
+import { ForceGraph2D, ForceGraph3D, GRAPH_BG } from "@/lib/graph-shared";
 import type { MemoryEvent, FactGraphNode, FactGraphEdge } from "@/types";
 
 // ── Colour palettes ───────────────────────────────────────────────────────────
@@ -38,43 +38,21 @@ const CATEGORY_STYLES: Record<string, { bg: string; border: string; text: string
 };
 const DEFAULT_STYLE = { bg: "#1e293b", border: "#475569", text: "#94a3b8" };
 
-const EDGE_COLORS: Record<string, string> = {
-  HAS_IDENTITY:         "#f97316",
-  LIVES_IN:             "#14b8a6",
-  HAS_ROLE:             "#22c55e",
-  HAS_SKILL:            "#06b6d4",
-  STUDIED_AT:           "#6366f1",
-  WORKS_ON:             "#f59e0b",
-  HAS_GOAL:             "#a855f7",
-  HAS_INTEREST:         "#3b82f6",
-  ENJOYS:               "#84cc16",
-  HAS_HABIT:            "#eab308",
-  HAS_PREFERENCE:       "#7c3aed",
-  HAS_TRAIT:            "#f43f5e",
-  KNOWS:                "#6b7280",
-  HAS_PET:              "#ec4899",
-  HAS_HEALTH_CONDITION: "#ef4444",
-  FOLLOWS_DIET:         "#10b981",
-  BELIEVES:             "#64748b",
-  VALUES:               "#d97706",
-  PRACTICES:            "#a8a29e",
-  HAS_FINANCE:          "#16a34a",
-  HAS_LIFESTYLE:        "#0ea5e9",
-  EXPERIENCED:          "#d946ef",
-  USES:                 "#71717a",
-  RELATED_TO:           "#94a3b8",
-};
-
 // ── Types ─────────────────────────────────────────────────────────────────────
-interface GraphNode extends FactGraphNode {
+type NodeType = "user" | "fact" | "category";
+
+interface GraphNode extends Omit<FactGraphNode, "node_type"> {
+  node_type: NodeType;
   x?: number;
   y?: number;
+  z?: number;
   fx?: number;
   fy?: number;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
-interface GraphLink extends FactGraphEdge {}
+interface GraphLink extends FactGraphEdge {
+  key_label?: string;
+}
 
 interface SelectedFact {
   label: string;
@@ -84,6 +62,168 @@ interface SelectedFact {
   sourceEventIds: string[];
 }
 
+// ── Graph data transform ──────────────────────────────────────────────────────
+function buildGraphData(data: { nodes: FactGraphNode[]; edges: FactGraphEdge[] }) {
+  const userNode = data.nodes.find((n) => n.node_type === "user");
+  if (!userNode) return { nodes: [] as GraphNode[], links: [] as GraphLink[] };
+
+  const factNodes = data.nodes.filter((n) => n.node_type === "fact");
+
+  // Collect unique categories
+  const categories = [...new Set(factNodes.map((n) => n.category ?? "other"))];
+  const catCount = categories.length;
+
+  // Position category nodes in a ring around origin, fact nodes fanned from their category
+  const catRadius = Math.max(180, catCount * 40);
+
+  const categoryNodes: GraphNode[] = categories.map((cat, i) => {
+    const angle = (2 * Math.PI * i) / catCount;
+    return {
+      id: `cat__${cat}`,
+      label: cat,
+      node_type: "category",
+      category: cat,
+      x: catRadius * Math.cos(angle),
+      y: catRadius * Math.sin(angle),
+    };
+  });
+
+  // Fact nodes clustered around their category node
+  const factsByCategory: Record<string, FactGraphNode[]> = {};
+  for (const f of factNodes) {
+    const cat = f.category ?? "other";
+    (factsByCategory[cat] ??= []).push(f);
+  }
+
+  const positionedFacts: GraphNode[] = [];
+  for (const cat of categories) {
+    const catIdx = categories.indexOf(cat);
+    const catAngle = (2 * Math.PI * catIdx) / catCount;
+    const facts = factsByCategory[cat] ?? [];
+    const leafRadius = Math.max(120, facts.length * 20);
+    const spreadAngle = Math.min(Math.PI * 0.8, (facts.length * Math.PI) / 6);
+    facts.forEach((f, j) => {
+      const offset = facts.length > 1
+        ? catAngle + spreadAngle * ((j / (facts.length - 1)) - 0.5)
+        : catAngle;
+      const cx = catRadius * Math.cos(catAngle);
+      const cy = catRadius * Math.sin(catAngle);
+      positionedFacts.push({
+        ...f,
+        node_type: "fact",
+        x: cx + leafRadius * Math.cos(offset),
+        y: cy + leafRadius * Math.sin(offset),
+      });
+    });
+  }
+
+  const nodes: GraphNode[] = [
+    { ...userNode, node_type: "user", x: 0, y: 0 },
+    ...categoryNodes,
+    ...positionedFacts,
+  ];
+
+  // Build links: user → category, category → fact, keep RELATED_TO cross-links
+  const links: GraphLink[] = [];
+
+  for (const cat of categories) {
+    links.push({
+      id: `edge__user__${cat}`,
+      source: userNode.id,
+      target: `cat__${cat}`,
+      relation: "HAS_CATEGORY",
+    });
+  }
+
+  for (const f of factNodes) {
+    const cat = f.category ?? "other";
+    links.push({
+      id: `edge__cat__${f.id}`,
+      source: `cat__${cat}`,
+      target: f.id,
+      relation: f.key ?? "",
+      key_label: f.key?.replace(/_/g, " ") ?? "",
+    });
+  }
+
+  for (const e of data.edges) {
+    if (e.relation === "RELATED_TO") {
+      links.push({ ...e });
+    }
+  }
+
+  return { nodes, links };
+}
+
+// ── 3D sprite helpers ─────────────────────────────────────────────────────────
+// Bare text sprite — no background box
+function makeTextLabel(label: string, subLabel: string, textColor: string, fontSize: number) {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
+  const THREE = require("three") as any;
+  const lineH = fontSize + 3;
+  const lines = subLabel ? 2 : 1;
+  const canvasW = Math.max(160, Math.max(label.length, subLabel.length) * (fontSize * 0.62) + 8);
+  const canvasH = lines * lineH + 4;
+  const canvas = document.createElement("canvas");
+  canvas.width = canvasW; canvas.height = canvasH;
+  const ctx = canvas.getContext("2d")!;
+  ctx.textAlign = "center";
+  if (subLabel) {
+    ctx.fillStyle = textColor + "cc";
+    ctx.font = `${fontSize - 3}px system-ui, sans-serif`;
+    ctx.textBaseline = "middle";
+    ctx.fillText(subLabel.toUpperCase(), canvasW / 2, lineH * 0.5 + 2);
+  }
+  ctx.fillStyle = textColor;
+  ctx.font = `bold ${fontSize}px system-ui, sans-serif`;
+  ctx.textBaseline = "middle";
+  const displayLabel = label.length > 22 ? label.slice(0, 20) + "…" : label;
+  ctx.fillText(displayLabel, canvasW / 2, (subLabel ? lineH * 1.5 : lineH * 0.5) + 2);
+  const tex = new THREE.CanvasTexture(canvas);
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set((canvasW / canvasH) * 16, 16, 1);
+  return sprite;
+}
+
+function makeNode3D(node: GraphNode) {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
+  const THREE = require("three") as any;
+
+  if (node.node_type === "user") {
+    const geo = new THREE.SphereGeometry(8, 16, 16);
+    const mat = new THREE.MeshLambertMaterial({ color: 0x7c3aed, emissive: 0x3b1f6e });
+    const mesh = new THREE.Mesh(geo, mat);
+    const label = makeTextLabel("You", "", "#e9d5ff", 16);
+    label.position.set(0, 14, 0);
+    mesh.add(label);
+    return mesh;
+  }
+
+  if (node.node_type === "category") {
+    const style = CATEGORY_STYLES[node.category ?? ""] ?? DEFAULT_STYLE;
+    const color = parseInt(style.border.slice(1), 16);
+    const geo = new THREE.SphereGeometry(5, 16, 16);
+    const mat = new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.3 });
+    const mesh = new THREE.Mesh(geo, mat);
+    const label = makeTextLabel(node.label ?? node.category ?? "", "", style.text, 14);
+    label.position.set(0, 10, 0);
+    mesh.add(label);
+    return mesh;
+  }
+
+  // fact node — small orb + bare text label above
+  const style = CATEGORY_STYLES[node.category ?? ""] ?? DEFAULT_STYLE;
+  const color = parseInt(style.border.slice(1), 16);
+  const geo = new THREE.SphereGeometry(3, 12, 12);
+  const mat = new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.4 });
+  const mesh = new THREE.Mesh(geo, mat);
+  const keyLabel = (node.key ?? "").replace(/_/g, " ");
+  const label = makeTextLabel(node.label ?? "", keyLabel, style.text, 13);
+  label.position.set(0, 8, 0);
+  mesh.add(label);
+  return mesh;
+}
 
 // ── Legend ────────────────────────────────────────────────────────────────────
 function Legend() {
@@ -141,7 +281,6 @@ function SourceMemoriesPanel({ fact, onClose }: { fact: SelectedFact; onClose: (
 
   return (
     <div className="absolute top-0 right-0 h-full w-96 z-20 flex flex-col bg-zinc-900/95 border-l border-zinc-700/50 backdrop-blur-sm">
-      {/* Header */}
       <div className="flex items-start justify-between p-4 border-b border-zinc-700/50 flex-shrink-0">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
@@ -166,7 +305,6 @@ function SourceMemoriesPanel({ fact, onClose }: { fact: SelectedFact; onClose: (
         </button>
       </div>
 
-      {/* Body */}
       <div className="flex-1 overflow-y-auto p-4">
         <div className="flex items-center gap-2 mb-3">
           <BookOpen className="w-3.5 h-3.5 text-zinc-500" />
@@ -213,28 +351,82 @@ function SourceMemoriesPanel({ fact, onClose }: { fact: SelectedFact; onClose: (
 export function IdentityFactGraph() {
   const { data, isLoading, isError } = useFactGraph();
   const [selectedFact, setSelectedFact] = useState<SelectedFact | null>(null);
+  const [is3D, setIs3D] = useState(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const graphRef = useRef<any>(null);
 
   const graphData = useMemo(() => {
-    if (!data) return { nodes: [], links: [] };
-    const factNodes = data.nodes.filter((n) => n.node_type !== "user");
-    const total = factNodes.length;
-    const radius = Math.max(180, total * 14);
-    let factIdx = 0;
-    const nodes = data.nodes.map((n) => {
-      if (n.node_type === "user") return { ...n, x: 0, y: 0 } as GraphNode;
-      const angle = (2 * Math.PI * factIdx++) / total;
-      return { ...n, x: radius * Math.cos(angle), y: radius * Math.sin(angle) } as GraphNode;
-    });
-    return {
-      nodes,
-      links: data.edges.map((e) => ({ ...e })) as GraphLink[],
-    };
+    if (!data) return { nodes: [] as GraphNode[], links: [] as GraphLink[] };
+    return buildGraphData(data);
   }, [data]);
 
+  // ── 2-D coordinate hit-test (avoids shadow-canvas linkedProp bug) ───────────
+  const [cursor2D, setCursor2D] = useState<"default" | "pointer">("default");
 
-  const drawNode = useCallback(
+  const hitTestNode2D = useCallback(
+    (gx: number, gy: number, k: number): GraphNode | null => {
+      for (const raw of graphData.nodes) {
+        const node = raw as GraphNode;
+        if (node.x == null || node.y == null) continue;
+        const nx = node.x;
+        const ny = node.y;
+        if (node.node_type === "user") {
+          if (Math.hypot(gx - nx, gy - ny) <= 24 / k) return node;
+        } else if (node.node_type === "category") {
+          if (Math.hypot(gx - nx, gy - ny) <= 20 / k) return node;
+        } else {
+          // rect covers orb + key/value labels above
+          if (
+            gx >= nx - 80 / k && gx <= nx + 80 / k &&
+            gy >= ny - 28 / k && gy <= ny + 8 / k
+          ) return node;
+        }
+      }
+      return null;
+    },
+    [graphData.nodes],
+  );
+
+  const handle2DClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      const fg = graphRef.current;
+      if (!fg) return;
+      const rect = e.currentTarget.getBoundingClientRect();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const coords = (fg as any).screen2GraphCoords(e.clientX - rect.left, e.clientY - rect.top);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const k: number = (fg as any).zoom?.() ?? 1;
+      const node = hitTestNode2D(coords.x, coords.y, k);
+      if (node?.node_type === "fact") {
+        setSelectedFact({
+          label: node.label,
+          category: node.category ?? "other",
+          confidence: node.confidence ?? null,
+          frequency_count: node.frequency_count ?? null,
+          sourceEventIds: node.source_event_ids ?? [],
+        });
+      }
+    },
+    [hitTestNode2D],
+  );
+
+  const handle2DMouseMove = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      const fg = graphRef.current;
+      if (!fg) return;
+      const rect = e.currentTarget.getBoundingClientRect();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const coords = (fg as any).screen2GraphCoords(e.clientX - rect.left, e.clientY - rect.top);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const k: number = (fg as any).zoom?.() ?? 1;
+      const node = hitTestNode2D(coords.x, coords.y, k);
+      setCursor2D(node?.node_type === "fact" ? "pointer" : "default");
+    },
+    [hitTestNode2D],
+  );
+
+  // ── 2-D drawing ─────────────────────────────────────────────────────────────
+  const drawNode2D = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (raw: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
       const node = raw as GraphNode;
@@ -262,18 +454,39 @@ export function IdentityFactGraph() {
         return;
       }
 
+      if (node.node_type === "category") {
+        const style = CATEGORY_STYLES[node.category ?? ""] ?? DEFAULT_STYLE;
+        const r = 20 * s;
+        ctx.beginPath();
+        ctx.arc(nx, ny, r, 0, 2 * Math.PI);
+        ctx.fillStyle = style.bg;
+        ctx.shadowColor = style.border;
+        ctx.shadowBlur = 8 * s;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = style.border;
+        ctx.lineWidth = 2 * s;
+        ctx.stroke();
+        ctx.fillStyle = style.text;
+        ctx.font = `bold ${10 * s}px system-ui, sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText((node.label ?? "").toUpperCase(), nx, ny);
+        return;
+      }
+
+      // fact node — small orb + floating text, no background box
       const style = CATEGORY_STYLES[node.category ?? ""] ?? DEFAULT_STYLE;
       const hasSource = (node.source_event_ids?.length ?? 0) > 0;
-      const W = 140 * s;
-      const H = 40 * s;
-      const rx = 7 * s;
+      const orbR = 6 * s;
 
+      ctx.beginPath();
+      ctx.arc(nx, ny, orbR, 0, 2 * Math.PI);
+      ctx.fillStyle = style.bg;
       if (hasSource) {
         ctx.shadowColor = style.border;
         ctx.shadowBlur = 10 * s;
       }
-      roundRect(ctx, nx - W / 2, ny - H / 2, W, H, rx);
-      ctx.fillStyle = style.bg;
       ctx.fill();
       ctx.shadowBlur = 0;
       ctx.strokeStyle = style.border;
@@ -281,88 +494,81 @@ export function IdentityFactGraph() {
       ctx.stroke();
 
       const keyLabel = (node.key ?? "").replace(/_/g, " ").toUpperCase();
-      ctx.fillStyle = style.text + "99";
+      ctx.fillStyle = style.text + "cc";
       ctx.font = `${8 * s}px system-ui, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(keyLabel, nx, ny - 11 * s);
+      ctx.fillText(keyLabel, nx, ny - orbR - 10 * s);
 
       const label = (node.label?.length ?? 0) > 22 ? node.label!.slice(0, 20) + "…" : (node.label ?? "");
       ctx.fillStyle = style.text;
-      ctx.font = `${11 * s}px system-ui, sans-serif`;
-      ctx.fillText(label, nx, ny + 8 * s);
+      ctx.font = `bold ${11 * s}px system-ui, sans-serif`;
+      ctx.fillText(label, nx, ny - orbR - 1 * s);
     },
     [],
   );
 
-  const nodePointerArea = useCallback(
+  // ── 3-D node click ──────────────────────────────────────────────────────────
+  const handleNodeClick3D = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (raw: any, color: string, ctx: CanvasRenderingContext2D, globalScale: number) => {
+    (raw: any) => {
       const node = raw as GraphNode;
-      const s = 1 / globalScale;
-      const nx = node.x ?? 0;
-      const ny = node.y ?? 0;
-      if (node.node_type === "user") {
-        ctx.beginPath();
-        ctx.arc(nx, ny, 24 * s, 0, 2 * Math.PI);
-      } else {
-        roundRect(ctx, nx - 70 * s, ny - 20 * s, 140 * s, 40 * s, 7 * s);
+      if (node.node_type === "fact") {
+        setSelectedFact({
+          label: node.label,
+          category: node.category ?? "other",
+          confidence: node.confidence ?? null,
+          frequency_count: node.frequency_count ?? null,
+          sourceEventIds: node.source_event_ids ?? [],
+        });
       }
-      ctx.fillStyle = color;
-      ctx.fill();
     },
     [],
   );
 
-  const handleContainerClick = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      if (!graphRef.current) return;
-      const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
-      const sx = e.clientX - rect.left;
-      const sy = e.clientY - rect.top;
-      // Convert screen px → graph world coords
-      const { x: wx, y: wy } = graphRef.current.screen2GraphCoords(sx, sy) as { x: number; y: number };
-      const gs: number = graphRef.current.zoom() ?? 1;
-      // Half-extents of each fact node in world space (nodes are drawn at constant 140×40 px)
-      const hw = 70 / gs;
-      const hh = 20 / gs;
-
-      let bestNode: GraphNode | null = null;
-      let bestDist = Infinity;
-      for (const n of graphData.nodes as GraphNode[]) {
-        if (n.node_type === "user") continue;
-        const nx = n.x ?? 0;
-        const ny = n.y ?? 0;
-        if (wx >= nx - hw && wx <= nx + hw && wy >= ny - hh && wy <= ny + hh) {
-          const d = (wx - nx) ** 2 + (wy - ny) ** 2;
-          if (d < bestDist) { bestDist = d; bestNode = n; }
-        }
+  // ── Link styling ─────────────────────────────────────────────────────────────
+  // 2D canvas supports 8-char hex alpha; Three.js LineBasicMaterial does not honour
+  // alpha from hex without transparent:true, so 3D gets 6-char hex only.
+  const getLinkColor = useCallback(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (raw: any) => {
+      const link = raw as GraphLink;
+      if (link.relation === "HAS_CATEGORY") return "#94a3b8cc";
+      if (link.relation === "RELATED_TO") return "#64748baa";
+      const node = graphData.nodes.find((n) => n.id === link.target);
+      if (node?.node_type === "fact") {
+        const style = CATEGORY_STYLES[node.category ?? ""] ?? DEFAULT_STYLE;
+        return style.border + "cc";
       }
-
-      if (bestNode) {
-        setSelectedFact({
-          label: bestNode.label,
-          category: bestNode.category ?? "other",
-          confidence: bestNode.confidence ?? null,
-          frequency_count: bestNode.frequency_count ?? null,
-          sourceEventIds: bestNode.source_event_ids ?? [],
-        });
-      } else {
-        setSelectedFact(null);
-      }
+      return "#94a3b8cc";
     },
     [graphData],
   );
 
-  const getLinkColor = useCallback(
+  const getLinkColor3D = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (raw: any) => (EDGE_COLORS[(raw as GraphLink).relation] ?? "#475569") + "bb",
-    [],
+    (raw: any) => {
+      const link = raw as GraphLink;
+      if (link.relation === "HAS_CATEGORY") return "#94a3b8";
+      if (link.relation === "RELATED_TO") return "#64748b";
+      const node = graphData.nodes.find((n) => n.id === link.target);
+      if (node?.node_type === "fact") {
+        const style = CATEGORY_STYLES[node.category ?? ""] ?? DEFAULT_STYLE;
+        return style.border;
+      }
+      return "#94a3b8";
+    },
+    [graphData],
   );
 
   const getLinkWidth = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (raw: any) => ((raw as GraphLink).relation === "RELATED_TO" ? 0.5 : 1),
+    (raw: any) => {
+      const link = raw as GraphLink;
+      if (link.relation === "RELATED_TO") return 0.5;
+      if (link.relation === "HAS_CATEGORY") return 1;
+      return 1.5;
+    },
     [],
   );
 
@@ -372,6 +578,42 @@ export function IdentityFactGraph() {
     [],
   );
 
+  // ── 3-D object factory ───────────────────────────────────────────────────────
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const nodeThreeObject = useCallback((raw: any) => makeNode3D(raw as GraphNode), []);
+
+  // ── Zoom to fit after graph settles ─────────────────────────────────────────
+  // useEffect is more reliable than onEngineStop; 600ms covers warmup + first render.
+  useEffect(() => {
+    if (!graphData.nodes.length) return;
+    const id = setTimeout(() => graphRef.current?.zoomToFit?.(400, 20), 600);
+    return () => clearTimeout(id);
+  }, [graphData]);
+
+  // ── Props ────────────────────────────────────────────────────────────────────
+  const baseProps = {
+    graphData,
+    linkWidth: getLinkWidth,
+    linkDirectionalParticles: getParticleCount,
+    linkDirectionalParticleWidth: 1.5,
+    backgroundColor: GRAPH_BG,
+    warmupTicks: 300,
+    cooldownTicks: 0,
+  };
+
+  const props2D = {
+    ...baseProps,
+    linkColor: getLinkColor,
+    linkDirectionalParticleColor: getLinkColor,
+  };
+
+  const props3D = {
+    ...baseProps,
+    linkColor: getLinkColor3D,
+    linkDirectionalParticleColor: getLinkColor3D,
+  };
+
+  // ── Early returns ────────────────────────────────────────────────────────────
   if (isLoading) {
     return (
       <div className="flex items-center gap-2 text-zinc-500 py-12 justify-center">
@@ -401,28 +643,39 @@ export function IdentityFactGraph() {
     );
   }
 
+  const factCount = data.nodes.filter((n) => n.node_type === "fact").length;
+  const linkCount = data.edges.length;
+
   return (
     <div
       className="relative rounded-xl overflow-hidden border border-zinc-700/50 bg-zinc-950"
       style={{ height: 600 }}
-      onClick={handleContainerClick}
     >
-      <ForceGraph2D
-        ref={graphRef}
-        graphData={graphData}
-        nodeCanvasObject={drawNode}
-        nodePointerAreaPaint={nodePointerArea}
-        linkColor={getLinkColor}
-        linkWidth={getLinkWidth}
-        linkDirectionalParticles={getParticleCount}
-        linkDirectionalParticleWidth={1.5}
-        linkDirectionalParticleColor={getLinkColor}
-        backgroundColor={GRAPH_BG}
-        warmupTicks={300}
-        cooldownTicks={0}
-        onEngineStop={() => graphRef.current?.zoomToFit(400, 60)}
-      />
+      {is3D ? (
+        <ForceGraph3D
+          ref={graphRef}
+          {...props3D}
+          nodeThreeObject={nodeThreeObject}
+          nodeThreeObjectExtend={false}
+          onNodeClick={handleNodeClick3D}
+        />
+      ) : (
+        <div
+          style={{ width: "100%", height: "100%", cursor: cursor2D }}
+          onClick={handle2DClick}
+          onMouseMove={handle2DMouseMove}
+        >
+          <ForceGraph2D
+            ref={graphRef}
+            {...props2D}
+            nodeCanvasObject={drawNode2D}
+          />
+        </div>
+      )}
+
       <Legend />
+
+      {/* Top-right controls */}
       <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
         {selectedFact === null && (
           <span className="text-xs text-zinc-500 bg-zinc-900/80 border border-zinc-700/50
@@ -432,9 +685,33 @@ export function IdentityFactGraph() {
         )}
         <span className="text-xs text-zinc-500 bg-zinc-900/80 border border-zinc-700/50
                          rounded-lg px-2 py-1 backdrop-blur-sm">
-          {data.nodes.length - 1} fact{data.nodes.length !== 2 ? "s" : ""} · {data.edges.length} link{data.edges.length !== 1 ? "s" : ""}
+          {factCount} fact{factCount !== 1 ? "s" : ""} · {linkCount} link{linkCount !== 1 ? "s" : ""}
         </span>
+        {/* 2D / 3D toggle */}
+        <div className="flex items-center bg-zinc-900/80 border border-zinc-700/50 rounded-lg overflow-hidden backdrop-blur-sm">
+          <button
+            onClick={() => setIs3D(false)}
+            className={`px-2.5 py-1 text-xs font-medium transition-colors ${
+              !is3D
+                ? "bg-violet-600 text-white"
+                : "text-zinc-400 hover:text-zinc-200"
+            }`}
+          >
+            2D
+          </button>
+          <button
+            onClick={() => setIs3D(true)}
+            className={`px-2.5 py-1 text-xs font-medium transition-colors ${
+              is3D
+                ? "bg-violet-600 text-white"
+                : "text-zinc-400 hover:text-zinc-200"
+            }`}
+          >
+            3D
+          </button>
+        </div>
       </div>
+
       {selectedFact && (
         <SourceMemoriesPanel fact={selectedFact} onClose={() => setSelectedFact(null)} />
       )}
