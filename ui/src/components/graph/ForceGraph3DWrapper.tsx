@@ -62,21 +62,29 @@ export const ForceGraph3DWrapper = forwardRef<
       if (cancelled || !containerRef.current) return;
 
       const el = containerRef.current;
-      const fg = ForceGraph3D({ controlType: "orbit" })(el);
+      const w = el.clientWidth || 800;
+      const h = el.clientHeight || 600;
 
-      fg.width(el.clientWidth || 800);
-      fg.height(el.clientHeight || 600);
-      fg.showNavInfo(false);
-
-      // Apply all initial props
+      // Set dimensions BEFORE mounting so the WebGL renderer never initialises at window size
+      const fg = ForceGraph3D({ controlType: "orbit" });
+      fg.width(w).height(h).showNavInfo(false);
       applyAll(fg, props);
       prevPropsRef.current = { ...props };
+      fg(el);
 
       fgRef.current = fg;
 
       // Zoom to fit after warmup — called on the vanilla instance directly
       // so it works regardless of when the parent ref resolves.
-      setTimeout(() => fg.zoomToFit(400, 20), 600);
+      // setTimeout(() => fg.zoomToFit(400, -600), 600);
+      setTimeout(() => {
+        // .cameraPosition( { x, y, z }, lookAt, transitionDuration )
+        fg.cameraPosition(
+          { z: 300 }, // Move camera back on Z-axis (larger number = further away/half-zoom)
+          { x: 0, y: 0, z: 0 }, // Look at the center of the graph
+          400 // Transition duration
+        );
+      }, 600);
 
       const ro = new ResizeObserver(([entry]) => {
         fg.width(entry.contentRect.width);
@@ -125,7 +133,7 @@ export const ForceGraph3DWrapper = forwardRef<
     prevPropsRef.current = { ...p };
   });
 
-  return <div ref={containerRef} style={{ width: "100%", height: "100%" }} />;
+  return <div ref={containerRef} style={{ width: "100%", height: "100%", overflow: "hidden" }} />;
 });
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

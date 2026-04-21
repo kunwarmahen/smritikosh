@@ -354,6 +354,19 @@ export function IdentityFactGraph() {
   const [is3D, setIs3D] = useState(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const graphRef = useRef<any>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [graphDims, setGraphDims] = useState({ width: 800, height: 600 });
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      if (el.clientWidth > 0) setGraphDims({ width: el.clientWidth, height: el.clientHeight });
+    });
+    ro.observe(el);
+    if (el.clientWidth > 0) setGraphDims({ width: el.clientWidth, height: el.clientHeight });
+    return () => ro.disconnect();
+  }, []);
 
   const graphData = useMemo(() => {
     if (!data) return { nodes: [] as GraphNode[], links: [] as GraphLink[] };
@@ -586,7 +599,18 @@ export function IdentityFactGraph() {
   // useEffect is more reliable than onEngineStop; 600ms covers warmup + first render.
   useEffect(() => {
     if (!graphData.nodes.length) return;
-    const id = setTimeout(() => graphRef.current?.zoomToFit?.(400, 20), 600);
+    // const id = setTimeout(() => graphRef.current?.zoomToFit?.(400, 20), 600);
+    const id = setTimeout(() => {
+      const fg = graphRef.current;
+      
+        // 1. Center the camera on the middle of the graph
+        fg.centerAt(0, 0, 400); 
+        
+        // 2. Set a specific zoom level 
+        // (1 is default, < 1 is zoomed out, > 1 is zoomed in)
+        fg.zoom(2.0, 400); 
+    }, 600);
+
     return () => clearTimeout(id);
   }, [graphData]);
 
@@ -648,6 +672,7 @@ export function IdentityFactGraph() {
 
   return (
     <div
+      ref={containerRef}
       className="relative rounded-xl overflow-hidden border border-zinc-700/50 bg-zinc-950"
       style={{ height: 600 }}
     >
@@ -668,6 +693,8 @@ export function IdentityFactGraph() {
           <ForceGraph2D
             ref={graphRef}
             {...props2D}
+            width={graphDims.width}
+            height={graphDims.height}
             nodeCanvasObject={drawNode2D}
           />
         </div>
