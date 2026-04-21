@@ -8,6 +8,14 @@ import { IdentityFactGraph } from "@/components/identity/IdentityFactGraph";
 export default function IdentityPage() {
   const [showGraph, setShowGraph] = useState(false);
 
+  if (showGraph) {
+    return (
+      <div className="-mx-8 -mt-8 h-screen">
+        <IdentityFactGraph onClose={() => setShowGraph(false)} />
+      </div>
+    );
+  }
+
   return (
     <div>
       <div className="flex items-start justify-between mb-6 gap-4">
@@ -18,23 +26,13 @@ export default function IdentityPage() {
           </p>
         </div>
         <button
-          onClick={() => setShowGraph((v) => !v)}
-          className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border transition-colors flex-shrink-0 ${
-            showGraph
-              ? "bg-violet-600/20 border-violet-500/40 text-violet-300"
-              : "bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200"
-          }`}
+          onClick={() => setShowGraph(true)}
+          className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border transition-colors flex-shrink-0 bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200"
         >
           <Network className="w-3.5 h-3.5" />
-          {showGraph ? "Hide graph" : "Fact graph"}
+          Fact graph
         </button>
       </div>
-
-      {showGraph ? (
-        <div className="mb-6">
-          <IdentityFactGraph />
-        </div>
-      ) : null}
 
       <IdentityProfilePanel />
     </div>

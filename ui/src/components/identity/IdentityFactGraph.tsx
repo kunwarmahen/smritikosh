@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, Network, BookOpen, ExternalLink, X } from "lucide-react";
+import { Loader2, Network, BookOpen, ExternalLink, X, ChevronLeft } from "lucide-react";
 import Link from "next/link";
 import { useFactGraph } from "@/hooks/useFactGraph";
 import { useQueries } from "@tanstack/react-query";
@@ -191,13 +191,28 @@ function makeNode3D(node: GraphNode) {
   const THREE = require("three") as any;
 
   if (node.node_type === "user") {
-    const geo = new THREE.SphereGeometry(8, 16, 16);
-    const mat = new THREE.MeshLambertMaterial({ color: 0x7c3aed, emissive: 0x3b1f6e });
-    const mesh = new THREE.Mesh(geo, mat);
+    const group = new THREE.Group();
+
+    // Gem core — low-poly icosahedron
+    const coreGeo = new THREE.IcosahedronGeometry(7, 0);
+    const coreMat = new THREE.MeshLambertMaterial({ color: 0x7c3aed, emissive: 0x4c1d95, emissiveIntensity: 0.6 });
+    group.add(new THREE.Mesh(coreGeo, coreMat));
+
+    // Wireframe shell over the gem
+    const wireMat = new THREE.MeshBasicMaterial({ color: 0xa855f7, wireframe: true, transparent: true, opacity: 0.35 });
+    group.add(new THREE.Mesh(new THREE.IcosahedronGeometry(7.2, 0), wireMat));
+
+    // Orbiting ring
+    const ringGeo = new THREE.TorusGeometry(11, 0.6, 6, 32);
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0x7c3aed, transparent: true, opacity: 0.55 });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.rotation.x = Math.PI / 3;
+    group.add(ring);
+
     const label = makeTextLabel("You", "", "#e9d5ff", 16);
-    label.position.set(0, 14, 0);
-    mesh.add(label);
-    return mesh;
+    label.position.set(0, 18, 0);
+    group.add(label);
+    return group;
   }
 
   if (node.node_type === "category") {
@@ -348,7 +363,7 @@ function SourceMemoriesPanel({ fact, onClose }: { fact: SelectedFact; onClose: (
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export function IdentityFactGraph() {
+export function IdentityFactGraph({ onClose }: { onClose?: () => void }) {
   const { data, isLoading, isError } = useFactGraph();
   const [selectedFact, setSelectedFact] = useState<SelectedFact | null>(null);
   const [is3D, setIs3D] = useState(true);
@@ -628,7 +643,7 @@ export function IdentityFactGraph() {
       const fg = graphRef.current;
       if (!fg) return;
       fg.centerAt(0, 0, 400);
-      fg.zoom(2.0, 400);
+      fg.zoom(4.0, 400);
     }, 600);
     return () => clearTimeout(id);
   }, [is3D, graphData]);
@@ -692,8 +707,8 @@ export function IdentityFactGraph() {
   return (
     <div
       ref={containerRef}
-      className="relative rounded-xl overflow-hidden border border-zinc-700/50 bg-zinc-950"
-      style={{ height: 600 }}
+      className="relative overflow-hidden bg-zinc-950"
+      style={{ height: "100%" }}
     >
       {is3D ? (
         <ForceGraph3D
@@ -721,6 +736,19 @@ export function IdentityFactGraph() {
       )}
 
       <Legend />
+
+      {/* Back button */}
+      {onClose && (
+        <button
+          onClick={onClose}
+          className="absolute top-3 left-3 z-10 flex items-center gap-1.5 text-xs px-2.5 py-1.5
+                     bg-zinc-900/80 border border-zinc-700/50 rounded-lg text-zinc-400
+                     hover:text-zinc-200 backdrop-blur-sm transition-colors"
+        >
+          <ChevronLeft className="w-3.5 h-3.5" />
+          Back
+        </button>
+      )}
 
       {/* Top-right controls */}
       <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
