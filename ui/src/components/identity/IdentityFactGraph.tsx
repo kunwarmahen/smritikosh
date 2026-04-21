@@ -227,17 +227,36 @@ function makeNode3D(node: GraphNode) {
     return mesh;
   }
 
-  // fact node — small orb + bare text label above
+  // fact node — shiny orb + label
   const style = CATEGORY_STYLES[node.category ?? ""] ?? DEFAULT_STYLE;
   const color = parseInt(style.border.slice(1), 16);
-  const geo = new THREE.SphereGeometry(3, 12, 12);
-  const mat = new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.4 });
-  const mesh = new THREE.Mesh(geo, mat);
+  const group = new THREE.Group();
+
+  // Shiny core with Phong specular
+  const coreMat = new THREE.MeshPhongMaterial({
+    color,
+    emissive: color,
+    emissiveIntensity: 0.18,
+    specular: 0xffffff,
+    shininess: 140,
+  });
+  group.add(new THREE.Mesh(new THREE.SphereGeometry(4, 20, 20), coreMat));
+
+  // Thin glass shell for gloss depth
+  const glassMat = new THREE.MeshPhongMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.10,
+    specular: 0xffffff,
+    shininess: 320,
+  });
+  group.add(new THREE.Mesh(new THREE.SphereGeometry(4.35, 20, 20), glassMat));
+
   const keyLabel = (node.key ?? "").replace(/_/g, " ");
   const label = makeTextLabel(node.label ?? "", keyLabel, style.text, 13);
-  label.position.set(0, 8, 0);
-  mesh.add(label);
-  return mesh;
+  label.position.set(0, 9, 0);
+  group.add(label);
+  return group;
 }
 
 // ── Legend ────────────────────────────────────────────────────────────────────
@@ -464,17 +483,34 @@ export function IdentityFactGraph({ onClose }: { onClose?: () => void }) {
 
       if (node.node_type === "user") {
         const r = 24 * s;
+        // Outer glow ring
+        ctx.beginPath();
+        ctx.arc(nx, ny, r + 5 * s, 0, 2 * Math.PI);
+        ctx.strokeStyle = "#7c3aed44";
+        ctx.lineWidth = 3 * s;
+        ctx.stroke();
+        // Radial gradient fill — bright highlight upper-left → deep purple edge
+        const grad = ctx.createRadialGradient(nx - r * 0.35, ny - r * 0.35, r * 0.05, nx, ny, r);
+        grad.addColorStop(0, "#c4b5fd");
+        grad.addColorStop(0.45, "#7c3aed");
+        grad.addColorStop(1, "#1e1533");
         ctx.beginPath();
         ctx.arc(nx, ny, r, 0, 2 * Math.PI);
-        ctx.fillStyle = "#1e1533";
+        ctx.fillStyle = grad;
         ctx.shadowColor = "#7c3aed";
-        ctx.shadowBlur = 14 * s;
+        ctx.shadowBlur = 18 * s;
         ctx.fill();
         ctx.shadowBlur = 0;
-        ctx.strokeStyle = "#7c3aed";
-        ctx.lineWidth = 2 * s;
+        // Inner border ring
+        ctx.strokeStyle = "#a78bfa";
+        ctx.lineWidth = 1.5 * s;
         ctx.stroke();
-        ctx.fillStyle = "#e9d5ff";
+        // Specular highlight
+        ctx.beginPath();
+        ctx.arc(nx - r * 0.28, ny - r * 0.28, r * 0.22, 0, 2 * Math.PI);
+        ctx.fillStyle = "rgba(255,255,255,0.25)";
+        ctx.fill();
+        ctx.fillStyle = "#f5f3ff";
         ctx.font = `bold ${13 * s}px system-ui, sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
@@ -485,16 +521,32 @@ export function IdentityFactGraph({ onClose }: { onClose?: () => void }) {
       if (node.node_type === "category") {
         const style = CATEGORY_STYLES[node.category ?? ""] ?? DEFAULT_STYLE;
         const r = 20 * s;
+        // Outer glow ring
+        ctx.beginPath();
+        ctx.arc(nx, ny, r + 4 * s, 0, 2 * Math.PI);
+        ctx.strokeStyle = style.border + "33";
+        ctx.lineWidth = 2.5 * s;
+        ctx.stroke();
+        // Radial gradient
+        const grad = ctx.createRadialGradient(nx - r * 0.3, ny - r * 0.3, r * 0.05, nx, ny, r);
+        grad.addColorStop(0, style.border + "cc");
+        grad.addColorStop(0.5, style.bg);
+        grad.addColorStop(1, "#09090b");
         ctx.beginPath();
         ctx.arc(nx, ny, r, 0, 2 * Math.PI);
-        ctx.fillStyle = style.bg;
+        ctx.fillStyle = grad;
         ctx.shadowColor = style.border;
-        ctx.shadowBlur = 8 * s;
+        ctx.shadowBlur = 10 * s;
         ctx.fill();
         ctx.shadowBlur = 0;
         ctx.strokeStyle = style.border;
-        ctx.lineWidth = 2 * s;
+        ctx.lineWidth = 1.5 * s;
         ctx.stroke();
+        // Specular highlight
+        ctx.beginPath();
+        ctx.arc(nx - r * 0.28, ny - r * 0.28, r * 0.2, 0, 2 * Math.PI);
+        ctx.fillStyle = "rgba(255,255,255,0.15)";
+        ctx.fill();
         ctx.fillStyle = style.text;
         ctx.font = `bold ${10 * s}px system-ui, sans-serif`;
         ctx.textAlign = "center";
@@ -503,32 +555,95 @@ export function IdentityFactGraph({ onClose }: { onClose?: () => void }) {
         return;
       }
 
-      // fact node — solid orb + floating text
+      // fact node — moon style
       const style = CATEGORY_STYLES[node.category ?? ""] ?? DEFAULT_STYLE;
       const hasSource = (node.source_event_ids?.length ?? 0) > 0;
-      const orbR = 6 * s;
+      const orbR = 10 * s;
 
+      // Deterministic crater positions from node id hash
+      const hash = (node.id ?? "").split("").reduce((a, c) => (a * 31 + c.charCodeAt(0)) & 0xffff, 0);
+
+      ctx.save();
+
+      // Moon surface — light stone base with subtle category tint
+      const surf = ctx.createRadialGradient(nx - orbR * 0.25, ny - orbR * 0.3, 0, nx, ny, orbR);
+      surf.addColorStop(0, "#d4d4d8");
+      surf.addColorStop(0.55, "#a1a1aa");
+      surf.addColorStop(1, "#3f3f46");
       ctx.beginPath();
       ctx.arc(nx, ny, orbR, 0, 2 * Math.PI);
-      ctx.fillStyle = style.border;
-      if (hasSource) {
-        ctx.shadowColor = style.border;
-        ctx.shadowBlur = 12 * s;
-      }
+      ctx.fillStyle = surf;
+      if (hasSource) { ctx.shadowColor = style.border; ctx.shadowBlur = 16 * s; }
       ctx.fill();
       ctx.shadowBlur = 0;
+
+      // Clip subsequent draws to the orb
+      ctx.beginPath();
+      ctx.arc(nx, ny, orbR, 0, 2 * Math.PI);
+      ctx.clip();
+
+      // Shadow terminator — dark side
+      ctx.beginPath();
+      ctx.arc(nx + orbR * 0.38, ny + orbR * 0.08, orbR * 0.88, 0, 2 * Math.PI);
+      ctx.fillStyle = "rgba(0,0,0,0.70)";
+      ctx.fill();
+
+      // Category color tint on the lit hemisphere
+      ctx.beginPath();
+      ctx.arc(nx - orbR * 0.08, ny - orbR * 0.08, orbR * 0.75, 0, 2 * Math.PI);
+      ctx.fillStyle = style.border + "28";
+      ctx.fill();
+
+      // Craters (3, deterministic)
+      const craters = [
+        { dx: ((hash & 0xf) / 15 - 0.5) * 0.65,        dy: (((hash >> 4) & 0xf) / 15 - 0.5) * 0.65,  r: 0.13 + ((hash >> 8)  & 0x7) / 0x7 * 0.09 },
+        { dx: (((hash >> 3) & 0xf) / 15 - 0.5) * 0.5,  dy: (((hash >> 7) & 0xf) / 15 - 0.5) * 0.5,   r: 0.09 + ((hash >> 11) & 0x7) / 0x7 * 0.07 },
+        { dx: (((hash >> 6) & 0xf) / 15 - 0.5) * 0.55, dy: (((hash >> 10) & 0xf) / 15 - 0.5) * 0.55, r: 0.07 },
+      ];
+      for (const c of craters) {
+        const cx2 = nx + c.dx * orbR;
+        const cy2 = ny + c.dy * orbR;
+        const cr  = c.r * orbR;
+        ctx.beginPath();
+        ctx.arc(cx2, cy2, cr, 0, 2 * Math.PI);
+        ctx.fillStyle = "rgba(0,0,0,0.40)";
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(cx2 - cr * 0.25, cy2 - cr * 0.25, cr, 0, 2 * Math.PI);
+        ctx.strokeStyle = "rgba(255,255,255,0.18)";
+        ctx.lineWidth = 0.6 * s;
+        ctx.stroke();
+      }
+
+      ctx.restore();
+
+      // Colored border ring
+      ctx.beginPath();
+      ctx.arc(nx, ny, orbR, 0, 2 * Math.PI);
+      ctx.strokeStyle = style.border + "99";
+      ctx.lineWidth = 1.2 * s;
+      ctx.stroke();
+
+      // Outer pulse ring if has source memories
+      if (hasSource) {
+        ctx.beginPath();
+        ctx.arc(nx, ny, orbR + 3.5 * s, 0, 2 * Math.PI);
+        ctx.strokeStyle = style.border + "44";
+        ctx.lineWidth = 1.5 * s;
+        ctx.stroke();
+      }
 
       const keyLabel = (node.key ?? "").replace(/_/g, " ").toUpperCase();
       ctx.fillStyle = style.text + "cc";
       ctx.font = `${10 * s}px system-ui, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(keyLabel, nx, ny - orbR - 12 * s);
+      ctx.fillText(keyLabel, nx, ny - orbR - 13 * s);
 
       const label = (node.label?.length ?? 0) > 22 ? node.label!.slice(0, 20) + "…" : (node.label ?? "");
       ctx.fillStyle = style.text;
       ctx.font = `bold ${13 * s}px system-ui, sans-serif`;
-      ctx.fillText(label, nx, ny - orbR - 1 * s);
+      ctx.fillText(label, nx, ny - orbR - 2 * s);
     },
     [],
   );
@@ -547,7 +662,7 @@ export function IdentityFactGraph({ onClose }: { onClose?: () => void }) {
       } else if (node.node_type === "category") {
         ctx.arc(nx, ny, 20 * s, 0, 2 * Math.PI);
       } else {
-        ctx.arc(nx, ny, 6 * s, 0, 2 * Math.PI);
+        ctx.arc(nx, ny, 10 * s, 0, 2 * Math.PI);
       }
       ctx.fillStyle = color;
       ctx.fill();
