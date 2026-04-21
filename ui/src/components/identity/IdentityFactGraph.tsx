@@ -713,7 +713,7 @@ export function IdentityFactGraph({ onClose }: { onClose?: () => void }) {
     (raw: any) => {
       const link = raw as GraphLink;
       if (link.relation === "HAS_CATEGORY") return "#94a3b8";
-      if (link.relation === "RELATED_TO") return "#64748b";
+      if (link.relation === "RELATED_TO") return "#f59e0b";
       const node = graphData.nodes.find((n) => n.id === link.target);
       if (node?.node_type === "fact") {
         const style = CATEGORY_STYLES[node.category ?? ""] ?? DEFAULT_STYLE;
@@ -728,7 +728,7 @@ export function IdentityFactGraph({ onClose }: { onClose?: () => void }) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (raw: any) => {
       const link = raw as GraphLink;
-      if (link.relation === "RELATED_TO") return 0.5;
+      if (link.relation === "RELATED_TO") return 1.5;
       if (link.relation === "HAS_CATEGORY") return 1;
       return 1.5;
     },
@@ -737,7 +737,7 @@ export function IdentityFactGraph({ onClose }: { onClose?: () => void }) {
 
   const getParticleCount = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (raw: any) => ((raw as GraphLink).relation === "RELATED_TO" ? 2 : 0),
+    (raw: any) => ((raw as GraphLink).relation === "RELATED_TO" ? 4 : 0),
     [],
   );
 
