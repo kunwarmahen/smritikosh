@@ -17,7 +17,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { clsx } from "clsx";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 const USER_NAV = [
   { href: "/dashboard/memories",   icon: Clock,       label: "Memories" },
@@ -35,9 +35,6 @@ const ADMIN_NAV = [
   { href: "/admin/users", icon: ShieldCheck, label: "Admin" },
 ];
 
-// Pages where the sidebar auto-collapses to give maximum canvas space
-const AUTO_COLLAPSE_PATHS = ["/dashboard/identity"];
-
 const EXPANDED_W = 220;
 const COLLAPSED_W = 56;
 
@@ -47,14 +44,7 @@ export function UserShell({ children }: { children: React.ReactNode }) {
   const isAdmin = session?.user?.role === "admin";
   const username = session?.user?.id ?? "";
 
-  const [collapsed, setCollapsed] = useState(() =>
-    AUTO_COLLAPSE_PATHS.some((p) => pathname.startsWith(p)),
-  );
-
-  // Auto-collapse when navigating to a wide-canvas page, auto-expand otherwise
-  useEffect(() => {
-    setCollapsed(AUTO_COLLAPSE_PATHS.some((p) => pathname.startsWith(p)));
-  }, [pathname]);
+  const [collapsed, setCollapsed] = useState(true);
 
   const sidebarW = collapsed ? COLLAPSED_W : EXPANDED_W;
 
