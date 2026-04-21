@@ -381,18 +381,16 @@ export function IdentityFactGraph({ onClose }: { onClose?: () => void }) {
   const [is3D, setIs3D] = useState(true);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const graphRef = useRef<any>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [graphDims, setGraphDims] = useState({ width: 800, height: 600 });
-
-  useEffect(() => {
-    const el = containerRef.current;
+  const [graphDims, setGraphDims] = useState({ width: 0, height: 0 });
+  const roRef = useRef<ResizeObserver | null>(null);
+  const containerRef = useCallback((el: HTMLDivElement | null) => {
+    roRef.current?.disconnect();
     if (!el) return;
-    const ro = new ResizeObserver(() => {
-      if (el.clientWidth > 0) setGraphDims({ width: el.clientWidth, height: el.clientHeight });
+    roRef.current = new ResizeObserver(() => {
+      setGraphDims({ width: el.clientWidth, height: el.clientHeight });
     });
-    ro.observe(el);
-    if (el.clientWidth > 0) setGraphDims({ width: el.clientWidth, height: el.clientHeight });
-    return () => ro.disconnect();
+    roRef.current.observe(el);
+    setGraphDims({ width: el.clientWidth, height: el.clientHeight });
   }, []);
 
   const graphData = useMemo(() => {

@@ -31,7 +31,7 @@ export default function MemoryGraphPage({
   return (
     <div>
       {/* Header */}
-      <div className="flex items-center gap-3 mb-6">
+      <div className="flex items-center gap-3 mb-4">
         <button
           onClick={() => router.back()}
           className="btn-ghost flex items-center gap-1.5 text-sm"
@@ -50,7 +50,7 @@ export default function MemoryGraphPage({
 
       {/* Event summary card */}
       {event && (
-        <div className="card mb-6">
+        <div className="card mb-4">
           <div className="flex items-center gap-2 mb-2 flex-wrap">
             {level && (
               <span className={clsx("badge border text-xs", IMPORTANCE_COLORS[level])}>
@@ -81,8 +81,8 @@ export default function MemoryGraphPage({
         </div>
       )}
 
-      {/* Narrative graph */}
-      <div className="mb-6">
+      {/* Narrative graph — grows to fill remaining space */}
+      <div className="mb-4">
         <h2 className="text-sm font-medium text-zinc-400 mb-3">Narrative Links</h2>
         <MemoryGraphView eventId={id} />
       </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, Network } from "lucide-react";
 import { useMemoryEvent, useMemoryLinks } from "@/hooks/useMemoryGraph";
@@ -71,6 +71,18 @@ function Legend() {
 export function MemoryGraphView({ eventId }: { eventId: string }) {
   const router = useRouter();
   const graphRef = useRef<any>(null); // eslint-disable-line @typescript-eslint/no-explicit-any
+  const roRef    = useRef<ResizeObserver | null>(null);
+  const [dims, setDims] = useState({ w: 0, h: 0 });
+  const containerRef = useCallback((el: HTMLDivElement | null) => {
+    roRef.current?.disconnect();
+    if (!el) return;
+    roRef.current = new ResizeObserver(() => {
+      setDims({ w: el.clientWidth, h: el.clientHeight });
+    });
+    roRef.current.observe(el);
+    setDims({ w: el.clientWidth, h: el.clientHeight });
+  }, []);
+
   const { data: anchor, isLoading: loadingEvent, isError: errorEvent } = useMemoryEvent(eventId);
   const { data: linksData, isLoading: loadingLinks, isError: errorLinks } = useMemoryLinks(eventId);
 
@@ -103,11 +115,13 @@ export function MemoryGraphView({ eventId }: { eventId: string }) {
         const p = (preview || "…");
         const short = p.length > 55 ? p.slice(0, 53) + "…" : p;
         const idx   = linkedIds.indexOf(linkedId);
-        const angle = (idx / Math.max(total, 1)) * 2 * Math.PI;
-        const dist  = 180;
+        const angle = (idx / Math.max(total, 1)) * 2 * Math.PI - Math.PI / 2;
+        const dist  = 220;
+        const px = dist * Math.cos(angle);
+        const py = dist * Math.sin(angle);
         nodesMap.set(linkedId, {
           id: linkedId, preview: short, isAnchor: false, relation: link.relation_type, val: 4,
-          x: dist * Math.cos(angle), y: dist * Math.sin(angle),
+          x: px, y: py, fx: px, fy: py,
         });
       }
 
@@ -270,14 +284,6 @@ export function MemoryGraphView({ eventId }: { eventId: string }) {
     [],
   );
 
-  // Set d3 forces after the graph mounts so nodes spread out properly
-  useEffect(() => {
-    const fg = graphRef.current;
-    if (!fg) return;
-    fg.d3Force("charge")?.strength(-600);
-    fg.d3Force("link")?.distance(200);
-    fg.d3ReheatSimulation?.();
-  }, [graphData]);
 
   const isLoading = loadingEvent || loadingLinks;
   const isError   = errorEvent   || errorLinks;
@@ -312,10 +318,13 @@ export function MemoryGraphView({ eventId }: { eventId: string }) {
   }
 
   return (
-    <div className="relative rounded-xl overflow-hidden border border-zinc-700/50 bg-zinc-950"
-         style={{ height: 500 }}>
+    <div ref={containerRef}
+         className="relative rounded-xl overflow-hidden border border-zinc-700/50 bg-zinc-950"
+         style={{ height: "calc(100vh - 340px)" }}>
       <ForceGraph2D
         ref={graphRef}
+        width={dims.w || undefined}
+        height={dims.h || undefined}
         graphData={graphData}
         nodeCanvasObject={drawNode}
         nodePointerAreaPaint={nodePointerArea}
@@ -324,6 +333,7 @@ export function MemoryGraphView({ eventId }: { eventId: string }) {
         linkColor={getLinkColor}
         linkWidth={getLinkWidth}
         linkDirectionalArrowLength={0}
+        cooldownTicks={1}
         linkDirectionalParticles={getParticleCount}
         linkDirectionalParticleWidth={2.5}
         linkDirectionalParticleColor={getLinkColor}
@@ -331,8 +341,7 @@ export function MemoryGraphView({ eventId }: { eventId: string }) {
         linkCanvasObject={drawLink}
         linkCurvature={0.15}
         backgroundColor={GRAPH_BG}
-        cooldownTicks={150}
-        onEngineStop={() => graphRef.current?.zoomToFit(400, 80)}
+        onEngineStop={() => graphRef.current?.zoomToFit(400, 60)}
         nodeLabel=""
       />
       <Legend />
