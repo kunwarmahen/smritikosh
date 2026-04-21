@@ -123,7 +123,6 @@ function buildGraphData(data: { nodes: FactGraphNode[]; edges: FactGraphEdge[] }
     ...positionedFacts,
   ];
 
-  // Build links: user → category, category → fact, keep RELATED_TO cross-links
   const links: GraphLink[] = [];
 
   for (const cat of categories) {
@@ -144,12 +143,6 @@ function buildGraphData(data: { nodes: FactGraphNode[]; edges: FactGraphEdge[] }
       relation: f.key ?? "",
       key_label: f.key?.replace(/_/g, " ") ?? "",
     });
-  }
-
-  for (const e of data.edges) {
-    if (e.relation === "RELATED_TO") {
-      links.push({ ...e });
-    }
   }
 
   return { nodes, links };
@@ -697,7 +690,6 @@ export function IdentityFactGraph({ onClose }: { onClose?: () => void }) {
     (raw: any) => {
       const link = raw as GraphLink;
       if (link.relation === "HAS_CATEGORY") return "#94a3b8cc";
-      if (link.relation === "RELATED_TO") return "#64748baa";
       const node = graphData.nodes.find((n) => n.id === link.target);
       if (node?.node_type === "fact") {
         const style = CATEGORY_STYLES[node.category ?? ""] ?? DEFAULT_STYLE;
@@ -713,7 +705,6 @@ export function IdentityFactGraph({ onClose }: { onClose?: () => void }) {
     (raw: any) => {
       const link = raw as GraphLink;
       if (link.relation === "HAS_CATEGORY") return "#94a3b8";
-      if (link.relation === "RELATED_TO") return "#f59e0b";
       const node = graphData.nodes.find((n) => n.id === link.target);
       if (node?.node_type === "fact") {
         const style = CATEGORY_STYLES[node.category ?? ""] ?? DEFAULT_STYLE;
@@ -728,7 +719,6 @@ export function IdentityFactGraph({ onClose }: { onClose?: () => void }) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (raw: any) => {
       const link = raw as GraphLink;
-      if (link.relation === "RELATED_TO") return 1.5;
       if (link.relation === "HAS_CATEGORY") return 1;
       return 1.5;
     },
@@ -737,7 +727,7 @@ export function IdentityFactGraph({ onClose }: { onClose?: () => void }) {
 
   const getParticleCount = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (raw: any) => ((raw as GraphLink).relation === "RELATED_TO" ? 4 : 0),
+    (_raw: any) => 0,
     [],
   );
 

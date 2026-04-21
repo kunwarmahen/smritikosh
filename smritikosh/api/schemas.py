@@ -212,8 +212,7 @@ class FactGraphEdge(BaseModel):
     id: str
     source: str
     target: str
-    relation: str           # e.g. HAS_PREFERENCE, RELATED_TO
-    strength: float | None = None
+    relation: str
 
 
 class FactGraphResponse(BaseModel):

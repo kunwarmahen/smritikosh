@@ -148,7 +148,6 @@ export interface FactGraphEdge {
   source: string;
   target: string;
   relation: string;
-  strength?: number | null;
 }
 
 export interface FactGraph {

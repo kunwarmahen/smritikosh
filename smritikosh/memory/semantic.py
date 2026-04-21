@@ -17,8 +17,6 @@ Graph schema:
         (:User)-[:HAS_SKILL       {…}]->(:Fact)
         (:User)-[:HAS_GOAL        {…}]->(:Fact)
         (:User)-[:KNOWS           {…}]->(:Fact)   ← relationships
-        (:Fact)-[:RELATED_TO      {strength}]->(:Fact)
-
 Design notes:
   - Facts are upserted (MERGE) — duplicate extraction just strengthens confidence.
   - Relationship type is fixed (not parameterised) due to Cypher limitations;
@@ -231,35 +229,6 @@ class SemanticMemory:
         )
         record = await result.single()
         return _record_to_fact(record)
-
-    async def relate_facts(
-        self,
-        session: AsyncSession,
-        *,
-        from_category: str,
-        from_key: str,
-        from_value: str,
-        to_category: str,
-        to_key: str,
-        to_value: str,
-        strength: float = 1.0,
-    ) -> None:
-        """
-        Create a RELATED_TO link between two Fact nodes.
-        Useful when the Consolidator discovers that two facts are connected.
-        """
-        await session.run(
-            """
-            MATCH (f1:Fact {category: $fc1, key: $fk1, value: $fv1})
-            MATCH (f2:Fact {category: $fc2, key: $fk2, value: $fv2})
-            MERGE (f1)-[r:RELATED_TO]->(f2)
-            SET r.strength = $strength, r.updated_at = $now
-            """,
-            fc1=from_category, fk1=from_key, fv1=from_value,
-            fc2=to_category,   fk2=to_key,   fv2=to_value,
-            strength=strength,
-            now=_now_iso(),
-        )
 
     async def delete_fact(
         self,

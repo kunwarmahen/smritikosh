@@ -13,7 +13,6 @@ Graph schema:
         (:User)-[:WORKS_ON]->(:Fact)         e.g. project: smritikosh
         (:User)-[:HAS_SKILL]->(:Fact)        e.g. skill: RAG
         (:User)-[:HAS_GOAL]->(:Fact)         e.g. goal: ship MVP
-        (:Fact)-[:RELATED_TO]->(:Fact)       cross-fact associations
 
 Usage in FastAPI routes:
     @router.post("/memory/event")
