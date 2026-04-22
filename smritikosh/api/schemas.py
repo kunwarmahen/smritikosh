@@ -55,6 +55,7 @@ class EventRequest(BaseModel):
     content: str = Field(..., description="Raw interaction text to encode into memory")
     app_id: str = Field("default", description="Application namespace (for multi-app isolation)")
     metadata: dict = Field(default_factory=dict, description="Optional extra context (source, channel, etc.)")
+    source_type: str = Field("api_explicit", description="How this memory was created. See SourceType enum.")
 
 
 class EventResponse(BaseModel):
@@ -65,6 +66,34 @@ class EventResponse(BaseModel):
     extraction_failed: bool
 
     model_config = {"from_attributes": True}
+
+
+# ── POST /memory/fact ────────────────────────────────────────────────────────
+
+
+class FactRequest(BaseModel):
+    user_id: str = Field(..., description="User this fact belongs to")
+    app_id: str = Field("default", description="Application namespace")
+    category: str = Field(..., description="Fact category — see FactCategory enum")
+    key: str = Field(..., description="Short snake_case label e.g. 'editor', 'timezone'")
+    value: str = Field(..., description="The fact value e.g. 'neovim', 'UTC+5:30'")
+    note: Optional[str] = Field(None, description="Optional free-text context note")
+    source_type: str = Field("ui_manual", description="Source type — defaults to ui_manual for direct fact entry")
+    confidence: Optional[float] = Field(None, ge=0.0, le=1.0, description="Override confidence (default: source-type default)")
+
+
+class FactResponse(BaseModel):
+    user_id: str
+    app_id: str
+    category: str
+    key: str
+    value: str
+    confidence: float
+    frequency_count: int
+    source_type: str
+    status: str
+    first_seen_at: str
+    last_seen_at: str
 
 
 # ── POST /context ─────────────────────────────────────────────────────────────
@@ -100,6 +129,7 @@ class RecentEventItem(BaseModel):
     created_at: str
     cluster_id: Optional[int] = None
     cluster_label: Optional[str] = None
+    source_type: str = "api_explicit"
 
     model_config = {"from_attributes": True}
 
@@ -125,6 +155,8 @@ class MemoryEventDetail(BaseModel):
     consolidated: bool
     cluster_id: Optional[int] = None
     cluster_label: Optional[str] = None
+    source_type: str = "api_explicit"
+    source_meta: dict = Field(default_factory=dict)
     created_at: str
     updated_at: str
     last_reconsolidated_at: Optional[str] = None

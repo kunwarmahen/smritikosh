@@ -27,6 +27,8 @@ from smritikosh.api.schemas import (
     EventRequest,
     EventResponse,
     ExportEventItem,
+    FactRequest,
+    FactResponse,
     MemoryEventDetail,
     MemoryLinkItem,
     MemoryLinksResponse,
@@ -37,11 +39,13 @@ from smritikosh.api.schemas import (
     SearchResultItem,
 )
 from smritikosh.llm.adapter import LLMAdapter
-from smritikosh.db.models import Event, MemoryLink
+from smritikosh.db.models import Event, FactStatus, MemoryLink, SOURCE_CONFIDENCE_DEFAULTS, SourceType
 from smritikosh.db.neo4j import get_neo4j_session
 from smritikosh.db.postgres import get_session
 from smritikosh.memory.episodic import EpisodicMemory
 from smritikosh.memory.hippocampus import Hippocampus
+from smritikosh.memory.semantic import SemanticMemory
+from smritikosh.api.deps import get_semantic
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/memory", tags=["memory"])
@@ -79,6 +83,7 @@ async def capture_event(
             raw_text=body.content,
             app_id=body.app_id,
             metadata=body.metadata,
+            source_type=body.source_type,
         )
     except Exception as exc:
         logger.exception("Hippocampus encode failed", extra={"user_id": body.user_id})
@@ -90,6 +95,74 @@ async def capture_event(
         importance_score=result.importance_score,
         facts_extracted=len(result.facts),
         extraction_failed=result.extraction_failed,
+    )
+
+
+@router.post("/fact", response_model=FactResponse, status_code=201)
+async def store_fact(
+    body: FactRequest,
+    semantic: Annotated[SemanticMemory, Depends(get_semantic)],
+    neo: Annotated[NeoSession, Depends(get_neo4j_session)],
+    current_user: Annotated[dict, Depends(get_current_user)],
+) -> FactResponse:
+    """
+    Directly store a structured fact about a user — bypasses LLM extraction.
+
+    Use this for manual memory entry (e.g. from the UI dashboard), SDK tool-use
+    intercepts, or any path where the fact is already known and verified.
+
+    source_type defaults to 'ui_manual' (confidence = 1.0). Override with any
+    valid SourceType value. If confidence is not supplied, the source-type default
+    is used (see SOURCE_CONFIDENCE_DEFAULTS in models.py).
+
+    Facts are upserted: calling this with the same (user_id, app_id, category, key)
+    increments frequency_count rather than creating a duplicate.
+    """
+    assert_self_or_admin(current_user, body.user_id)
+
+    source_type = body.source_type or SourceType.UI_MANUAL
+    if body.confidence is not None:
+        confidence = body.confidence
+    else:
+        confidence = SOURCE_CONFIDENCE_DEFAULTS.get(source_type, 1.0)
+
+    # ui_manual facts always start at full confidence and active status
+    status = FactStatus.ACTIVE if confidence >= 0.60 else FactStatus.PENDING
+    source_meta: dict = {}
+    if body.note:
+        source_meta["note"] = body.note
+
+    try:
+        fact = await semantic.upsert_fact(
+            neo,
+            user_id=body.user_id,
+            app_id=body.app_id,
+            category=body.category,
+            key=body.key,
+            value=body.value,
+            confidence=confidence,
+            source_type=source_type,
+            source_meta=source_meta,
+            status=status,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to store fact", extra={"user_id": body.user_id})
+        raise HTTPException(status_code=500, detail=f"Fact storage failed: {exc}") from exc
+
+    return FactResponse(
+        user_id=body.user_id,
+        app_id=body.app_id,
+        category=fact.category,
+        key=fact.key,
+        value=fact.value,
+        confidence=fact.confidence,
+        frequency_count=fact.frequency_count,
+        source_type=fact.source_type,
+        status=fact.status,
+        first_seen_at=fact.first_seen_at,
+        last_seen_at=fact.last_seen_at,
     )
 
 

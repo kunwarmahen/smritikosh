@@ -58,6 +58,7 @@ from smritikosh.sdk.types import (
     ReconsolidationResult,
     SearchResult,
     SearchResultItem,
+    SessionIngestResult,
 )
 
 _DEFAULT_TIMEOUT = 30.0   # seconds
@@ -776,6 +777,59 @@ class SmritikoshClient:
             files={"file": (filename, file_content)},
         )
         return _parse_ingest_result(self._raise_or_json(response))
+
+    async def ingest_session(
+        self,
+        *,
+        user_id: str,
+        turns: list[dict],
+        app_id: str | None = None,
+        session_id: str | None = None,
+        partial: bool = False,
+        use_trigger_filter: bool = True,
+        metadata: dict | None = None,
+    ) -> SessionIngestResult:
+        """
+        Submit a conversation transcript for passive memory extraction.
+
+        Smritikosh processes only user turns, applies the trigger-word pre-filter
+        (if ``use_trigger_filter=True``), runs delta extraction against the user's
+        existing facts, and stores any new facts.
+
+        Posting the same ``session_id`` twice is a safe no-op (idempotent).
+
+        Args:
+            user_id:            User whose memories to extract.
+            turns:              List of ``{"role": "user"|"assistant", "content": "..."}`` dicts.
+            app_id:             Application namespace. Defaults to the client-level app_id.
+            session_id:         Idempotency key. Auto-generated server-side if omitted.
+            partial:            True for mid-session windows; False (default) for session end.
+            use_trigger_filter: Skip LLM if no trigger phrases are detected.
+            metadata:           Optional extra context stored alongside the session record.
+
+        Returns:
+            :class:`SessionIngestResult` with extraction counts and idempotency flag.
+        """
+        payload: dict = {
+            "user_id": user_id,
+            "app_id": app_id or self._app_id,
+            "turns": turns,
+            "partial": partial,
+            "use_trigger_filter": use_trigger_filter,
+        }
+        if session_id is not None:
+            payload["session_id"] = session_id
+        if metadata is not None:
+            payload["metadata"] = metadata
+        data = await self._post("/ingest/session", payload)
+        return SessionIngestResult(
+            session_id=data["session_id"],
+            turns_processed=data["turns_processed"],
+            facts_extracted=data["facts_extracted"],
+            extraction_skipped=data["extraction_skipped"],
+            already_processed=data["already_processed"],
+            partial=data["partial"],
+        )
 
     async def health(self) -> HealthStatus:
         """

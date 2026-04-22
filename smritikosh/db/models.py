@@ -108,6 +108,48 @@ class UserRole(StrEnum):
     USER  = "user"    # can only access their own data
 
 
+class SourceType(StrEnum):
+    """How a memory entered the system — drives dedup logic, confidence init, and UI badges."""
+    API_EXPLICIT        = "api_explicit"        # App called POST /memory/event directly
+    UI_MANUAL           = "ui_manual"           # User typed it in the Smritikosh dashboard
+    PASSIVE_DISTILLATION = "passive_distillation"  # Post-session LLM extraction
+    PASSIVE_STREAMING   = "passive_streaming"   # Mid-session rolling-window extraction
+    TRIGGER_WORD        = "trigger_word"        # Heuristic flagged; LLM confirmed
+    SDK_MIDDLEWARE      = "sdk_middleware"       # SDK wrapper intercepted transparently
+    WEBHOOK_INGEST      = "webhook_ingest"       # App POSTed a transcript to /ingest/transcript
+    TOOL_USE            = "tool_use"            # LLM called the remember() tool
+    CROSS_SYSTEM        = "cross_system"        # Synthesized from correlated cross-integration signals
+    MEDIA_VOICE         = "media_voice"         # Extracted from a voice note
+    MEDIA_AUDIO         = "media_audio"         # Extracted from a meeting/call recording
+    MEDIA_IMAGE         = "media_image"         # Extracted from an image
+    MEDIA_DOCUMENT      = "media_document"      # Extracted from a document
+
+
+# Initial confidence by source type — tune over time
+SOURCE_CONFIDENCE_DEFAULTS: dict[str, float] = {
+    SourceType.UI_MANUAL:            1.00,
+    SourceType.API_EXPLICIT:         0.90,
+    SourceType.TRIGGER_WORD:         0.85,
+    SourceType.PASSIVE_DISTILLATION: 0.75,
+    SourceType.PASSIVE_STREAMING:    0.70,
+    SourceType.SDK_MIDDLEWARE:       0.70,
+    SourceType.WEBHOOK_INGEST:       0.70,
+    SourceType.TOOL_USE:             0.90,
+    SourceType.CROSS_SYSTEM:         0.65,
+    SourceType.MEDIA_VOICE:          0.85,
+    SourceType.MEDIA_AUDIO:          0.75,
+    SourceType.MEDIA_IMAGE:          0.70,
+    SourceType.MEDIA_DOCUMENT:       0.75,
+}
+
+
+class FactStatus(StrEnum):
+    """Lifecycle state for user facts — gates whether they appear in context assembly."""
+    ACTIVE   = "active"    # confirmed, included in context
+    PENDING  = "pending"   # below confidence threshold or awaiting user review
+    REJECTED = "rejected"  # user dismissed or system discarded
+
+
 class FeedbackType(StrEnum):
     """User signal on whether a recalled memory was useful."""
     POSITIVE = "positive"   # memory was helpful / relevant
@@ -171,6 +213,8 @@ class Event(Base):
     consolidated: Mapped[bool] = mapped_column(Boolean, default=False)
     cluster_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
     cluster_label: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
+    source_type: Mapped[str] = mapped_column(String(32), default=SourceType.API_EXPLICIT)
+    source_meta: Mapped[dict] = mapped_column(JSONB, default=dict)
     event_metadata: Mapped[dict] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now
@@ -231,6 +275,9 @@ class UserFact(Base):
     value: Mapped[str] = mapped_column(Text)
     confidence: Mapped[float] = mapped_column(Float, default=1.0)
     frequency_count: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(16), default=FactStatus.ACTIVE)
+    source_type: Mapped[str] = mapped_column(String(32), default=SourceType.API_EXPLICIT)
+    source_meta: Mapped[dict] = mapped_column(JSONB, default=dict)
     first_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now
     )
@@ -239,7 +286,7 @@ class UserFact(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<UserFact {self.category}:{self.key}={self.value!r} user={self.user_id}>"
+        return f"<UserFact {self.category}:{self.key}={self.value!r} user={self.user_id} status={self.status}>"
 
 
 class MemoryLink(Base):
@@ -461,6 +508,43 @@ class AppUser(Base):
 
     def __repr__(self) -> str:
         return f"<AppUser username={self.username!r} role={self.role}>"
+
+
+class ProcessedSession(Base):
+    """
+    Idempotency guard for POST /ingest/session.
+
+    Each session_id may only be processed once per (user_id, app_id). Re-posting
+    the same session is a no-op that returns the original result. Supports
+    streaming (partial) ingestion by tracking last_turn_index so each partial
+    window only re-processes new turns.
+    """
+
+    __tablename__ = "processed_sessions"
+    __table_args__ = (
+        UniqueConstraint("user_id", "app_id", "session_id", name="uq_processed_session"),
+        Index("ix_processed_sessions_user_app", "user_id", "app_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    user_id: Mapped[str] = mapped_column(String(255))
+    app_id: Mapped[str] = mapped_column(String(255), default="default")
+    session_id: Mapped[str] = mapped_column(String(255))
+    turns_count: Mapped[int] = mapped_column(Integer, default=0)
+    facts_extracted: Mapped[int] = mapped_column(Integer, default=0)
+    last_turn_index: Mapped[int] = mapped_column(Integer, default=0)
+    is_partial: Mapped[bool] = mapped_column(Boolean, default=False)
+    processed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<ProcessedSession session={self.session_id!r} "
+            f"user={self.user_id} facts={self.facts_extracted}>"
+        )
 
 
 class ApiKey(Base):

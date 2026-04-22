@@ -214,6 +214,17 @@ class SearchResult:
 
 
 @dataclass
+class SessionIngestResult:
+    """Returned by SmritikoshClient.ingest_session()."""
+    session_id: str
+    turns_processed: int
+    facts_extracted: int
+    extraction_skipped: bool
+    already_processed: bool
+    partial: bool
+
+
+@dataclass
 class IngestResult:
     """Returned by SmritikoshClient ingest methods."""
     source: str

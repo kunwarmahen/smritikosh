@@ -25,13 +25,14 @@ Design notes:
     decoupled from raw Neo4j Record objects.
 """
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
 
 from neo4j import AsyncSession
 
-from smritikosh.db.models import FactCategory
+from smritikosh.db.models import FactCategory, FactStatus, SourceType
 
 
 # ── Relationship type mapping ──────────────────────────────────────────────────
@@ -100,6 +101,9 @@ class FactRecord:
     first_seen_at: str
     last_seen_at: str
     source_event_ids: list[str] = field(default_factory=list)
+    source_type: str = SourceType.API_EXPLICIT
+    source_meta: dict = field(default_factory=dict)
+    status: str = FactStatus.ACTIVE
 
 
 @dataclass
@@ -169,6 +173,9 @@ class SemanticMemory:
         app_id: str = "default",
         confidence: float = 1.0,
         source_event_ids: list[str] | None = None,
+        source_type: str = SourceType.API_EXPLICIT,
+        source_meta: dict | None = None,
+        status: str = FactStatus.ACTIVE,
     ) -> FactRecord:
         """
         Insert or strengthen a fact about a user.
@@ -180,11 +187,16 @@ class SemanticMemory:
         source_event_ids: episodic event IDs that contributed to this fact.
           New IDs are appended (deduplicated) to the existing list, capped at 50.
 
+        source_type / source_meta: provenance of this fact (which ingestion path).
+          On CREATE the values are stored; on MATCH, source_type is preserved from
+          the first write unless explicitly overridden by a higher-confidence source.
+
         Returns the final state of the fact as a FactRecord.
         """
         rel = _rel_type(category)
         now = _now_iso()
         new_ids = source_event_ids or []
+        meta = json.dumps(source_meta or {})
 
         # Note: relationship type must be string-interpolated (Cypher limitation).
         # The value is safe — it comes from _CATEGORY_TO_REL, not user input.
@@ -203,7 +215,10 @@ class SemanticMemory:
                 r.frequency_count  = 1,
                 r.first_seen_at    = $now,
                 r.last_seen_at     = $now,
-                r.source_event_ids = $new_ids
+                r.source_event_ids = $new_ids,
+                r.source_type      = $source_type,
+                r.source_meta      = $source_meta,
+                r.status           = $status
             ON MATCH SET
                 r.confidence       = $confidence,
                 r.frequency_count  = r.frequency_count + 1,
@@ -211,12 +226,15 @@ class SemanticMemory:
                 r.source_event_ids = (
                     coalesce(r.source_event_ids, []) +
                     [x IN $new_ids WHERE NOT x IN coalesce(r.source_event_ids, [])]
-                )[0..50]
+                )[0..50],
+                r.source_meta      = $source_meta
 
             RETURN f.category AS category, f.key AS key, f.value AS value,
                    r.confidence AS confidence, r.frequency_count AS frequency_count,
                    r.first_seen_at AS first_seen_at, r.last_seen_at AS last_seen_at,
-                   r.source_event_ids AS source_event_ids
+                   r.source_event_ids AS source_event_ids,
+                   r.source_type AS source_type, r.source_meta AS source_meta,
+                   r.status AS status
             """,
             user_id=user_id,
             app_id=app_id,
@@ -226,6 +244,9 @@ class SemanticMemory:
             confidence=confidence,
             now=now,
             new_ids=new_ids,
+            source_type=source_type,
+            source_meta=meta,
+            status=status,
         )
         record = await result.single()
         return _record_to_fact(record)
@@ -282,7 +303,9 @@ class SemanticMemory:
                 RETURN f.category AS category, f.key AS key, f.value AS value,
                        r.confidence AS confidence, r.frequency_count AS frequency_count,
                        r.first_seen_at AS first_seen_at, r.last_seen_at AS last_seen_at,
-                       r.source_event_ids AS source_event_ids
+                       r.source_event_ids AS source_event_ids,
+                       r.source_type AS source_type, r.source_meta AS source_meta,
+                       r.status AS status
                 ORDER BY r.frequency_count DESC
             """
         else:
@@ -293,7 +316,9 @@ class SemanticMemory:
                 RETURN f.category AS category, f.key AS key, f.value AS value,
                        r.confidence AS confidence, r.frequency_count AS frequency_count,
                        r.first_seen_at AS first_seen_at, r.last_seen_at AS last_seen_at,
-                       r.source_event_ids AS source_event_ids
+                       r.source_event_ids AS source_event_ids,
+                       r.source_type AS source_type, r.source_meta AS source_meta,
+                       r.status AS status
                 ORDER BY r.frequency_count DESC
             """
 
@@ -450,6 +475,18 @@ class SemanticMemory:
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 
+def _parse_source_meta(raw: object) -> dict:
+    """Deserialize source_meta stored as a JSON string in Neo4j."""
+    if not raw:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {}
+
+
 def _record_to_fact(record: dict) -> FactRecord:
     """Convert a raw Neo4j record dict to a FactRecord."""
     return FactRecord(
@@ -461,4 +498,7 @@ def _record_to_fact(record: dict) -> FactRecord:
         first_seen_at=str(record["first_seen_at"]),
         last_seen_at=str(record["last_seen_at"]),
         source_event_ids=list(record.get("source_event_ids") or []),
+        source_type=str(record.get("source_type") or SourceType.API_EXPLICIT),
+        source_meta=_parse_source_meta(record.get("source_meta")),
+        status=str(record.get("status") or FactStatus.ACTIVE),
     )

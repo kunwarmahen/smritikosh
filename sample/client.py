@@ -100,3 +100,95 @@ class SmritikoshClient:
         )
         resp.raise_for_status()
         return resp.json().get("results", [])
+
+    def register_user(self, username: str, password: str, role: str = "user") -> dict:
+        """
+        Register a new login account (requires admin credentials).
+
+        Once registered, that user can log in directly:
+            client = SmritikoshClient(username=username, password=password)
+
+        The username also becomes the user_id namespace for their memories,
+        so memories stored under user_id=username are owned by that account.
+        """
+        resp = httpx.post(
+            f"{BASE_URL}/auth/register",
+            headers=self._headers,
+            json={"username": username, "password": password, "role": role},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def ingest_session(
+        self,
+        user_id: str,
+        turns: list[dict],
+        *,
+        session_id: str | None = None,
+        partial: bool = False,
+        use_trigger_filter: bool = True,
+        metadata: dict | None = None,
+    ) -> dict:
+        """
+        Submit a conversation transcript for passive memory extraction.
+
+        turns            — list of {"role": "user"|"assistant", "content": "..."}
+        session_id       — idempotency key; re-posting the same id is a no-op
+        partial          — True for mid-session windows, False for session end
+        use_trigger_filter — skip LLM when no trigger phrases are detected
+        """
+        payload: dict = {
+            "user_id": user_id,
+            "app_id": self.app_id,
+            "turns": turns,
+            "partial": partial,
+            "use_trigger_filter": use_trigger_filter,
+        }
+        if session_id is not None:
+            payload["session_id"] = session_id
+        if metadata is not None:
+            payload["metadata"] = metadata
+        resp = httpx.post(
+            f"{BASE_URL}/ingest/session",
+            headers=self._headers,
+            json=payload,
+            timeout=120,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def store_fact(
+        self,
+        user_id: str,
+        category: str,
+        key: str,
+        value: str,
+        *,
+        note: str | None = None,
+    ) -> dict:
+        """
+        Manually store a single fact at confidence=1.0 (ui_manual source).
+
+        category — e.g. "preference", "habit", "tool", "diet"
+        key      — short label, e.g. "dark_mode"
+        value    — the value, e.g. "always on"
+        note     — optional free-text note stored in source_meta
+        """
+        payload: dict = {
+            "user_id": user_id,
+            "app_id": self.app_id,
+            "category": category,
+            "key": key,
+            "value": value,
+        }
+        if note is not None:
+            payload["note"] = note
+        resp = httpx.post(
+            f"{BASE_URL}/memory/fact",
+            headers=self._headers,
+            json=payload,
+            timeout=60,
+        )
+        resp.raise_for_status()
+        return resp.json()

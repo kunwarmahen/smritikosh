@@ -27,7 +27,7 @@ from typing import Optional
 from sqlalchemy import delete as sql_delete, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from smritikosh.db.models import Event
+from smritikosh.db.models import Event, SourceType
 
 
 @dataclass
@@ -113,6 +113,8 @@ class EpisodicMemory:
         embedding: list[float] | None = None,
         importance_score: float = 1.0,
         metadata: dict | None = None,
+        source_type: str = SourceType.API_EXPLICIT,
+        source_meta: dict | None = None,
     ) -> Event:
         """
         Persist a new episodic event.
@@ -128,6 +130,8 @@ class EpisodicMemory:
             embedding=embedding,
             importance_score=importance_score,
             consolidated=False,
+            source_type=source_type,
+            source_meta=source_meta or {},
             event_metadata=metadata or {},
         )
         session.add(event)

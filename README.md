@@ -49,6 +49,7 @@ Smritikosh gives any LLM application persistent, user-specific memory modelled o
   - [Admin jobs](#admin-jobs)
   - [Admin users](#admin-users-api)
   - [External ingest](#external-ingest)
+  - [Passive Memory Extraction](#passive-memory-extraction)
   - [Audit trail](#audit-trail-api)
 - [Audit trail](#audit-trail)
 - [Authentication & API keys](#authentication--api-keys)
@@ -147,17 +148,21 @@ GET /identity/{user_id}
 ```
 Your application
       │
-      ├── SmritikoshClient (Python)   smritikosh.sdk
+      ├── SmritikoshMiddleware (Python)  ← wraps OpenAI / Anthropic sync client
+      │         │  intercepts create() calls, buffers turns,
+      │         │  fires POST /ingest/session in background
+      │         ▼
+      ├── SmritikoshClient (Python)   smritikosh.sdk   ← async API client
       └── SmritikoshClient (Node.js)  sdk-node/
                 │
                 ▼  REST API (FastAPI)
-        ┌───────────────────────────────┐
-        │  /memory   /context           │
-        │  /identity /feedback          │
-        │  /procedures                  │
-        │  /ingest/{push,file,slack,…}  │
-        │  /admin/{consolidate,prune,…} │
-        └───────────────────────────────┘
+        ┌────────────────────────────────────┐
+        │  /memory   /context                │
+        │  /identity /feedback               │
+        │  /procedures                       │
+        │  /ingest/{push,file,slack,session} │
+        │  /admin/{consolidate,prune,…}      │
+        └────────────────────────────────────┘
 ```
 
 ---
@@ -185,8 +190,10 @@ Your application
 | **MemoryScheduler** | Runs all background jobs on configurable timers (APScheduler) | — |
 | **IntentClassifier** | Two-tier intent classification: keyword heuristic + LLM fallback for ambiguous queries | — |
 | **LLMAdapter** | Unified interface to Claude, OpenAI, Gemini, Ollama, vLLM, llama.cpp; logs resolved provider + model at startup | — |
-| **SmritikoshClient (Python)** | Python SDK wrapping the REST API | — |
+| **SmritikoshClient (Python)** | Async Python SDK wrapping the REST API | — |
 | **SmritikoshClient (Node.js)** | TypeScript/ESM SDK with identical surface to the Python SDK | — |
+| **SmritikoshMiddleware** | Sync wrapper for OpenAI/Anthropic clients; buffers turns, fires `POST /ingest/session` in background, optionally auto-injects context | — |
+| **TriggerDetector** | Regex pre-filter (30 patterns) — skips LLM extraction when no high-signal phrases detected | — |
 
 ---
 
@@ -897,6 +904,152 @@ Notice that on the last message, the bot knows about the Rust milestone stored v
 - **Memory detail** — click any event in the timeline to see its narrative links graph (orb nodes, gold RELATED_TO edges)
 - **Admin panel** — log in as `admin` to see all users, trigger consolidation (`/admin/jobs`), or check system health
 - **Run consolidation** — `curl -X POST "http://localhost:8080/admin/consolidate?user_id=alice"` to compress Alice's memories into summaries and extract more facts into Neo4j
+
+---
+
+## Demo scripts (passive extraction + SDK middleware)
+
+All scripts live in `sample/` and authenticate as `admin` — no API key setup required.
+Run every command from the **repo root** with the virtualenv active.
+
+```bash
+source .venv/bin/activate
+docker compose up -d    # server must be running
+```
+
+### Script 1 — `seed_priya.py` (one-time setup)
+
+Pre-loads 15 rich memories for user `priya` — a homemaker who loves fashion, luxury travel, and books. All the other demo scripts use `priya` as their subject.
+
+```bash
+python sample/seed_priya.py
+```
+
+Expected output:
+```
+Seeding 15 memories for user 'priya'...
+
+  [ 1] importance=0.74  facts=3  "My name is Priya and I'm a homemaker who loves..."
+  [ 2] importance=0.81  facts=4  "I am passionate about fashion and shopping. I f..."
+  ...
+Done. Run 'python chatbot.py' to chat with Priya's memory.
+```
+
+---
+
+### Script 2 — `passive_extraction_demo.py`
+
+Demonstrates passive memory extraction from a conversation transcript — no per-turn developer work required.
+
+```bash
+python sample/passive_extraction_demo.py
+```
+
+**What it does (5 steps):**
+
+| Step | What happens |
+|---|---|
+| 1. Session ingest | Posts a 7-turn Priya conversation to `POST /ingest/session`; trigger phrases (`I always`, `I prefer`, `My goal is`, `I believe`, `I never`) fire the LLM extraction |
+| 2. Idempotency | Re-posts the same `session_id` — server returns `already_processed=True`, nothing re-extracted |
+| 3. Manual facts | Calls `store_fact()` four times — stores fashion/habit/goal facts at `confidence=1.0`, `source_type=ui_manual`, bypassing the LLM entirely |
+| 4. Streaming windows | Posts 3 partial windows with `partial=True`; each window only processes new turns via `last_turn_index` tracking |
+| 5. Verification | Calls `get_context()` to confirm extracted facts appear in context retrieval |
+
+Expected output (abbreviated):
+```
+── Step 1 — POST /ingest/session ────────────────────────────
+  turns_processed:    4
+  facts_extracted:    5
+  extraction_skipped: False
+  already_processed:  False
+
+── Step 2 — Idempotency check ───────────────────────────────
+  already_processed: True (should be True)
+  ✓ Idempotency working correctly
+
+── Step 3 — store_fact() ────────────────────────────────────
+  Stored: preference/fashion_brand = 'Bottega Veneta'
+    confidence:  1.00  (source: ui_manual)
+    status:      active
+  ...
+  ✓ All manual facts stored with confidence=1.0, status=active
+```
+
+---
+
+### Script 3 — `middleware_demo.py`
+
+Demonstrates `SmritikoshMiddleware` — wraps a fake OpenAI-style client so no real API key is needed. Shows how memory extraction becomes transparent.
+
+```bash
+python sample/middleware_demo.py
+```
+
+**What it does (4 steps):**
+
+| Step | What happens |
+|---|---|
+| 1. Wrap the client | Shows the one-line change — `SmritikoshMiddleware(FakeOpenAI(), ...)` instead of `FakeOpenAI()` |
+| 2. 5-turn conversation | Runs 5 turns through the middleware with `extract_every_n_turns=3`; partial flush fires after turn 3 in a background thread, `close()` waits for it then flushes turns 4–5 |
+| 3. `auto_inject=True` | Makes one call with context injection — middleware fetches Priya's memory context and prepends it as a sentinel-wrapped system message |
+| 4. Verification | Calls `get_context()` to confirm extracted facts appeared |
+
+Expected output (abbreviated):
+```
+── Step 1 — Wrap the LLM client ─────────────────────────────
+  # Before: llm = FakeOpenAI()
+  # After:  llm = SmritikoshMiddleware(FakeOpenAI(), ...)
+
+── Step 2 — Simulating a 5-turn conversation ─────────────────
+  User:      I always have Rohan pick the wine...
+  Assistant: [fake LLM] Got: I always have Rohan pick the wine...
+  ...
+  Buffered turns: 5 user turns across 10 total
+  Calling close() → flushes remaining turns as final ingest …
+  ✓ Session closed and flushed
+
+── Step 3 — auto_inject=True ────────────────────────────────
+  Context fetched and injected for user='priya'
+  ✓ The fake LLM received a system message with Priya's memory context
+```
+
+> **Note:** Step 4 (context verification) calls `GET /context` immediately after two back-to-back LLM ingest calls. If the API is slow, it may timeout — the memories are still extracted. Run `python sample/chatbot.py` and ask about Priya's travel plans to verify.
+
+---
+
+### Script 4 — `chatbot.py` (interactive)
+
+A live chat loop against Priya's memories. After running the scripts above, Priya's memory will include extracted facts from both demos.
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...   # required — chatbot makes direct LLM calls
+python sample/chatbot.py
+```
+
+Try asking:
+- `What are Priya's travel plans?`
+- `What luxury brands does she follow?`
+- `What does she like to read?`
+- `/search Japan`
+
+---
+
+### Recommended run order
+
+```bash
+# 1. One-time setup
+python sample/seed_priya.py
+
+# 2. Passive extraction demo (no LLM key needed in demo itself)
+python sample/passive_extraction_demo.py
+
+# 3. Middleware demo (no OpenAI key needed — uses fake client)
+python sample/middleware_demo.py
+
+# 4. Chat with the enriched memory
+export ANTHROPIC_API_KEY=sk-ant-...
+python sample/chatbot.py
+```
 
 ---
 
@@ -1715,6 +1868,62 @@ Each line:
 
 ### `POST /memory/event`
 
+Encode a raw interaction into memory. The full Hippocampus pipeline runs: importance scoring, embedding, fact extraction, episodic store, knowledge graph upsert.
+
+```bash
+curl -X POST http://localhost:8080/memory/event \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "alice", "content": "I decided to use PostgreSQL over MySQL.", "app_id": "myapp"}'
+```
+
+The optional `source_type` field defaults to `"api_explicit"`. You can pass any valid `SourceType` value.
+
+---
+
+### `POST /memory/fact`
+
+Directly store a structured fact — bypasses LLM extraction entirely.
+
+Use this for:
+- **Manual entry** from the UI dashboard (`source_type="ui_manual"`, confidence=1.0)
+- **SDK tool-use** intercepts when the LLM calls `remember()`
+- **Programmatic seeding** of known facts at onboarding
+
+```bash
+curl -X POST http://localhost:8080/memory/fact \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "alice",
+    "app_id": "myapp",
+    "category": "preference",
+    "key": "editor",
+    "value": "neovim",
+    "note": "user mentioned in onboarding survey"
+  }'
+```
+
+```json
+{
+  "user_id": "alice",
+  "app_id": "myapp",
+  "category": "preference",
+  "key": "editor",
+  "value": "neovim",
+  "confidence": 1.0,
+  "frequency_count": 1,
+  "source_type": "ui_manual",
+  "status": "active",
+  "first_seen_at": "2026-04-21T10:00:00+00:00",
+  "last_seen_at": "2026-04-21T10:00:00+00:00"
+}
+```
+
+Facts are upserted — calling with the same `(user_id, app_id, category, key)` increments `frequency_count` rather than creating a duplicate.
+
+---
+
 ## Admin jobs
 
 Manual triggers for background jobs. Useful during development, testing, or forced re-processing.
@@ -1937,6 +2146,150 @@ curl -X POST http://localhost:8080/ingest/calendar \
 ```json
 {"source": "calendar:calendar.ics", "events_ingested": 12, "events_failed": 0, "event_ids": [...]}
 ```
+
+### `POST /ingest/session` — Passive extraction from conversation transcript
+
+Post a full or partial conversation transcript. Smritikosh automatically:
+1. Filters to **user turns only** (assistant turns discarded — anti-contamination)
+2. Strips injected context sentinel blocks (`<!-- smritikosh:context-start/end -->`)
+3. Runs the **trigger-word pre-filter** to skip the LLM on low-signal windows (cost saver)
+4. Calls the LLM with a **delta-extraction prompt** that only asks for NEW or CONTRADICTING facts
+5. Upserts surviving facts to the knowledge graph with `source_type="passive_distillation"` or `"trigger_word"`
+6. Stores one episodic event summarising the session
+
+The endpoint is **idempotent**: re-posting the same `session_id` is a safe no-op.
+
+```bash
+curl -X POST http://localhost:8080/ingest/session \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "alice",
+    "app_id": "my-chatbot",
+    "session_id": "sess-2026-04-21-abc",
+    "turns": [
+      {"role": "user",      "content": "I always prefer dark mode and I use neovim."},
+      {"role": "assistant", "content": "Got it, I will keep that in mind."},
+      {"role": "user",      "content": "My goal is to launch by Q3 this year."}
+    ],
+    "partial": false,
+    "use_trigger_filter": true
+  }'
+```
+
+```json
+{
+  "session_id": "sess-2026-04-21-abc",
+  "user_id": "alice",
+  "app_id": "my-chatbot",
+  "turns_processed": 2,
+  "facts_extracted": 3,
+  "skipped_duplicates": 0,
+  "extraction_skipped": false,
+  "already_processed": false,
+  "partial": false
+}
+```
+
+**Streaming (mid-session) usage** — set `partial: true` for windows; the server tracks `last_turn_index` so each POST only processes new turns:
+
+```bash
+# Window 1 (partial)
+curl -X POST http://localhost:8080/ingest/session \
+  -d '{"session_id": "sess-xyz", "turns": [...first 10 turns...], "partial": true, ...}'
+
+# Window 2 (partial)
+curl -X POST http://localhost:8080/ingest/session \
+  -d '{"session_id": "sess-xyz", "turns": [...next 10 turns...], "partial": true, ...}'
+
+# Final close
+curl -X POST http://localhost:8080/ingest/session \
+  -d '{"session_id": "sess-xyz", "turns": [...last turns...], "partial": false, ...}'
+```
+
+**Alias**: `POST /ingest/transcript` — identical behaviour, kept for backwards compatibility.
+
+---
+
+## Passive Memory Extraction
+
+Smritikosh learns from conversations automatically. No per-turn developer work required.
+
+### How it works
+
+```
+Conversation transcript
+        │
+        ▼
+  user_turns_only()       ← strips assistant turns (anti-contamination)
+        │
+        ▼
+  strip_sentinels()       ← removes injected context blocks
+        │
+        ▼
+  TriggerDetector         ← regex pre-filter (skips LLM if no high-signal phrases)
+        │
+        ▼
+  delta extraction LLM    ← "extract only NEW facts not already known"
+        │
+        ▼
+  SemanticMemory.upsert() ← source_type="passive_distillation" | "trigger_word"
+```
+
+### Source types
+
+Every memory now carries a `source_type` tracking how it entered the system:
+
+| `source_type` | Confidence | Description |
+|---|---|---|
+| `ui_manual` | 1.00 | User typed it in the dashboard |
+| `api_explicit` | 0.90 | App called `POST /memory/event` directly |
+| `tool_use` | 0.90 | LLM called the `remember()` tool |
+| `trigger_word` | 0.85 | Trigger phrase detected; LLM confirmed |
+| `passive_distillation` | 0.75 | Post-session extraction from transcript |
+| `passive_streaming` | 0.70 | Mid-session rolling-window extraction |
+| `sdk_middleware` | 0.70 | SDK wrapper intercepted transparently |
+| `webhook_ingest` | 0.70 | Structured transcript via `/ingest/transcript` |
+| `cross_system` | 0.65 | Synthesized from cross-integration signals |
+
+### Fact status
+
+Facts now have a lifecycle status:
+
+| Status | Meaning |
+|---|---|
+| `active` | Included in context assembly |
+| `pending` | Below confidence threshold (0.60) — needs user review |
+| `rejected` | User dismissed or system discarded |
+
+### Anti-contamination rules
+
+1. **User-turns only** — assistant messages are discarded before extraction
+2. **Sentinel stripping** — `<!-- smritikosh:context-start/end -->` blocks removed
+3. **Delta prompt** — LLM told to extract only NEW or CONTRADICTING facts
+4. **Trigger pre-filter** — skip LLM entirely if no high-signal phrases found (cost saver)
+
+### Sample demo scripts
+
+#### `passive_extraction_demo.py` — session ingest + manual facts
+
+```bash
+# Seed Priya's base memories first (one-time)
+python sample/seed_priya.py
+
+# Run the end-to-end passive extraction demo
+python sample/passive_extraction_demo.py
+```
+
+Posts a realistic 7-turn conversation, verifies trigger detection, tests idempotency, demonstrates streaming windows, stores manual facts via `store_fact()`, and checks that all extracted facts appear in context retrieval.
+
+#### `middleware_demo.py` — transparent LLM wrapper (Phase 4)
+
+```bash
+python sample/middleware_demo.py
+```
+
+Wraps a fake OpenAI-style client with `SmritikoshMiddleware` — no real API keys required. Shows turn buffering, partial flushing every N turns, `auto_inject=True` context prepending, and final flush on `close()`. Swap `FakeOpenAI()` for `openai.OpenAI()` or `anthropic.Anthropic()` in production.
 
 ---
 
@@ -2354,11 +2707,65 @@ async with SmritikoshClient(base_url="http://localhost:8080") as client:
 | `delete_procedure(procedure_id)` | Delete a single procedure |
 | `delete_user_procedures(user_id, *, app_id)` | Delete all procedures for a user |
 | `reconsolidate(event_id, new_context)` | Re-summarise an event with new context |
+| `ingest_session(user_id, turns, *, session_id, partial, use_trigger_filter, metadata)` | Submit a conversation transcript for passive extraction → `SessionIngestResult` |
 | `ingest_push(user_id, content, *, source, source_id, app_id, metadata)` | Push a single event from an external source → `IngestResult` |
 | `ingest_file(user_id, file_content, filename, *, app_id)` | Upload a file (txt/md/csv/json) → `IngestResult` |
 | `ingest_email(user_id, host, username, password, *, ...)` | Fetch IMAP emails → `IngestResult` |
 | `ingest_calendar(user_id, file_content, *, filename, app_id)` | Upload an `.ics` file → `IngestResult` |
 | `health()` | Server + DB liveness check → `HealthStatus` |
+
+### SmritikoshMiddleware — transparent LLM wrapper
+
+`SmritikoshMiddleware` wraps any OpenAI or Anthropic **sync** client. The developer changes one line; memory extraction happens invisibly in the background.
+
+```python
+from smritikosh.sdk import SmritikoshMiddleware
+import openai  # or: import anthropic
+
+# OpenAI
+with SmritikoshMiddleware(
+    openai.OpenAI(),
+    smritikosh_url="http://localhost:8080",
+    smritikosh_api_key="sk-smriti-...",   # JWT or API key
+    user_id="alice",
+    app_id="my-app",
+    extract_every_n_turns=10,   # partial flush every N user turns (0 = only on close)
+    use_trigger_filter=True,    # skip LLM when no trigger phrases detected
+    auto_inject=False,          # set True to prepend memory context before each call
+) as llm:
+    response = llm.chat.completions.create(model="gpt-4o", messages=[...])
+    # ... more turns ...
+# close() / __exit__ flushes remaining turns as the final ingest
+```
+
+```python
+# Anthropic — identical, just swap the client
+with SmritikoshMiddleware(
+    anthropic.Anthropic(),
+    smritikosh_url="http://localhost:8080",
+    smritikosh_api_key="sk-smriti-...",
+    user_id="alice",
+) as llm:
+    response = llm.messages.create(
+        model="claude-haiku-4-5-20251001", max_tokens=1024, messages=[...]
+    )
+```
+
+**How it works:**
+
+1. All attribute access is proxied to the underlying LLM client unchanged
+2. `chat.completions.create()` / `messages.create()` are intercepted
+3. User turns are buffered in memory for this session
+4. Every N user turns a `POST /ingest/session` (partial) fires in a background thread
+5. `close()` or `__exit__` sends the final non-partial ingest
+6. If `auto_inject=True`, `GET /context` is called before each LLM call and the result is prepended as a sentinel-wrapped system message (which the extraction pass strips automatically)
+7. All network errors are swallowed — the LLM call is never blocked or interrupted
+
+**Run the demo:**
+
+```bash
+python sample/middleware_demo.py   # no OpenAI key required — uses a fake client
+```
 
 ---
 
@@ -2481,11 +2888,7 @@ npm run test:watch
 pytest
 ```
 
-The default run executes **~670 tests** in about 8 seconds. All tests that require real API keys, a local Ollama server, or running databases are automatically skipped.
-
-```
-601 passed, 42 skipped in 7.9s
-```
+The default run executes **~750 tests** in about 10 seconds. All tests that require real API keys, a local Ollama server, or running databases are automatically skipped.
 
 Run the Node.js SDK tests separately:
 
@@ -2562,6 +2965,9 @@ pytest tests/test_amygdala.py::TestAmygdala::test_scores_decision_text -v
 | `test_intent_classifier.py` | 32 | Weight table, keyword detection, confidence, two-tier classify_async, LLM fallback |
 | `test_fact_decayer.py` | 11 | Decay Cypher execution, count forwarding, config defaults, error skip |
 | `test_e2e_pipeline.py` | 17 | Full encode → consolidate → context pipeline; embedding failure survival |
+| `test_trigger_detector.py` | 33 | TriggerDetector patterns, filter_turns, any_triggered, collect_all_phrases; transcript_utils sentinel stripping and delta prompt |
+| `test_session_ingest.py` | 21 | POST /ingest/session (201, shape, idempotency, trigger filter, partial flag, assistant-only → 0 turns); POST /memory/fact (ui_manual defaults, confidence, status, low-confidence → pending) |
+| `test_sdk_middleware.py` | 28 | SmritikoshMiddleware proxy, buffering, partial flush threshold, close() idempotency, auto_inject (OpenAI + Anthropic), error resilience, thread safety |
 
 #### Node.js (`vitest`)
 

@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from sqlalchemy.ext.asyncio import AsyncSession
 from neo4j import AsyncSession as NeoSession
 
-from smritikosh.db.models import Event
+from smritikosh.db.models import Event, FactStatus, SOURCE_CONFIDENCE_DEFAULTS, SourceType
 from smritikosh.llm.adapter import LLMAdapter
 from smritikosh.memory.episodic import EpisodicMemory
 from smritikosh.memory.semantic import FactRecord, SemanticMemory
@@ -168,6 +168,8 @@ class Hippocampus:
         raw_text: str,
         app_id: str = "default",
         metadata: dict | None = None,
+        source_type: str = SourceType.API_EXPLICIT,
+        source_meta: dict | None = None,
     ) -> EncodedMemory:
         """
         Full memory encoding pipeline for one interaction.
@@ -213,6 +215,8 @@ class Hippocampus:
             embedding=embedding,
             importance_score=importance_score,
             metadata=metadata,
+            source_type=source_type,
+            source_meta=source_meta,
         )
         logger.info(
             "Episodic event stored",
@@ -221,7 +225,10 @@ class Hippocampus:
 
         # ── 5. Upsert semantic facts ──────────────────────────────────────
         stored_facts = await self._upsert_facts(
-            neo_session, user_id, app_id, extracted_facts, event_id=str(event.id)
+            neo_session, user_id, app_id, extracted_facts,
+            event_id=str(event.id),
+            source_type=source_type,
+            source_meta=source_meta,
         )
 
         result = EncodedMemory(
@@ -324,12 +331,22 @@ class Hippocampus:
         app_id: str,
         fact_dicts: list[dict],
         event_id: str | None = None,
+        source_type: str = SourceType.API_EXPLICIT,
+        source_meta: dict | None = None,
     ) -> list[FactRecord]:
         """Upsert each extracted fact dict to SemanticMemory. Skips invalid entries."""
         source_ids = [event_id] if event_id else []
+        # Confidence floor for pending — below this the fact needs user review
+        pending_threshold = 0.60
+        # Use source-type default as the baseline if the LLM didn't supply confidence
+        source_default_conf = SOURCE_CONFIDENCE_DEFAULTS.get(source_type, 0.90)
         stored: list[FactRecord] = []
         for fd in fact_dicts:
             try:
+                raw_conf = float(fd.get("confidence", source_default_conf))
+                # Scale LLM-provided confidence by the source-type ceiling
+                confidence = raw_conf * source_default_conf
+                status = FactStatus.ACTIVE if confidence >= pending_threshold else FactStatus.PENDING
                 fact = await self.semantic.upsert_fact(
                     neo_session,
                     user_id=user_id,
@@ -337,8 +354,11 @@ class Hippocampus:
                     category=fd["category"],
                     key=fd["key"],
                     value=fd["value"],
-                    confidence=float(fd.get("confidence", 1.0)),
+                    confidence=confidence,
                     source_event_ids=source_ids,
+                    source_type=source_type,
+                    source_meta=source_meta or {},
+                    status=status,
                 )
                 stored.append(fact)
             except (KeyError, ValueError) as exc:
