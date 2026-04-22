@@ -184,7 +184,7 @@ Your application
 | **SourceConnector** | Normalises external sources (file, webhook, Slack, email, calendar) into events | — |
 | **MemoryScheduler** | Runs all background jobs on configurable timers (APScheduler) | — |
 | **IntentClassifier** | Two-tier intent classification: keyword heuristic + LLM fallback for ambiguous queries | — |
-| **LLMAdapter** | Unified interface to Claude, OpenAI, Gemini, Ollama, vLLM; logs resolved provider + model at startup | — |
+| **LLMAdapter** | Unified interface to Claude, OpenAI, Gemini, Ollama, vLLM, llama.cpp; logs resolved provider + model at startup | — |
 | **SmritikoshClient (Python)** | Python SDK wrapping the REST API | — |
 | **SmritikoshClient (Node.js)** | TypeScript/ESM SDK with identical surface to the Python SDK | — |
 
@@ -267,8 +267,9 @@ You need **at least one** of these keys:
 | **OpenAI** | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) | `gpt-4o-mini` |
 | **Gemini** | [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey) | `gemini-1.5-flash` |
 | **Ollama (free, local)** | [ollama.com](https://ollama.com) | `llama3.2` |
+| **llama.cpp (free, local)** | [github.com/ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) | any GGUF model |
 
-You also need an **embedding model**. The easiest option is to reuse OpenAI's `text-embedding-3-small` (it is very cheap — a few cents per million tokens). If you prefer to run fully offline, see the [LLM provider guide](#llm-provider-guide) for Ollama embeddings.
+You also need an **embedding model**. The easiest option is to reuse OpenAI's `text-embedding-3-small` (it is very cheap — a few cents per million tokens). If you prefer to run fully offline, see the [LLM provider guide](#llm-provider-guide) for Ollama or llama.cpp embeddings.
 
 ---
 
@@ -315,7 +316,7 @@ Open `.env` in any text editor and fill in **at minimum** these four lines (ever
 
 ```dotenv
 # Which LLM to use for fact extraction and summarisation
-LLM_PROVIDER=claude                          # or: openai / gemini / ollama
+LLM_PROVIDER=claude                          # or: openai / gemini / ollama / vllm / llamacpp
 LLM_MODEL=claude-haiku-4-5-20251001          # or your chosen model
 LLM_API_KEY=sk-ant-...                       # paste your API key here
 
@@ -427,7 +428,7 @@ curl http://localhost:8080/health
 ```
 
 ```json
-{"status": "ok", "postgres": "ok", "neo4j": "ok"}
+{"status": "ok", "postgres": "ok", "neo4j": "ok", "mongodb": "not_configured", "llm_model": "...", "llm_status": "ok"}
 ```
 
 ---
@@ -892,8 +893,8 @@ Notice that on the last message, the bot knows about the Rust milestone stored v
 ### Where to look next
 
 - **Dashboard** (`http://localhost:3000`) — log in as `alice` and browse the memory timeline, see the fact graph, check the audit trail
-- **Identity page** — click "Show fact graph" to see the Neo4j knowledge graph visualised as a React Flow canvas
-- **Memory detail** — click any event in the timeline to see its narrative links graph
+- **Identity page** — the 3D force graph shows all 23 fact categories; click any fact orb to see which memories contributed to it
+- **Memory detail** — click any event in the timeline to see its narrative links graph (orb nodes, gold RELATED_TO edges)
 - **Admin panel** — log in as `admin` to see all users, trigger consolidation (`/admin/jobs`), or check system health
 - **Run consolidation** — `curl -X POST "http://localhost:8080/admin/consolidate?user_id=alice"` to compress Alice's memories into summaries and extract more facts into Neo4j
 
@@ -1419,15 +1420,17 @@ All backend settings are read from the environment (or `.env`). Every field has 
 
 | Variable | Default | Description |
 |---|---|---|
-| `LLM_PROVIDER` | `claude` | `claude` / `openai` / `gemini` / `ollama` / `vllm` |
+| `LLM_PROVIDER` | `claude` | `claude` / `openai` / `gemini` / `ollama` / `vllm` / `llamacpp` |
 | `LLM_MODEL` | `claude-haiku-4-5-20251001` | Model name for chat/extraction |
 | `LLM_API_KEY` | — | API key for the chat provider |
-| `LLM_BASE_URL` | — | Custom base URL (Ollama / vLLM only) |
-| `EMBEDDING_PROVIDER` | `openai` | `openai` / `ollama` / `vllm` / `gemini` |
+| `LLM_BASE_URL` | — | Custom base URL (Ollama / vLLM / llama.cpp only) |
+| `LLM_MAX_TOKENS` | *(unset)* | Max tokens for LLM responses. Leave unset for no limit. |
+| `EMBEDDING_PROVIDER` | `openai` | `openai` / `ollama` / `vllm` / `gemini` / `llamacpp` |
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model name |
 | `EMBEDDING_API_KEY` | — | API key for the embedding provider |
 | `EMBEDDING_BASE_URL` | — | Custom base URL for embeddings |
-| `EMBEDDING_DIMENSIONS` | `1536` | Vector size — must match your model |
+| `EMBEDDING_DIMENSIONS` | *(unset)* | Vector size — must match your model's output dimension. Leave unset if your model's dimension is detected automatically. |
+| `SQLALCHEMY_LOG_LEVEL` | `WARNING` | SQLAlchemy engine log verbosity. `INFO` shows all SQL queries; `ERROR` for errors only. |
 | `POSTGRES_URL` | `postgresql+asyncpg://smritikosh:smritikosh@localhost:5432/smritikosh` | Async PostgreSQL connection string |
 | `NEO4J_URI` | `bolt://localhost:7687` | Neo4j bolt URI |
 | `NEO4J_USER` | `neo4j` | Neo4j username |
@@ -1511,21 +1514,21 @@ The UI uses **NextAuth.js v5** with a Credentials provider that exchanges a user
 
 ### Fact graph (Identity page)
 
-The Identity page includes an interactive **React Flow** visualisation of the Neo4j fact graph:
+The Identity page includes an interactive **3D force-directed graph** (powered by `react-force-graph-3d`) visualising the Neo4j fact graph, with a toggle to switch to a 2D layout:
 
-- The logged-in user appears as the central node
-- Facts are clustered radially by category (preference, interest, role, project, skill, goal, relationship)
-- `RELATED_TO` edges between facts are shown as animated orange lines
+- The logged-in user appears as the central orb
+- Facts are grouped radially by category — 23 categories spanning identity, location, role, skill, education, project, goal, interest, hobby, habit, preference, personality, relationship, pet, health, diet, belief, value, religion, finance, lifestyle, event, and tool
 - Each category has its own colour; a legend is shown in the bottom-left corner
+- Clicking a fact node opens a side panel showing the **contributing memories** — the specific events that caused that fact to be extracted
+- The sidebar is collapsed by default; click the expand handle to open it
 
 ### Memory graph (Memory detail page)
 
-Each memory event has a dedicated graph view at `/dashboard/memories/[id]`:
+Each memory event has a dedicated narrative-links graph at `/dashboard/memories/[id]`:
 
-- The focal event is centred
-- Predecessor events (what caused this memory) appear on the left
-- Successor events (what this led to) appear on the right
-- Edge colours encode relation type: rose=caused, amber=preceded, violet=related, cyan=contradicts
+- Nodes are rendered as orbs using `react-force-graph-2d`
+- The focal event is centred; predecessor and successor events radiate outward
+- `RELATED_TO` edges are shown in gold; other narrative links use type-coded colours (rose=caused, amber=preceded, violet=related, cyan=contradicts)
 - Clicking any node navigates to that event's own graph
 
 ---
@@ -1618,19 +1621,23 @@ curl http://localhost:8080/health
 ```json
 {
   "status": "ok",
-  "version": "0.1.0",
   "postgres": "ok",
-  "neo4j": "ok"
+  "neo4j": "ok",
+  "mongodb": "ok",
+  "llm_model": "claude-haiku-4-5-20251001",
+  "llm_status": "ok"
 }
 ```
 
 | `status` value | Meaning |
 |---|---|
-| `"ok"` | Server running, both databases reachable |
-| `"degraded"` | Server running, but one or both databases unreachable |
+| `"ok"` | Server running, all required services reachable |
+| `"degraded"` | Server running, but one or more services are unavailable |
 | `"error"` | Server internal error |
 
-The `postgres` and `neo4j` fields each carry `"ok"` or `"error"` independently so you can tell which dependency is down.
+- `postgres` and `neo4j` are required — either `"ok"` or `"error"`.
+- `mongodb` is optional — `"ok"`, `"error"`, or `"not_configured"` (when `MONGODB_URL` is unset).
+- `llm_status` is `"ok"` when an API key is present (cloud providers) or a base URL is set (local providers). `llm_model` shows the resolved model name.
 
 ---
 
@@ -2645,6 +2652,29 @@ EMBEDDING_MODEL=Qwen/Qwen2.5-7B-Instruct
 EMBEDDING_BASE_URL=http://localhost:8000/v1
 EMBEDDING_DIMENSIONS=3584          # match your model's output dimension
 ```
+
+### llama.cpp (local)
+
+`llama-server` exposes an OpenAI-compatible API, so Smritikosh treats it as a local OpenAI endpoint. Download and build [llama.cpp](https://github.com/ggml-org/llama.cpp), then start the server with your GGUF model:
+
+```bash
+llama-server -m /path/to/model.gguf --port 8081 --embedding
+```
+
+The `--embedding` flag enables the native `/embedding` endpoint that Smritikosh uses for vector generation.
+
+```dotenv
+LLM_PROVIDER=llamacpp
+LLM_MODEL=my-model                 # name is passed through; llama-server ignores it
+LLM_BASE_URL=http://localhost:8081/v1
+
+EMBEDDING_PROVIDER=llamacpp
+EMBEDDING_MODEL=my-model
+EMBEDDING_BASE_URL=http://localhost:8081  # note: no /v1 — uses native /embedding path
+EMBEDDING_DIMENSIONS=4096          # match your model's output dimension
+```
+
+> **Tip:** llama.cpp does not require an API key. You do not need to set `LLM_API_KEY`.
 
 ---
 
