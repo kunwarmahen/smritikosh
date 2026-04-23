@@ -7,6 +7,7 @@ import { clsx } from "clsx";
 import { useDeleteEvent, useSubmitFeedback } from "@/hooks/useMemory";
 import type { MemoryEvent } from "@/types";
 import { importanceLevel } from "@/types";
+import { SourceBadge } from "./SourceBadge";
 
 interface Props {
   event: MemoryEvent;
@@ -94,6 +95,9 @@ export function MemoryCard({ event, onViewGraph }: Props) {
               <Sparkles className="w-3 h-3" />
               {(event.hybrid_score * 100).toFixed(0)}% match
             </span>
+          )}
+          {event.source_type && event.source_type !== "api_explicit" && (
+            <SourceBadge sourceType={event.source_type} />
           )}
         </div>
         <span className="text-xs text-zinc-600 flex-shrink-0">{timeAgo}</span>

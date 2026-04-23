@@ -160,6 +160,18 @@ export function createApiClient(token?: string) {
     deleteProcedure: (procedureId: string) =>
       request(`/procedures/${procedureId}`, opts({ method: "DELETE" })),
 
+    // ── Manual fact entry ─────────────────────────────────────────────────
+    storeFact: (body: {
+      user_id: string;
+      app_id?: string;
+      category: string;
+      key: string;
+      value: string;
+      note?: string;
+      source_type?: string;
+      confidence?: number;
+    }) => request("/memory/fact", opts({ method: "POST", body: JSON.stringify(body) })),
+
     // ── Memory event detail & links ───────────────────────────────────────
     getEvent: (eventId: string) =>
       request(`/memory/event/${eventId}`, opts()),

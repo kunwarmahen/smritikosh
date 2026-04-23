@@ -12,12 +12,36 @@ export interface MemoryEvent {
   consolidated: boolean;
   cluster_id?: number | null;
   cluster_label?: string | null;
+  source_type?: string;
   created_at: string;
   updated_at?: string;
   last_reconsolidated_at?: string | null;
   // Present when this event came from a search result
   hybrid_score?: number;
   similarity_score?: number;
+}
+
+export interface FactRequest {
+  category: string;
+  key: string;
+  value: string;
+  note?: string;
+  source_type?: string;
+  confidence?: number;
+}
+
+export interface FactResponse {
+  user_id: string;
+  app_id: string;
+  category: string;
+  key: string;
+  value: string;
+  confidence: number;
+  frequency_count: number;
+  source_type: string;
+  status: string;
+  first_seen_at: string;
+  last_seen_at: string;
 }
 
 export interface RecentEventsResponse {

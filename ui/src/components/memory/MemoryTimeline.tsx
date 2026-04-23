@@ -2,16 +2,18 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Inbox, RefreshCw } from "lucide-react";
+import { Loader2, Inbox, RefreshCw, Plus } from "lucide-react";
 import { useRecentEvents } from "@/hooks/useMemory";
 import { MemoryCard } from "./MemoryCard";
 import { MemorySearch } from "./MemorySearch";
+import { AddMemoryForm } from "./AddMemoryForm";
 import type { MemoryEvent, SearchResultItem } from "@/types";
 
 export function MemoryTimeline() {
   const router = useRouter();
   const [limit, setLimit] = useState(20);
   const [searchResults, setSearchResults] = useState<SearchResultItem[] | null>(null);
+  const [showAddForm, setShowAddForm] = useState(false);
 
   const { data, isLoading, isError, refetch, isFetching } = useRecentEvents({ limit });
 
@@ -34,15 +36,24 @@ export function MemoryTimeline() {
 
   return (
     <div className="space-y-4">
+      {showAddForm && <AddMemoryForm onClose={() => setShowAddForm(false)} />}
+
       {/* Search + header */}
       <div className="flex items-center gap-3">
         <div className="flex-1">
           <MemorySearch onResults={setSearchResults} />
         </div>
         <button
+          onClick={() => setShowAddForm(true)}
+          className="btn-secondary px-3 py-2 flex-shrink-0"
+          title="Add memory"
+        >
+          <Plus className="w-4 h-4" />
+        </button>
+        <button
           onClick={() => refetch()}
           disabled={isFetching}
-          className="btn-secondary px-3 py-2"
+          className="btn-secondary px-3 py-2 flex-shrink-0"
           title="Refresh"
         >
           <RefreshCw className={`w-4 h-4 ${isFetching ? "animate-spin" : ""}`} />

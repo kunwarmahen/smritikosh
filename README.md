@@ -1143,8 +1143,9 @@ ui/                          # Next.js 16 dashboard (App Router)
 │   │   ├── (auth)/login/    # Sign-in page with error handling
 │   │   ├── (dashboard)/dashboard/
 │   │   │   ├── page.tsx            # Redirect → /dashboard/memories
-│   │   │   ├── memories/           # Memory timeline list
+│   │   │   ├── memories/           # Memory timeline list (+ Add Memory button)
 │   │   │   │   └── [id]/           # Memory detail: importance card + narrative graph
+│   │   │   ├── review/             # Auto-extracted memory review queue (approve / remove)
 │   │   │   ├── search/             # Hybrid search with score breakdown
 │   │   │   ├── identity/           # Identity profile + React Flow fact graph toggle
 │   │   │   ├── clusters/           # Events grouped by topic cluster
@@ -1159,8 +1160,11 @@ ui/                          # Next.js 16 dashboard (App Router)
 │   │       └── audit/              # Global audit log (all users)
 │   ├── components/
 │   │   ├── memory/
-│   │   │   ├── MemoryTimeline.tsx  # Virtualised event list with importance badges
-│   │   │   └── MemoryGraphView.tsx # React Flow: narrative links (caused/preceded/…)
+│   │   │   ├── MemoryTimeline.tsx  # Event list with importance badges + Add Memory button
+│   │   │   ├── MemoryCard.tsx      # Memory card with source badge
+│   │   │   ├── MemoryGraphView.tsx # React Flow: narrative links (caused/preceded/…)
+│   │   │   ├── SourceBadge.tsx     # Reusable source-type badge (13 types, icon + colour)
+│   │   │   └── AddMemoryForm.tsx   # Modal: manual fact entry → POST /memory/fact
 │   │   ├── identity/
 │   │   │   ├── IdentityProfile.tsx # Dimension grid + confidence bars + beliefs
 │   │   │   └── IdentityFactGraph.tsx # React Flow: radial fact knowledge graph
@@ -1645,8 +1649,9 @@ npm start        # serve the production build
 | Route | Role | Description |
 |---|---|---|
 | `/login` | All | Sign in with username + password |
-| `/dashboard/memories` | User | Memory timeline — search, feedback, delete |
+| `/dashboard/memories` | User | Memory timeline — search, feedback, delete; **+ Add Memory** button opens manual entry form |
 | `/dashboard/memories/[id]` | User | Narrative link graph + audit lineage for one event |
+| `/dashboard/review` | User | Review queue for auto-extracted memories — approve or remove, filterable by source type |
 | `/dashboard/identity` | User | Identity model: summary, dimensions, inferred beliefs, fact graph |
 | `/dashboard/clusters` | User | Memories grouped by topic cluster |
 | `/dashboard/audit` | User | Personal audit trail with event-type filter |
@@ -1674,6 +1679,39 @@ The Identity page includes an interactive **3D force-directed graph** (powered b
 - Each category has its own colour; a legend is shown in the bottom-left corner
 - Clicking a fact node opens a side panel showing the **contributing memories** — the specific events that caused that fact to be extracted
 - The sidebar is collapsed by default; click the expand handle to open it
+
+### Source badges
+
+Every memory card in the timeline and review queue displays a **source badge** showing how the memory entered the system. Badges are colour-coded by provenance:
+
+| Badge | Colour | `source_type` |
+|---|---|---|
+| API | zinc | `api_explicit` |
+| Manual | blue | `ui_manual` |
+| Distilled | amber | `passive_distillation` |
+| Streaming | orange | `passive_streaming` |
+| Triggered | yellow | `trigger_word` |
+| SDK | sky | `sdk_middleware` |
+| Webhook | indigo | `webhook_ingest` |
+| Tool | purple | `tool_use` |
+| Synthesized | teal | `cross_system` |
+| Voice / Audio / Image / Doc | rose/pink/violet/slate | `media_*` |
+
+`api_explicit` is the default and shows no badge (to avoid visual noise for the common case). All other sources display an icon + label.
+
+### Add Memory form
+
+The **+ button** in the memory timeline toolbar opens a modal for manually recording a structured fact. Fields: category (all 23 fact categories), key, value, optional note. The fact is stored via `POST /memory/fact` with `source_type="ui_manual"` and confidence 1.0, and the identity graph + fact graph refresh automatically.
+
+### Review page (`/dashboard/review`)
+
+Auto-extracted memories (source types other than `api_explicit` and `ui_manual`) surface here for human review before they influence the knowledge graph. Features:
+
+- Filterable by source type; counts shown per filter chip
+- **Approve** (thumbs-up feedback) marks a memory as verified without deleting it
+- **Remove** (trash) deletes the event entirely
+- Approved items fade out of the queue immediately
+- Empty state when nothing is pending review
 
 ### Memory graph (Memory detail page)
 
@@ -2290,6 +2328,14 @@ python sample/middleware_demo.py
 ```
 
 Wraps a fake OpenAI-style client with `SmritikoshMiddleware` — no real API keys required. Shows turn buffering, partial flushing every N turns, `auto_inject=True` context prepending, and final flush on `close()`. Swap `FakeOpenAI()` for `openai.OpenAI()` or `anthropic.Anthropic()` in production.
+
+### Dashboard integration (Phase 7)
+
+All memory source types are surfaced in the dashboard UI:
+
+- **Source badges** — every memory card shows a colour-coded badge (amber = Distilled, sky = SDK, blue = Manual, etc.). `api_explicit` shows no badge to avoid noise.
+- **Review queue** (`/dashboard/review`) — auto-extracted memories appear here for human review. Approve (thumbs-up) or remove (trash) each one; filter by source type.
+- **Add Memory form** — the `+` button in the memory timeline opens a modal to manually record a structured fact (category → key → value). Stored as `ui_manual` with confidence 1.0; the identity graph refreshes automatically.
 
 ---
 

@@ -15,16 +15,18 @@ import {
   LogOut,
   ChevronLeft,
   ChevronRight,
+  ScanEye,
 } from "lucide-react";
 import { clsx } from "clsx";
 import { useState } from "react";
 
 const USER_NAV = [
-  { href: "/dashboard/memories",   icon: Clock,       label: "Memories" },
-  { href: "/dashboard/identity",   icon: User2,       label: "Identity" },
-  { href: "/dashboard/clusters",   icon: Grid3X3,     label: "Clusters" },
-  { href: "/dashboard/audit",      icon: ScrollText,  label: "Audit trail" },
-  { href: "/dashboard/procedures", icon: Zap,         label: "Procedures" },
+  { href: "/dashboard/memories",   icon: Clock,      label: "Memories" },
+  { href: "/dashboard/review",     icon: ScanEye,    label: "Review" },
+  { href: "/dashboard/identity",   icon: User2,      label: "Identity" },
+  { href: "/dashboard/clusters",   icon: Grid3X3,    label: "Clusters" },
+  { href: "/dashboard/audit",      icon: ScrollText, label: "Audit trail" },
+  { href: "/dashboard/procedures", icon: Zap,        label: "Procedures" },
 ];
 
 const SETTINGS_NAV = [

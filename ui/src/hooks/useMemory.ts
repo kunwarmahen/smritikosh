@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSession } from "next-auth/react";
 import { createApiClient } from "@/lib/api-client";
-import type { RecentEventsResponse, SearchResponse, FeedbackResponse } from "@/types";
+import type { RecentEventsResponse, SearchResponse, FeedbackResponse, FactRequest, FactResponse } from "@/types";
 
 export function useRecentEvents(params?: { limit?: number; app_id?: string }) {
   const { data: session } = useSession();
@@ -65,6 +65,24 @@ export function useDeleteEvent() {
     mutationFn: (eventId) => createApiClient(token).deleteEvent(eventId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["memory"] });
+    },
+  });
+}
+
+export function useStoreFact() {
+  const { data: session } = useSession();
+  const token = session?.accessToken;
+  const qc = useQueryClient();
+
+  return useMutation<FactResponse, Error, FactRequest>({
+    mutationFn: (vars) =>
+      createApiClient(token).storeFact({
+        user_id: session!.user.id,
+        ...vars,
+      }) as Promise<FactResponse>,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["identity"] });
+      qc.invalidateQueries({ queryKey: ["factGraph"] });
     },
   });
 }
