@@ -472,3 +472,45 @@ class AdminUserPatch(BaseModel):
     is_active: Optional[bool] = None
     role: Optional[str] = None
     app_ids: Optional[list[str]] = None
+
+
+# ── POST /ingest/media  GET /ingest/media/{id}/status  POST /ingest/media/{id}/confirm ──
+
+
+class MediaIngestResponse(BaseModel):
+    """Response from POST /ingest/media or status polling."""
+    media_id: str
+    user_id: str
+    app_id: str
+    content_type: str  # voice_note | document
+    status: str  # processing | complete | nothing_found | failed
+    facts_extracted: int = 0
+    facts_pending_review: int = 0
+    message: str = ""
+
+
+class PendingFact(BaseModel):
+    """A fact extracted from media awaiting user confirmation."""
+    content: str
+    category: str
+    key: str
+    value: str
+    relevance_score: float
+    confidence: float
+
+
+class MediaStatusResponse(BaseModel):
+    """Response from GET /ingest/media/{id}/status."""
+    media_id: str
+    status: str  # processing | complete | nothing_found | failed
+    facts_extracted: int
+    facts_pending_review: int
+    pending_facts: list[dict]  # raw fact dicts for review modal
+    message: str = ""
+
+
+class MediaFactConfirmRequest(BaseModel):
+    """Confirm selected facts from pending_facts for saving."""
+    user_id: str
+    app_id: str = "default"
+    confirmed_indices: list[int]  # indices into pending_facts to save

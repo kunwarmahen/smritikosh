@@ -82,6 +82,18 @@ class Settings(BaseSettings):
     scheduler_belief_mining_cron: str = "0 */12 * * *"  # every 12 hours
     scheduler_fact_decay_cron: str = "0 3 * * 0"       # weekly, Sunday 03:00 UTC
 
+    # ── Media ingestion (Whisper transcription) ────────────────────────────
+    # Provider: "openai" (cloud) or "local" (self-hosted, via ollama/vllm/llamacpp)
+    whisper_provider: str = "openai"
+    whisper_model: str = "whisper-1"
+    whisper_api_key: str | None = None  # for OpenAI; defaults to embedding_api_key if unset
+    whisper_base_url: str | None = None  # for local providers (ollama, vllm, etc.)
+
+    # ── Media file size limits ────────────────────────────────────────────
+    media_max_audio_mb: int = 25  # Whisper API limit
+    media_max_document_mb: int = 10
+    media_max_document_pages: int = 50  # PDF page cap
+
 
 # Single shared instance — import this everywhere
 settings = Settings()

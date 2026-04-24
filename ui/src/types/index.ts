@@ -196,6 +196,32 @@ export interface MemoryLinksResponse {
   links: MemoryLink[];
 }
 
+// ── Media ingestion types ──────────────────────────────────────────────────────
+
+export interface PendingFact {
+  content: string;
+  category: string;
+  key: string;
+  value: string;
+  relevance_score: number;
+  confidence: number;
+}
+
+export interface MediaUploadResponse {
+  media_id: string;
+  user_id: string;
+  app_id: string;
+  content_type: string;
+  status: 'processing' | 'complete' | 'nothing_found' | 'failed';
+  facts_extracted: number;
+  facts_pending_review: number;
+  message: string;
+}
+
+export interface MediaStatusResponse extends MediaUploadResponse {
+  pending_facts: PendingFact[];
+}
+
 // ── UI-only types ─────────────────────────────────────────────────────────────
 
 export type ImportanceLevel = "high" | "medium" | "low";

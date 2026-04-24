@@ -145,6 +145,17 @@ def get_synthesizer() -> CrossSystemSynthesizer:
 
 
 @lru_cache(maxsize=1)
+def get_media_processor():
+    """Return the MediaProcessor singleton for media ingestion."""
+    from smritikosh.processing.media_processor import MediaProcessor
+    return MediaProcessor(
+        llm=get_llm(),
+        hippocampus=get_hippocampus(),
+        semantic=get_semantic(),
+    )
+
+
+@lru_cache(maxsize=1)
 def get_reconsolidation_engine() -> ReconsolidationEngine:
     return ReconsolidationEngine(llm=get_llm(), episodic=get_episodic(), audit=get_audit_logger())
 

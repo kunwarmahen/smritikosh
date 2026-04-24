@@ -1,0 +1,403 @@
+'use client';
+
+import { useEffect, useRef, useState } from 'react';
+import { FileUp, CheckCircle2, AlertCircle, Loader2, Upload, X } from 'lucide-react';
+import { useSession } from 'next-auth/react';
+import { useUploadMedia, useMediaStatus, useConfirmMediaFacts } from '@/hooks/useMemory';
+import { PendingFact } from '@/types';
+
+type Step = 'upload' | 'processing' | 'review' | 'success' | 'nothing_found' | 'error';
+
+interface UploadMediaFormProps {
+  onClose: () => void;
+}
+
+export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
+  const { data: session } = useSession();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [step, setStep] = useState<Step>('upload');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [contentType, setContentType] = useState<'voice_note' | 'document'>('voice_note');
+  const [contextNote, setContextNote] = useState('');
+  const [mediaId, setMediaId] = useState<string | null>(null);
+  const [selectedFactIndices, setSelectedFactIndices] = useState<Set<number>>(new Set());
+
+  const uploadMedia = useUploadMedia();
+  const mediaStatus = useMediaStatus(mediaId);
+  const confirmFacts = useConfirmMediaFacts();
+
+  // Auto-transition when processing completes
+  useEffect(() => {
+    if (!mediaStatus.data) return;
+
+    const status = mediaStatus.data.status;
+    if (status === 'processing') return; // Still processing
+
+    if (status === 'nothing_found') {
+      setStep('nothing_found');
+    } else if (status === 'failed') {
+      setStep('error');
+    } else if (status === 'complete') {
+      if (mediaStatus.data.facts_pending_review > 0) {
+        // Initialize all pending facts as checked
+        setSelectedFactIndices(new Set(mediaStatus.data.pending_facts.map((_, i) => i)));
+        setStep('review');
+      } else {
+        setStep('success');
+      }
+    }
+  }, [mediaStatus.data?.status, mediaStatus.data?.facts_pending_review]);
+
+  const handleFileSelect = (files: FileList | null) => {
+    if (files && files[0]) {
+      setSelectedFile(files[0]);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.currentTarget.classList.add('border-violet-400', 'bg-violet-950');
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.currentTarget.classList.remove('border-violet-400', 'bg-violet-950');
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.currentTarget.classList.remove('border-violet-400', 'bg-violet-950');
+    handleFileSelect(e.dataTransfer.files);
+  };
+
+  const handleSubmitUpload = async () => {
+    if (!selectedFile || !session) return;
+
+    const formData = new FormData();
+    formData.append('user_id', session.user.id);
+    formData.append('app_id', 'default');
+    formData.append('content_type', contentType);
+    formData.append('context_note', contextNote);
+    formData.append('file', selectedFile);
+
+    setStep('processing');
+    const result = await uploadMedia.mutateAsync(formData);
+    setMediaId(result.media_id);
+  };
+
+  const handleConfirmFacts = async () => {
+    if (!mediaId || !session) return;
+
+    await confirmFacts.mutateAsync({
+      mediaId,
+      user_id: session.user.id,
+      app_id: 'default',
+      confirmed_indices: Array.from(selectedFactIndices),
+    });
+
+    setStep('success');
+  };
+
+  // ── Step: Upload ──────────────────────────────────────────────────────
+  if (step === 'upload') {
+    return (
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-xl shadow-2xl">
+          {/* Header */}
+          <div className="border-b border-zinc-800 p-5 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Upload className="h-5 w-5 text-violet-400" />
+              <h2 className="text-lg font-semibold text-zinc-100">Upload Media</h2>
+            </div>
+            <button
+              onClick={onClose}
+              className="text-zinc-500 hover:text-zinc-300 transition-colors"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+
+          {/* Body */}
+          <div className="p-5 space-y-4">
+            {/* Dropzone */}
+            <div
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              className="border-2 border-dashed border-zinc-700 rounded-lg p-8 text-center transition-colors cursor-pointer hover:border-zinc-600"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <FileUp className="h-12 w-12 text-zinc-600 mx-auto mb-3" />
+              <p className="text-sm font-medium text-zinc-300 mb-1">
+                {selectedFile ? selectedFile.name : 'Drop file or click to browse'}
+              </p>
+              <p className="text-xs text-zinc-500">
+                {contentType === 'voice_note'
+                  ? 'MP3, WAV, M4A, WebM (max 25 MB)'
+                  : 'PDF, TXT, MD, CSV (max 10 MB)'}
+              </p>
+              <input
+                ref={fileInputRef}
+                type="file"
+                onChange={(e) => handleFileSelect(e.target.files)}
+                accept={
+                  contentType === 'voice_note'
+                    ? 'audio/*'
+                    : '.pdf,.txt,.md,.csv'
+                }
+                className="hidden"
+              />
+            </div>
+
+            {/* Content Type Selector */}
+            <div>
+              <label className="label">Content Type</label>
+              <div className="flex gap-2 mt-2">
+                <button
+                  onClick={() => setContentType('voice_note')}
+                  className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    contentType === 'voice_note'
+                      ? 'bg-violet-600 text-white'
+                      : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+                  }`}
+                >
+                  🎙 Voice Note
+                </button>
+                <button
+                  onClick={() => setContentType('document')}
+                  className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    contentType === 'document'
+                      ? 'bg-violet-600 text-white'
+                      : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+                  }`}
+                >
+                  📄 Document
+                </button>
+              </div>
+            </div>
+
+            {/* Context Note */}
+            <div>
+              <label className="label">Context (Optional)</label>
+              <textarea
+                value={contextNote}
+                onChange={(e) => setContextNote(e.target.value)}
+                placeholder="What should I know about this file?"
+                className="input w-full min-h-20 resize-none"
+              />
+            </div>
+          </div>
+
+          {/* Footer */}
+          <div className="border-t border-zinc-800 p-4 flex justify-end gap-3">
+            <button
+              onClick={onClose}
+              className="btn-secondary"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSubmitUpload}
+              disabled={!selectedFile || uploadMedia.isPending}
+              className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {uploadMedia.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Uploading…
+                </>
+              ) : (
+                <>
+                  <Upload className="h-4 w-4" />
+                  Upload
+                </>
+              )}
+            </button>
+          </div>
+
+          {uploadMedia.isError && (
+            <div className="bg-rose-950 border-t border-rose-800 px-5 py-3 text-sm text-rose-300">
+              {uploadMedia.error?.message || 'Upload failed'}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Step: Processing ──────────────────────────────────────────────────
+  if (step === 'processing') {
+    return (
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-md shadow-2xl p-8 text-center">
+          <Loader2 className="h-12 w-12 text-violet-400 mx-auto mb-4 animate-spin" />
+          <h3 className="text-lg font-semibold text-zinc-100 mb-2">Processing…</h3>
+          <p className="text-sm text-zinc-400">
+            {contentType === 'voice_note' ? 'Transcribing' : 'Analysing'} your file
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Step: Review ──────────────────────────────────────────────────────
+  if (step === 'review' && mediaStatus.data) {
+    return (
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-lg shadow-2xl">
+          {/* Header */}
+          <div className="border-b border-zinc-800 p-5 flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-zinc-100">Review Facts</h2>
+            <button
+              onClick={onClose}
+              className="text-zinc-500 hover:text-zinc-300"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+
+          {/* Body */}
+          <div className="p-5 space-y-4">
+            <p className="text-sm text-zinc-300">
+              Found {mediaStatus.data.facts_pending_review} thing
+              {mediaStatus.data.facts_pending_review !== 1 ? 's' : ''} that might be worth remembering:
+            </p>
+
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {mediaStatus.data.pending_facts.map((fact, idx) => (
+                <label
+                  key={idx}
+                  className="flex items-start gap-3 p-3 rounded-lg bg-zinc-800 hover:bg-zinc-700 cursor-pointer transition-colors group"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedFactIndices.has(idx)}
+                    onChange={(e) => {
+                      const newSet = new Set(selectedFactIndices);
+                      if (e.target.checked) {
+                        newSet.add(idx);
+                      } else {
+                        newSet.delete(idx);
+                      }
+                      setSelectedFactIndices(newSet);
+                    }}
+                    className="mt-0.5"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-zinc-100 break-words">
+                      {fact.content}
+                    </p>
+                    <div className="flex gap-2 mt-1 flex-wrap">
+                      <span className="text-xs bg-zinc-700 text-zinc-300 px-2 py-0.5 rounded">
+                        {fact.category}
+                      </span>
+                      <span className="text-xs text-zinc-400">
+                        {Math.round(fact.relevance_score * 100)}% relevant
+                      </span>
+                    </div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* Footer */}
+          <div className="border-t border-zinc-800 p-4 flex justify-end gap-3">
+            <button
+              onClick={() => {
+                setSelectedFactIndices(new Set());
+                handleConfirmFacts();
+              }}
+              className="btn-secondary"
+            >
+              Dismiss All
+            </button>
+            <button
+              onClick={handleConfirmFacts}
+              disabled={selectedFactIndices.size === 0 || confirmFacts.isPending}
+              className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {confirmFacts.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Saving…
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="h-4 w-4" />
+                  Save {selectedFactIndices.size > 0 ? selectedFactIndices.size : 0}
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Step: Success ─────────────────────────────────────────────────────
+  if (step === 'success' && mediaStatus.data) {
+    return (
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-md shadow-2xl p-8 text-center">
+          <CheckCircle2 className="h-12 w-12 text-emerald-400 mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-zinc-100 mb-2">Memories Saved!</h3>
+          <p className="text-sm text-zinc-400 mb-6">
+            Saved {mediaStatus.data.facts_extracted + mediaStatus.data.facts_pending_review} fact
+            {mediaStatus.data.facts_extracted + mediaStatus.data.facts_pending_review !== 1 ? 's' : ''}
+          </p>
+          <button
+            onClick={onClose}
+            className="btn-primary w-full"
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Step: Nothing Found ───────────────────────────────────────────────
+  if (step === 'nothing_found') {
+    return (
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-md shadow-2xl p-8 text-center">
+          <AlertCircle className="h-12 w-12 text-amber-400 mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-zinc-100 mb-2">Nothing Found</h3>
+          <p className="text-sm text-zinc-400 mb-6">
+            No extractable content was found in this file. Try adding a context note to help guide the analysis.
+          </p>
+          <button
+            onClick={onClose}
+            className="btn-primary w-full"
+          >
+            Back
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Step: Error ───────────────────────────────────────────────────────
+  if (step === 'error' && mediaStatus.data?.message) {
+    return (
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-md shadow-2xl p-8 text-center">
+          <AlertCircle className="h-12 w-12 text-rose-400 mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-zinc-100 mb-2">Processing Error</h3>
+          <p className="text-sm text-zinc-400 mb-6">
+            {mediaStatus.data.message}
+          </p>
+          <button
+            onClick={onClose}
+            className="btn-primary w-full"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}

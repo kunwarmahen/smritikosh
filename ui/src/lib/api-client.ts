@@ -32,10 +32,15 @@ async function request<T>(
   options: RequestInit & { token?: string } = {},
 ): Promise<T> {
   const { token, ...fetchOptions } = options;
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...(fetchOptions.headers as Record<string, string>),
-  };
+  const headers: Record<string, string> = {};
+
+  // Skip Content-Type for FormData (browser will set it with boundary)
+  if (!(fetchOptions.body instanceof FormData)) {
+    headers["Content-Type"] = "application/json";
+  }
+
+  Object.assign(headers, fetchOptions.headers as Record<string, string>);
+
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
   const res = await fetch(`${API_URL}${path}`, { ...fetchOptions, headers });
@@ -171,6 +176,20 @@ export function createApiClient(token?: string) {
       source_type?: string;
       confidence?: number;
     }) => request("/memory/fact", opts({ method: "POST", body: JSON.stringify(body) })),
+
+    // ── Media ingestion ───────────────────────────────────────────────────
+    uploadMedia: (formData: FormData) =>
+      request("/ingest/media", opts({ method: "POST", body: formData })),
+
+    getMediaStatus: (mediaId: string) =>
+      request(`/ingest/media/${mediaId}/status`, opts()),
+
+    confirmMediaFacts: (mediaId: string, body: {
+      user_id: string;
+      app_id?: string;
+      confirmed_indices: number[];
+    }) =>
+      request(`/ingest/media/${mediaId}/confirm`, opts({ method: "POST", body: JSON.stringify(body) })),
 
     // ── Memory event detail & links ───────────────────────────────────────
     getEvent: (eventId: string) =>

@@ -150,6 +150,20 @@ class FactStatus(StrEnum):
     REJECTED = "rejected"  # user dismissed or system discarded
 
 
+class MediaContentType(StrEnum):
+    """Type of media uploaded for memory extraction."""
+    VOICE_NOTE = "voice_note"    # user's spoken audio
+    DOCUMENT   = "document"       # text document (PDF, TXT, etc.)
+
+
+class MediaIngestStatus(StrEnum):
+    """Lifecycle state for media ingestion jobs."""
+    PROCESSING     = "processing"       # file being transcribed/parsed and processed
+    COMPLETE       = "complete"         # processing finished; facts may be auto-saved or pending review
+    NOTHING_FOUND  = "nothing_found"    # no extractable content found
+    FAILED         = "failed"           # processing failed (error captured in error_message)
+
+
 class FeedbackType(StrEnum):
     """User signal on whether a recalled memory was useful."""
     POSITIVE = "positive"   # memory was helpful / relevant
@@ -635,3 +649,76 @@ class ApiKey(Base):
 
     def __repr__(self) -> str:
         return f"<ApiKey user={self.user_id!r} name={self.name!r}>"
+
+
+class MediaIngest(Base):
+    """
+    Idempotency and status tracking for media uploads (voice notes, documents).
+
+    When a user uploads a file via POST /ingest/media, a MediaIngest record is created
+    immediately with status=processing. A background task transcribes/parses the file,
+    extracts facts, and updates this record with results.
+
+    High-confidence facts (> 0.75 relevance) are auto-saved to EpisodicMemory.
+    Ambiguous facts (0.60–0.75) are stored in pending_facts JSONB for user review
+    before being written to SemanticMemory.
+
+    Idempotency: if idempotency_key is supplied, re-posting the same key returns the
+    original result (lookup by unique constraint).
+    """
+
+    __tablename__ = "media_ingests"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "app_id",
+            "idempotency_key",
+            name="uq_media_ingests_idempotency",
+            postgresql_where="idempotency_key IS NOT NULL",
+        ),
+        Index("ix_media_ingests_user_app", "user_id", "app_id"),
+        Index("ix_media_ingests_status", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    app_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    content_type: Mapped[str] = mapped_column(
+        String(32), nullable=False
+    )  # voice_note | document
+    idempotency_key: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True, default=None
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=MediaIngestStatus.PROCESSING
+    )  # processing | complete | nothing_found | failed
+    source_type: Mapped[Optional[str]] = mapped_column(
+        String(32), nullable=True, default=None
+    )  # populated during processing
+    facts_extracted: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    facts_pending_review: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+    pending_facts: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list
+    )  # list of fact dicts awaiting user confirmation
+    event_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("events.id", ondelete="SET NULL"), nullable=True
+    )  # episodic memory record if created
+    error_message: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True, default=None
+    )  # if status=failed
+    processed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<MediaIngest id={self.id!r} type={self.content_type} "
+            f"status={self.status} facts={self.facts_extracted}>"
+        )

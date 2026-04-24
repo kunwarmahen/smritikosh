@@ -180,6 +180,94 @@ class LLMAdapter:
         embedding = data[0]["embedding"]
         return embedding[0] if isinstance(embedding[0], list) else embedding
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+    )
+    async def transcribe(self, audio_bytes: bytes, filename: str) -> str:
+        """
+        Transcribe audio file using Whisper.
+
+        Supports two providers:
+        - OpenAI (cloud): requires WHISPER_API_KEY or EMBEDDING_API_KEY
+        - Local (self-hosted): requires WHISPER_BASE_URL (ollama/vllm/llamacpp)
+
+        Set WHISPER_PROVIDER env var to "openai" or "local".
+        """
+        import io
+
+        provider = self._cfg.whisper_provider.lower()
+
+        if provider == "openai":
+            return await self._transcribe_openai(audio_bytes, filename)
+        elif provider == "local":
+            return await self._transcribe_local(audio_bytes, filename)
+        else:
+            raise ValueError(
+                f"Unknown whisper_provider: {provider}. Must be 'openai' or 'local'."
+            )
+
+    async def _transcribe_openai(self, audio_bytes: bytes, filename: str) -> str:
+        """Transcribe using OpenAI Whisper API via litellm."""
+        import io
+
+        api_key = self._cfg.whisper_api_key or self._cfg.embedding_api_key
+        if not api_key:
+            raise ValueError(
+                "OpenAI Whisper requires WHISPER_API_KEY or EMBEDDING_API_KEY to be set"
+            )
+
+        file_obj = io.BytesIO(audio_bytes)
+        file_obj.name = filename
+        logger.debug(
+            "Transcribing via OpenAI: model=%s filename=%s size=%d",
+            self._cfg.whisper_model,
+            filename,
+            len(audio_bytes),
+        )
+
+        response = await litellm.atranscription(
+            model=self._cfg.whisper_model,
+            file=file_obj,
+            api_key=api_key,
+        )
+        text = response.text if hasattr(response, "text") else str(response)
+        logger.debug("OpenAI transcription complete: length=%d chars", len(text))
+        return text
+
+    async def _transcribe_local(self, audio_bytes: bytes, filename: str) -> str:
+        """Transcribe using local Whisper (ollama/vllm/llamacpp) via litellm."""
+        import io
+
+        base_url = self._cfg.whisper_base_url
+        if not base_url:
+            raise ValueError(
+                "Local Whisper requires WHISPER_BASE_URL to be set "
+                "(e.g., http://localhost:8000 for ollama)"
+            )
+
+        file_obj = io.BytesIO(audio_bytes)
+        file_obj.name = filename
+        logger.debug(
+            "Transcribing via local Whisper: model=%s base_url=%s filename=%s",
+            self._cfg.whisper_model,
+            base_url,
+            filename,
+        )
+
+        # For local providers, use litellm's routing via the model prefix
+        model_string = f"openai/{self._cfg.whisper_model}"
+
+        response = await litellm.atranscription(
+            model=model_string,
+            file=file_obj,
+            api_base=base_url,
+        )
+        text = response.text if hasattr(response, "text") else str(response)
+        logger.debug("Local transcription complete: length=%d chars", len(text))
+        return text
+
     # ── Model string resolution ────────────────────────────────────────────
 
     @staticmethod

@@ -39,6 +39,7 @@ dependencies = [
     "passlib[bcrypt]>=1.7.4",   # password hashing
     "PyJWT>=2.9.0",             # JWT creation and verification
     "slowapi>=0.1.9",           # rate limiting for FastAPI
+    "pypdf>=5.0.0",             # PDF text extraction
 ]
 
 [project.optional-dependencies]

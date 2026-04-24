@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Inbox, RefreshCw, Plus } from "lucide-react";
+import { Loader2, Inbox, RefreshCw, Plus, Upload } from "lucide-react";
 import { useRecentEvents } from "@/hooks/useMemory";
 import { MemoryCard } from "./MemoryCard";
 import { MemorySearch } from "./MemorySearch";
 import { AddMemoryForm } from "./AddMemoryForm";
+import { UploadMediaForm } from "./UploadMediaForm";
 import type { MemoryEvent, SearchResultItem } from "@/types";
 
 export function MemoryTimeline() {
@@ -14,6 +15,7 @@ export function MemoryTimeline() {
   const [limit, setLimit] = useState(20);
   const [searchResults, setSearchResults] = useState<SearchResultItem[] | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [showUploadForm, setShowUploadForm] = useState(false);
 
   const { data, isLoading, isError, refetch, isFetching } = useRecentEvents({ limit });
 
@@ -37,12 +39,21 @@ export function MemoryTimeline() {
   return (
     <div className="space-y-4">
       {showAddForm && <AddMemoryForm onClose={() => setShowAddForm(false)} />}
+      {showUploadForm && <UploadMediaForm onClose={() => setShowUploadForm(false)} />}
 
       {/* Search + header */}
       <div className="flex items-center gap-3">
         <div className="flex-1">
           <MemorySearch onResults={setSearchResults} />
         </div>
+        <button
+          onClick={() => setShowUploadForm(true)}
+          className="btn-secondary px-3 py-2 flex-shrink-0 flex items-center gap-1.5 text-xs"
+          title="Upload media"
+        >
+          <Upload className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">Upload</span>
+        </button>
         <button
           onClick={() => setShowAddForm(true)}
           className="btn-secondary px-3 py-2 flex-shrink-0"

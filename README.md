@@ -2256,6 +2256,188 @@ curl -X POST http://localhost:8080/ingest/session \
 
 ---
 
+## Media Ingestion — Voice Notes & Documents (Phase 10)
+
+Users can upload audio files (voice notes) or documents to have facts automatically extracted. The pipeline transcribes audio, extracts text from documents, applies first-person filtering to focus on the user, scores relevance, and routes high-confidence facts to memory while presenting borderline cases for user review.
+
+### Supported media types
+
+- **Voice notes** (audio): MP3, WAV, M4A, WebM, OGG — transcribed via Whisper
+- **Documents**: PDF, TXT, MD, CSV — text extracted and first-person filtered
+
+### `POST /ingest/media` — upload media for extraction (202 async)
+
+Upload a file and begin the extraction pipeline. Processing is asynchronous; the response includes a `media_id` for status polling.
+
+```bash
+curl -X POST http://localhost:8080/ingest/media \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@note.mp3" \
+  -F "user_id=alice" \
+  -F "app_id=my-app" \
+  -F "content_type=voice_note" \
+  -F "context_note=thoughts on our upcoming launch"
+```
+
+**Form fields:**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `file` | binary | ✓ | The media file to upload |
+| `user_id` | string | ✓ | User ID (must be self or admin) |
+| `app_id` | string | — | App namespace; defaults to "default" |
+| `content_type` | enum | ✓ | `voice_note` or `document` |
+| `context_note` | string | — | Optional context (e.g. "what should I know about this?") |
+| `idempotency_key` | string | — | Optional; if provided, re-posting same key returns cached result |
+
+**Response (202 Accepted):**
+
+```json
+{
+  "media_id": "550e8400-e29b-41d4-a716-446655440000",
+  "user_id": "alice",
+  "app_id": "my-app",
+  "content_type": "voice_note",
+  "status": "processing",
+  "facts_extracted": 0,
+  "facts_pending_review": 0,
+  "message": "Analysing your file…"
+}
+```
+
+### `GET /ingest/media/{media_id}/status` — poll processing status
+
+Poll the status of an in-progress or completed upload. Useful for updating UI progress indicators.
+
+```bash
+curl http://localhost:8080/ingest/media/550e8400-e29b-41d4-a716-446655440000/status \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Response:**
+
+```json
+{
+  "media_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "complete",
+  "facts_extracted": 3,
+  "facts_pending_review": 1,
+  "pending_facts": [
+    {
+      "content": "User prefers asynchronous meetings",
+      "category": "preference",
+      "key": "meetings",
+      "value": "async",
+      "relevance_score": 0.68,
+      "confidence": 0.68
+    }
+  ],
+  "message": "Processing complete. 3 high-confidence facts saved; 1 pending your review."
+}
+```
+
+**Status values:**
+- `processing` — extraction in progress
+- `complete` — extraction finished; facts may be saved or pending review
+- `nothing_found` — no extractable facts found (likely third-person or irrelevant content)
+- `failed` — extraction failed due to file corruption, unsupported format, or system error
+
+### `POST /ingest/media/{media_id}/confirm` — save pending facts
+
+When `facts_pending_review > 0`, confirm which ambiguous facts to save. Facts with relevance scores in the 0.60–0.75 range surface here before being written to memory.
+
+```bash
+curl -X POST http://localhost:8080/ingest/media/550e8400-e29b-41d4-a716-446655440000/confirm \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "alice",
+    "app_id": "my-app",
+    "confirmed_indices": [0]
+  }'
+```
+
+**Body:**
+
+| Field | Type | Description |
+|---|---|---|
+| `user_id` | string | User ID (for auth verification) |
+| `app_id` | string | App namespace |
+| `confirmed_indices` | int[] | Indices into `pending_facts` to save; empty array = dismiss all |
+
+**Response (200 OK):**
+
+```json
+{
+  "media_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "complete",
+  "facts_extracted": 4,
+  "facts_pending_review": 0,
+  "message": "1 fact saved; 0 dismissed."
+}
+```
+
+### Processing pipeline
+
+```
+1. Validate file extension + size
+2. If audio: transcribe via Whisper (OpenAI or local)
+   If document: extract text (PDF parser or raw text)
+3. Apply first-person filter (documents only) → "I", "my", "we", etc.
+4. LLM extracts candidate facts from filtered content
+5. LLM scores each fact for relevance (0–1): "does this tell us something durable about the user?"
+6. Route by score:
+   - > 0.75 relevance → save immediately to memory (active status)
+   - 0.60–0.75 relevance → queue for user confirmation modal
+   - < 0.60 relevance → discard
+7. Hippocampus.encode() registers the media ingest as an episodic event (source_type=media_voice/media_document)
+```
+
+### Routing thresholds
+
+| Relevance Score | Action |
+|---|---|
+| > 0.75 | ✅ Save immediately (high confidence) |
+| 0.60–0.75 | 📋 Pending review — show in confirmation modal |
+| < 0.60 | ❌ Discard (low relevance) |
+
+### Whisper provider configuration
+
+Transcription is powered by Whisper. Configure the provider in `.env`:
+
+**Option 1: OpenAI Whisper (cloud)**
+```bash
+WHISPER_PROVIDER=openai
+WHISPER_API_KEY=sk-...  # or falls back to EMBEDDING_API_KEY
+WHISPER_MODEL=whisper-1
+```
+
+**Option 2: Local Whisper (self-hosted via ollama/vllm/llamacpp)**
+```bash
+WHISPER_PROVIDER=local
+WHISPER_BASE_URL=http://localhost:8000/v1  # or http://localhost:11434 for ollama
+WHISPER_MODEL=whisper-1  # or model name deployed at base URL
+```
+
+### Size limits (configurable)
+
+| Type | Default | Env variable |
+|---|---|---|
+| Audio file | 25 MB | `MEDIA_MAX_AUDIO_MB` |
+| Document file | 10 MB | `MEDIA_MAX_DOCUMENT_MB` |
+| PDF page count | 50 pages | `MEDIA_MAX_DOCUMENT_PAGES` |
+
+### Source badges
+
+Media facts appear in the dashboard with source badges:
+
+| source_type | Badge | Color | Icon |
+|---|---|---|---|
+| `media_voice` | 🎙 Voice Note | Rose | Microphone |
+| `media_document` | 📄 Document | Slate | Document |
+
+---
+
 ## Passive Memory Extraction
 
 Smritikosh learns from conversations automatically. No per-turn developer work required.
@@ -2291,7 +2473,9 @@ Every memory now carries a `source_type` tracking how it entered the system:
 | `api_explicit` | 0.90 | App called `POST /memory/event` directly |
 | `tool_use` | 0.90 | LLM called the `remember()` tool |
 | `trigger_word` | 0.85 | Trigger phrase detected; LLM confirmed |
+| `media_voice` | 0.85 | Extracted from uploaded voice note |
 | `passive_distillation` | 0.75 | Post-session extraction from transcript |
+| `media_document` | 0.75 | Extracted from uploaded document |
 | `passive_streaming` | 0.70 | Mid-session rolling-window extraction |
 | `sdk_middleware` | 0.70 | SDK wrapper intercepted transparently |
 | `webhook_ingest` | 0.70 | Structured transcript via `/ingest/transcript` |

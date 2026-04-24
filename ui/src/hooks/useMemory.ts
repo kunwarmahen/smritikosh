@@ -3,7 +3,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSession } from "next-auth/react";
 import { createApiClient } from "@/lib/api-client";
-import type { RecentEventsResponse, SearchResponse, FeedbackResponse, FactRequest, FactResponse } from "@/types";
+import type {
+  RecentEventsResponse,
+  SearchResponse,
+  FeedbackResponse,
+  FactRequest,
+  FactResponse,
+  MediaUploadResponse,
+  MediaStatusResponse,
+} from "@/types";
 
 export function useRecentEvents(params?: { limit?: number; app_id?: string }) {
   const { data: session } = useSession();
@@ -81,6 +89,55 @@ export function useStoreFact() {
         ...vars,
       }) as Promise<FactResponse>,
     onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["identity"] });
+      qc.invalidateQueries({ queryKey: ["factGraph"] });
+    },
+  });
+}
+
+export function useUploadMedia() {
+  const { data: session } = useSession();
+  const token = session?.accessToken;
+  const qc = useQueryClient();
+
+  return useMutation<MediaUploadResponse, Error, FormData>({
+    mutationFn: (formData) => createApiClient(token).uploadMedia(formData),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["memory"] });
+    },
+  });
+}
+
+export function useMediaStatus(mediaId: string | null) {
+  const { data: session } = useSession();
+  const token = session?.accessToken;
+
+  return useQuery<MediaStatusResponse>({
+    queryKey: ["media", "status", mediaId],
+    queryFn: () => createApiClient(token).getMediaStatus(mediaId!),
+    enabled: !!mediaId && !!token,
+    refetchInterval: (data) => (data?.status === "processing" ? 2000 : false),
+  });
+}
+
+export function useConfirmMediaFacts() {
+  const { data: session } = useSession();
+  const token = session?.accessToken;
+  const qc = useQueryClient();
+
+  return useMutation<
+    MediaUploadResponse,
+    Error,
+    { mediaId: string; user_id?: string; app_id?: string; confirmed_indices: number[] }
+  >({
+    mutationFn: ({ mediaId, user_id, app_id, confirmed_indices }) =>
+      createApiClient(token).confirmMediaFacts(mediaId, {
+        user_id: user_id || session!.user.id,
+        app_id: app_id || "default",
+        confirmed_indices,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["memory"] });
       qc.invalidateQueries({ queryKey: ["identity"] });
       qc.invalidateQueries({ queryKey: ["factGraph"] });
     },
