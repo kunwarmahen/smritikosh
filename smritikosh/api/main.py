@@ -35,7 +35,7 @@ from smritikosh.api.deps import (
     get_pruner,
 )
 from smritikosh.api.ratelimit import limiter
-from smritikosh.api.routes import admin, audit, auth, context, feedback, graph, health, identity, ingest, keys, memory, procedures
+from smritikosh.api.routes import admin, audit, auth, context, facts, feedback, graph, health, identity, ingest, keys, memory, procedures
 from smritikosh.api.routes import session_ingest
 from smritikosh.audit.mongodb import close_audit, init_audit_indexes
 from smritikosh.db.neo4j import close_neo4j, init_neo4j
@@ -115,5 +115,6 @@ app.include_router(procedures.router)
 app.include_router(admin.router)
 app.include_router(ingest.router)
 app.include_router(session_ingest.router)
+app.include_router(facts.router)
 app.include_router(audit.router)
 app.include_router(graph.router)

@@ -30,6 +30,13 @@ from smritikosh.processing.consolidator import Consolidator, MIN_EVENTS_TO_CONSO
 from smritikosh.retrieval.context_builder import ContextBuilder, MemoryContext
 
 
+def _make_semantic_mock() -> AsyncMock:
+    """AsyncMock for SemanticMemory with check_fact_conflict returning None (no conflicts)."""
+    m = AsyncMock(spec=SemanticMemory)
+    m.check_fact_conflict = AsyncMock(return_value=None)
+    return m
+
+
 # ── Test constants ────────────────────────────────────────────────────────────
 
 USER_ID = "e2e-test-user"
@@ -119,7 +126,7 @@ class TestEncodeStage:
     def _make_deps(self):
         llm = _make_llm()
         episodic = AsyncMock(spec=EpisodicMemory)
-        semantic = AsyncMock(spec=SemanticMemory)
+        semantic = _make_semantic_mock()
         stored_event = _make_event()
         episodic.store = AsyncMock(return_value=stored_event)
         semantic.upsert_fact = AsyncMock(return_value=_make_fact_record())
@@ -164,7 +171,7 @@ class TestEncodeStage:
         llm = _make_llm()
         llm.extract_structured = AsyncMock(side_effect=RuntimeError("LLM extraction down"))
         episodic = AsyncMock(spec=EpisodicMemory)
-        semantic = AsyncMock(spec=SemanticMemory)
+        semantic = _make_semantic_mock()
         episodic.store = AsyncMock(return_value=_make_event())
         hippo = Hippocampus(llm=llm, episodic=episodic, semantic=semantic)
         pg, neo = AsyncMock(), AsyncMock()
@@ -184,7 +191,7 @@ class TestConsolidateStage:
     def _make_deps(self, n_events: int = MIN_EVENTS_TO_CONSOLIDATE):
         llm = _make_llm()
         episodic = AsyncMock(spec=EpisodicMemory)
-        semantic = AsyncMock(spec=SemanticMemory)
+        semantic = _make_semantic_mock()
         narrative = AsyncMock(spec=NarrativeMemory)
 
         events = [_make_event(f"event {i}") for i in range(n_events)]
@@ -245,7 +252,7 @@ class TestContextStage:
     def _make_deps(self, event: Event | None = None):
         llm = _make_llm()
         episodic = AsyncMock(spec=EpisodicMemory)
-        semantic = AsyncMock(spec=SemanticMemory)
+        semantic = _make_semantic_mock()
 
         target_event = event or _make_event(consolidated=True)
         search_result = SearchResult(
@@ -336,7 +343,7 @@ class TestFullPipeline:
         # ── Shared mocks ──────────────────────────────────────────────────
         llm = _make_llm()
         episodic = AsyncMock(spec=EpisodicMemory)
-        semantic = AsyncMock(spec=SemanticMemory)
+        semantic = _make_semantic_mock()
         narrative = AsyncMock(spec=NarrativeMemory)
         pg, neo = AsyncMock(), AsyncMock()
 
@@ -414,7 +421,7 @@ class TestFullPipeline:
         llm = _make_llm()
         llm.embed = AsyncMock(side_effect=RuntimeError("embed service down"))
         episodic = AsyncMock(spec=EpisodicMemory)
-        semantic = AsyncMock(spec=SemanticMemory)
+        semantic = _make_semantic_mock()
         narrative = AsyncMock(spec=NarrativeMemory)
         pg, neo = AsyncMock(), AsyncMock()
 

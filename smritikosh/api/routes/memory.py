@@ -39,7 +39,7 @@ from smritikosh.api.schemas import (
     SearchResultItem,
 )
 from smritikosh.llm.adapter import LLMAdapter
-from smritikosh.db.models import Event, FactStatus, MemoryLink, SOURCE_CONFIDENCE_DEFAULTS, SourceType
+from smritikosh.db.models import Event, FactContradiction, FactStatus, MemoryLink, SOURCE_CONFIDENCE_DEFAULTS, SourceType
 from smritikosh.db.neo4j import get_neo4j_session
 from smritikosh.db.postgres import get_session
 from smritikosh.memory.episodic import EpisodicMemory
@@ -103,6 +103,7 @@ async def store_fact(
     body: FactRequest,
     semantic: Annotated[SemanticMemory, Depends(get_semantic)],
     neo: Annotated[NeoSession, Depends(get_neo4j_session)],
+    pg: Annotated[AsyncSession, Depends(get_session)],
     current_user: Annotated[dict, Depends(get_current_user)],
 ) -> FactResponse:
     """
@@ -117,6 +118,9 @@ async def store_fact(
 
     Facts are upserted: calling this with the same (user_id, app_id, category, key)
     increments frequency_count rather than creating a duplicate.
+
+    For ui_manual source, a conflicting value always overwrites (user intent wins).
+    For other sources, a contradiction record is created if the confidence delta ≤ 0.15.
     """
     assert_self_or_admin(current_user, body.user_id)
 
@@ -126,13 +130,49 @@ async def store_fact(
     else:
         confidence = SOURCE_CONFIDENCE_DEFAULTS.get(source_type, 1.0)
 
-    # ui_manual facts always start at full confidence and active status
     status = FactStatus.ACTIVE if confidence >= 0.60 else FactStatus.PENDING
     source_meta: dict = {}
     if body.note:
         source_meta["note"] = body.note
 
     try:
+        # ── Contradiction check (skip for ui_manual — user intent always wins) ──
+        if source_type != SourceType.UI_MANUAL:
+            conflict = await semantic.check_fact_conflict(
+                neo,
+                user_id=body.user_id,
+                app_id=body.app_id,
+                category=body.category,
+                key=body.key,
+                candidate_value=body.value,
+            )
+            if conflict:
+                existing_conf = conflict["existing_confidence"]
+                if confidence - existing_conf > 0.15:
+                    source_meta["superseded"] = conflict["existing_value"]
+                else:
+                    pg.add(FactContradiction(
+                        user_id=body.user_id,
+                        app_id=body.app_id,
+                        category=body.category,
+                        key=body.key,
+                        existing_value=conflict["existing_value"],
+                        existing_confidence=existing_conf,
+                        candidate_value=body.value,
+                        candidate_source=source_type,
+                        candidate_confidence=confidence,
+                    ))
+                    await pg.flush()
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "error": "contradiction",
+                            "existing_value": conflict["existing_value"],
+                            "existing_confidence": existing_conf,
+                            "message": "A conflicting value exists. Resolve via /facts/contradictions.",
+                        },
+                    )
+
         fact = await semantic.upsert_fact(
             neo,
             user_id=body.user_id,
@@ -145,6 +185,8 @@ async def store_fact(
             source_meta=source_meta,
             status=status,
         )
+    except HTTPException:
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:

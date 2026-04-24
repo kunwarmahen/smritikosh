@@ -67,7 +67,10 @@ def make_hippocampus(
     """Return (hippocampus, llm_mock, episodic_mock, semantic_mock, amygdala_mock)."""
     llm = llm or AsyncMock()
     episodic = episodic or AsyncMock(spec=EpisodicMemory)
-    semantic = semantic or AsyncMock(spec=SemanticMemory)
+    if semantic is None:
+        semantic = AsyncMock(spec=SemanticMemory)
+        # Default: no conflicts — check_fact_conflict returns None
+        semantic.check_fact_conflict = AsyncMock(return_value=None)
     amygdala = amygdala or MagicMock(spec=Amygdala)
 
     hippo = Hippocampus(llm=llm, episodic=episodic, semantic=semantic, amygdala=amygdala)

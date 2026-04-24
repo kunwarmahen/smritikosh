@@ -109,6 +109,7 @@ def mock_semantic():
     s = AsyncMock(spec=SemanticMemory)
     s.get_user_profile.return_value = UserProfile(user_id="u1", app_id="default", facts=[])
     s.upsert_fact.return_value = make_fact()
+    s.check_fact_conflict.return_value = None  # no conflicts by default
     return s
 
 

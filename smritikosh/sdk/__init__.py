@@ -1,7 +1,7 @@
 """Smritikosh Python SDK — async HTTP client and sync middleware for the memory API."""
 
 from smritikosh.sdk.client import SmritikoshClient
-from smritikosh.sdk.middleware import SmritikoshMiddleware
+from smritikosh.sdk.middleware import LiteLLMMiddleware, SmritikoshMiddleware
 from smritikosh.sdk.types import (
     EncodedEvent,
     HealthStatus,
@@ -13,6 +13,7 @@ from smritikosh.sdk.types import (
 __all__ = [
     "SmritikoshClient",
     "SmritikoshMiddleware",
+    "LiteLLMMiddleware",
     "EncodedEvent",
     "HealthStatus",
     "MemoryContext",

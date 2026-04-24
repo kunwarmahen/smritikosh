@@ -289,17 +289,22 @@ class SemanticMemory:
         app_id: str = "default",
         category: Optional[str] = None,
         min_confidence: float = 0.0,
+        active_only: bool = True,
     ) -> list[FactRecord]:
         """
         Retrieve facts for a user, optionally filtered by category and confidence.
+
+        active_only (default True): exclude pending/rejected facts so they never
+        leak into context assembly. Pass False to list all facts for review UIs.
         Results are ordered by frequency_count (most reinforced first).
         """
+        status_clause = "AND r.status = 'active'" if active_only else ""
         if category is not None:
             rel = _rel_type(category)
             cypher = f"""
                 MATCH (u:User {{user_id: $user_id, app_id: $app_id}})
                       -[r:{rel}]->(f:Fact)
-                WHERE r.confidence >= $min_confidence
+                WHERE r.confidence >= $min_confidence {status_clause}
                 RETURN f.category AS category, f.key AS key, f.value AS value,
                        r.confidence AS confidence, r.frequency_count AS frequency_count,
                        r.first_seen_at AS first_seen_at, r.last_seen_at AS last_seen_at,
@@ -309,10 +314,10 @@ class SemanticMemory:
                 ORDER BY r.frequency_count DESC
             """
         else:
-            cypher = """
-                MATCH (u:User {user_id: $user_id, app_id: $app_id})
+            cypher = f"""
+                MATCH (u:User {{user_id: $user_id, app_id: $app_id}})
                       -[r]->(f:Fact)
-                WHERE r.confidence >= $min_confidence
+                WHERE r.confidence >= $min_confidence {status_clause}
                 RETURN f.category AS category, f.key AS key, f.value AS value,
                        r.confidence AS confidence, r.frequency_count AS frequency_count,
                        r.first_seen_at AS first_seen_at, r.last_seen_at AS last_seen_at,
@@ -341,11 +346,91 @@ class SemanticMemory:
         """
         Return the full structured profile for a user as a UserProfile object.
         This is what the ContextBuilder uses to inject identity context into prompts.
+        Only active facts are included — pending/rejected facts are excluded.
         """
         facts = await self.get_facts(
-            session, user_id, app_id, min_confidence=min_confidence
+            session, user_id, app_id, min_confidence=min_confidence, active_only=True
         )
         return UserProfile(user_id=user_id, app_id=app_id, facts=facts)
+
+    async def check_fact_conflict(
+        self,
+        session: AsyncSession,
+        *,
+        user_id: str,
+        app_id: str,
+        category: str,
+        key: str,
+        candidate_value: str,
+    ) -> dict | None:
+        """
+        Check whether a fact with the same (user, app, category, key) already exists
+        but with a DIFFERENT value.
+
+        Returns a dict with existing_value and existing_confidence if a conflict is
+        found, or None if the key is new or has the same value (no conflict).
+        """
+        rel = _rel_type(category)
+        result = await session.run(
+            f"""
+            MATCH (u:User {{user_id: $user_id, app_id: $app_id}})
+                  -[r:{rel}]->(f:Fact)
+            WHERE f.category = $category AND f.key = $key AND f.value <> $candidate_value
+            RETURN f.value AS existing_value, r.confidence AS existing_confidence
+            LIMIT 1
+            """,
+            user_id=user_id,
+            app_id=app_id,
+            category=category,
+            key=key,
+            candidate_value=candidate_value,
+        )
+        record = await result.single()
+        if record is None:
+            return None
+        return {
+            "existing_value": record["existing_value"],
+            "existing_confidence": float(record["existing_confidence"] or 0.0),
+        }
+
+    async def set_fact_status(
+        self,
+        session: AsyncSession,
+        *,
+        user_id: str,
+        app_id: str,
+        category: str,
+        key: str,
+        status: str,
+    ) -> "FactRecord | None":
+        """
+        Set the status on an existing (user, app, category, key) fact relationship.
+        Returns the updated FactRecord, or None if no such fact exists.
+        """
+        rel = _rel_type(category)
+        result = await session.run(
+            f"""
+            MATCH (u:User {{user_id: $user_id, app_id: $app_id}})
+                  -[r:{rel}]->(f:Fact)
+            WHERE f.category = $category AND f.key = $key
+            SET r.status = $status
+            RETURN f.category AS category, f.key AS key, f.value AS value,
+                   r.confidence AS confidence, r.frequency_count AS frequency_count,
+                   r.first_seen_at AS first_seen_at, r.last_seen_at AS last_seen_at,
+                   r.source_event_ids AS source_event_ids,
+                   r.source_type AS source_type, r.source_meta AS source_meta,
+                   r.status AS status
+            """,
+            user_id=user_id,
+            app_id=app_id,
+            category=category,
+            key=key,
+            status=status,
+        )
+        record = await result.single()
+        if record is None:
+            return None
+        return _record_to_fact(record)
 
     async def user_exists(
         self,
@@ -368,30 +453,40 @@ class SemanticMemory:
         *,
         decay_half_life_days: float = 60.0,
         confidence_floor: float = 0.1,
-    ) -> tuple[int, int, int]:
+        staleness_pending_threshold: float = 0.20,
+    ) -> tuple[int, int, int, int]:
         """
         Apply exponential confidence decay to all user→fact relationships.
 
         Formula: new_confidence = confidence × exp(−ln(2) × age_days / decay_half_life_days)
         This halves confidence every `decay_half_life_days` days without reinforcement.
 
-        Three-pass execution:
-          1. Decay all relationships based on age since last_seen_at.
-          2. Delete relationships whose confidence falls below `confidence_floor`.
-          3. DETACH DELETE orphaned Fact nodes no longer connected to any User.
+        Source-type rules applied:
+          - ui_manual facts are NEVER decayed (user explicitly stated them).
+          - cross_system facts decay at 2× the normal rate (behavioral patterns shift fast).
+
+        Four-pass execution:
+          1. Decay all eligible relationships (excluding ui_manual).
+          2. Move relationships below staleness_pending_threshold to pending status.
+          3. Delete relationships below confidence_floor.
+          4. DETACH DELETE orphaned Fact nodes no longer connected to any User.
 
         Returns:
-            (decayed_count, deleted_count, orphans_deleted)
+            (decayed_count, pending_promoted_count, deleted_count, orphans_deleted)
         """
         LN2 = 0.6931471805599453
 
-        # Pass 1: apply decay in-place
+        # Pass 1: decay — skip ui_manual; apply 2× rate for cross_system
         r1 = await session.run(
             """
             MATCH (u:User)-[r]->(f:Fact)
             WHERE r.last_seen_at IS NOT NULL
-            WITH r, duration.between(datetime(r.last_seen_at), datetime()).days AS age_days
-            SET r.confidence = r.confidence * exp(-$ln2 * toFloat(age_days) / $decay_days)
+              AND r.source_type <> 'ui_manual'
+            WITH r,
+                 duration.between(datetime(r.last_seen_at), datetime()).days AS age_days,
+                 CASE WHEN r.source_type = 'cross_system' THEN $decay_days / 2.0
+                      ELSE $decay_days END AS effective_half_life
+            SET r.confidence = r.confidence * exp(-$ln2 * toFloat(age_days) / effective_half_life)
             RETURN count(r) AS decayed_count
             """,
             ln2=LN2,
@@ -400,8 +495,23 @@ class SemanticMemory:
         rec1 = await r1.single()
         decayed_count = int(rec1["decayed_count"]) if rec1 else 0
 
-        # Pass 2: delete relationships below the confidence floor
+        # Pass 2: move stale active facts to pending (they need review before deletion)
         r2 = await session.run(
+            """
+            MATCH (u:User)-[r]->(f:Fact)
+            WHERE r.confidence < $staleness_threshold
+              AND r.status = 'active'
+              AND r.source_type <> 'ui_manual'
+            SET r.status = 'pending'
+            RETURN count(r) AS pending_count
+            """,
+            staleness_threshold=float(staleness_pending_threshold),
+        )
+        rec2 = await r2.single()
+        pending_promoted_count = int(rec2["pending_count"]) if rec2 else 0
+
+        # Pass 3: delete relationships below the hard floor
+        r3 = await session.run(
             """
             MATCH (u:User)-[r]->(f:Fact)
             WHERE r.confidence < $confidence_floor
@@ -410,11 +520,11 @@ class SemanticMemory:
             """,
             confidence_floor=float(confidence_floor),
         )
-        rec2 = await r2.single()
-        deleted_count = int(rec2["deleted_count"]) if rec2 else 0
+        rec3 = await r3.single()
+        deleted_count = int(rec3["deleted_count"]) if rec3 else 0
 
-        # Pass 3: remove Fact nodes no longer connected to any User
-        r3 = await session.run(
+        # Pass 4: remove Fact nodes no longer connected to any User
+        r4 = await session.run(
             """
             MATCH (f:Fact)
             WHERE NOT (:User)-[]->(f)
@@ -422,10 +532,10 @@ class SemanticMemory:
             RETURN count(*) AS orphans_deleted
             """
         )
-        rec3 = await r3.single()
-        orphans_deleted = int(rec3["orphans_deleted"]) if rec3 else 0
+        rec4 = await r4.single()
+        orphans_deleted = int(rec4["orphans_deleted"]) if rec4 else 0
 
-        return decayed_count, deleted_count, orphans_deleted
+        return decayed_count, pending_promoted_count, deleted_count, orphans_deleted
 
     async def purge_unseen_facts(
         self,

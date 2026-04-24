@@ -28,9 +28,10 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class DecayResult:
-    decayed_count: int = 0       # relationships whose confidence was reduced
-    deleted_count: int = 0       # relationships deleted (fell below floor)
-    orphans_deleted: int = 0     # orphaned Fact nodes removed
+    decayed_count: int = 0            # relationships whose confidence was reduced
+    pending_promoted_count: int = 0   # active→pending due to staleness (confidence < 0.20)
+    deleted_count: int = 0            # relationships deleted (fell below floor)
+    orphans_deleted: int = 0          # orphaned Fact nodes removed
     skipped: bool = False
     skip_reason: str = ""
 
@@ -74,7 +75,7 @@ class FactDecayer:
         Returns a DecayResult summarising what was changed.
         """
         try:
-            decayed, deleted, orphans = await self.semantic.decay_stale_facts(
+            decayed, pending_promoted, deleted, orphans = await self.semantic.decay_stale_facts(
                 session,
                 decay_half_life_days=self.half_life_days,
                 confidence_floor=self.confidence_floor,
@@ -87,6 +88,7 @@ class FactDecayer:
 
         result = DecayResult(
             decayed_count=decayed,
+            pending_promoted_count=pending_promoted,
             deleted_count=deleted,
             orphans_deleted=orphans,
         )
@@ -94,6 +96,7 @@ class FactDecayer:
             "Fact decay complete",
             extra={
                 "decayed": decayed,
+                "pending_promoted": pending_promoted,
                 "deleted": deleted,
                 "orphans_deleted": orphans,
                 "half_life_days": self.half_life_days,

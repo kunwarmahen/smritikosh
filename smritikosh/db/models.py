@@ -289,6 +289,54 @@ class UserFact(Base):
         return f"<UserFact {self.category}:{self.key}={self.value!r} user={self.user_id} status={self.status}>"
 
 
+class FactContradiction(Base):
+    """
+    Tracks conflicting values for the same (user, app, category, key) semantic fact.
+
+    Created when a new extraction proposes a value that differs from what's stored
+    but doesn't have enough confidence advantage to overwrite automatically.
+    The user resolves these through the review dashboard.
+
+    Resolution: keep_existing → dismiss the candidate; take_candidate → overwrite the fact.
+    """
+
+    __tablename__ = "fact_contradictions"
+    __table_args__ = (
+        Index("ix_fact_contradictions_user_app", "user_id", "app_id"),
+        Index("ix_fact_contradictions_resolved", "resolved"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    user_id: Mapped[str] = mapped_column(String(255))
+    app_id: Mapped[str] = mapped_column(String(255), default="default")
+    category: Mapped[str] = mapped_column(String(50))
+    key: Mapped[str] = mapped_column(String(255))
+    existing_value: Mapped[str] = mapped_column(Text)
+    existing_confidence: Mapped[float] = mapped_column(Float)
+    candidate_value: Mapped[str] = mapped_column(Text)
+    candidate_source: Mapped[str] = mapped_column(String(32), default=SourceType.API_EXPLICIT)
+    candidate_confidence: Mapped[float] = mapped_column(Float)
+    resolved: Mapped[bool] = mapped_column(Boolean, default=False)
+    resolution: Mapped[Optional[str]] = mapped_column(
+        String(32), nullable=True, default=None
+    )  # 'keep_existing' | 'take_candidate'
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<FactContradiction user={self.user_id!r} "
+            f"{self.category}:{self.key} "
+            f"{self.existing_value!r} vs {self.candidate_value!r}>"
+        )
+
+
 class MemoryLink(Base):
     """
     NarrativeMemory — directed causal/temporal links between episodic events.

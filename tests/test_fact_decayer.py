@@ -15,14 +15,15 @@ from smritikosh.processing.fact_decayer import DecayResult, FactDecayer
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-def _make_neo_session(counts: tuple[int, int, int] = (10, 2, 1)) -> AsyncMock:
+def _make_neo_session(counts: tuple[int, int, int, int] = (10, 3, 2, 1)) -> AsyncMock:
     """
-    Return a mock Neo4j AsyncSession whose run() returns records
-    with the given (decayed_count, deleted_count, orphans_deleted) values.
+    Return a mock Neo4j AsyncSession whose run() returns records with the given
+    (decayed_count, pending_promoted_count, deleted_count, orphans_deleted) values.
+    Four passes: decay, staleness→pending, delete-below-floor, orphan cleanup.
     """
-    decayed, deleted, orphans = counts
+    decayed, pending_promoted, deleted, orphans = counts
 
-    def _make_result(value_key: str, value: int):
+    def _make_result(value: int):
         record = MagicMock()
         record.__getitem__ = lambda self, k: value
         result = AsyncMock()
@@ -30,11 +31,11 @@ def _make_neo_session(counts: tuple[int, int, int] = (10, 2, 1)) -> AsyncMock:
         return result
 
     session = AsyncMock()
-    # Each call to session.run() returns a different result
     session.run = AsyncMock(side_effect=[
-        _make_result("decayed_count", decayed),
-        _make_result("deleted_count", deleted),
-        _make_result("orphans_deleted", orphans),
+        _make_result(decayed),
+        _make_result(pending_promoted),
+        _make_result(deleted),
+        _make_result(orphans),
     ])
     return session
 
@@ -45,25 +46,27 @@ def _make_neo_session(counts: tuple[int, int, int] = (10, 2, 1)) -> AsyncMock:
 class TestDecayStateFacts:
     @pytest.mark.asyncio
     async def test_returns_correct_counts(self):
-        session = _make_neo_session(counts=(15, 3, 2))
+        session = _make_neo_session(counts=(15, 5, 3, 2))
         semantic = SemanticMemory()
 
-        decayed, deleted, orphans = await semantic.decay_stale_facts(
+        decayed, pending_promoted, deleted, orphans = await semantic.decay_stale_facts(
             session, decay_half_life_days=60.0, confidence_floor=0.1
         )
 
         assert decayed == 15
+        assert pending_promoted == 5
         assert deleted == 3
         assert orphans == 2
 
     @pytest.mark.asyncio
-    async def test_runs_three_cypher_queries(self):
+    async def test_runs_four_cypher_queries(self):
+        """decay_stale_facts now runs four passes: decay, staleness→pending, delete, orphan."""
         session = _make_neo_session()
         semantic = SemanticMemory()
 
         await semantic.decay_stale_facts(session)
 
-        assert session.run.call_count == 3
+        assert session.run.call_count == 4
 
     @pytest.mark.asyncio
     async def test_passes_decay_params_to_first_query(self):
@@ -75,18 +78,29 @@ class TestDecayStateFacts:
         )
 
         first_call_kwargs = session.run.call_args_list[0]
-        # The first query receives ln2 and decay_days
         assert first_call_kwargs.kwargs.get("decay_days") == 30.0
 
     @pytest.mark.asyncio
-    async def test_passes_floor_to_second_query(self):
+    async def test_passes_floor_to_third_query(self):
+        """Confidence floor is now used in the third pass (delete), not second."""
         session = _make_neo_session()
         semantic = SemanticMemory()
 
         await semantic.decay_stale_facts(session, confidence_floor=0.05)
 
+        third_call_kwargs = session.run.call_args_list[2]
+        assert third_call_kwargs.kwargs.get("confidence_floor") == 0.05
+
+    @pytest.mark.asyncio
+    async def test_passes_staleness_threshold_to_second_query(self):
+        """Second pass receives the staleness_pending_threshold param."""
+        session = _make_neo_session()
+        semantic = SemanticMemory()
+
+        await semantic.decay_stale_facts(session, staleness_pending_threshold=0.25)
+
         second_call_kwargs = session.run.call_args_list[1]
-        assert second_call_kwargs.kwargs.get("confidence_floor") == 0.05
+        assert second_call_kwargs.kwargs.get("staleness_threshold") == 0.25
 
     @pytest.mark.asyncio
     async def test_handles_none_records_gracefully(self):
@@ -97,9 +111,10 @@ class TestDecayStateFacts:
         session.run = AsyncMock(return_value=empty_result)
 
         semantic = SemanticMemory()
-        decayed, deleted, orphans = await semantic.decay_stale_facts(session)
+        decayed, pending_promoted, deleted, orphans = await semantic.decay_stale_facts(session)
 
         assert decayed == 0
+        assert pending_promoted == 0
         assert deleted == 0
         assert orphans == 0
 
@@ -110,7 +125,7 @@ class TestDecayStateFacts:
 class TestFactDecayer:
     @pytest.mark.asyncio
     async def test_happy_path_returns_result(self):
-        session = _make_neo_session(counts=(20, 4, 1))
+        session = _make_neo_session(counts=(20, 3, 4, 1))
         semantic = SemanticMemory()
         decayer = FactDecayer(semantic=semantic, half_life_days=60.0, confidence_floor=0.1)
 
@@ -119,6 +134,7 @@ class TestFactDecayer:
         assert isinstance(result, DecayResult)
         assert result.skipped is False
         assert result.decayed_count == 20
+        assert result.pending_promoted_count == 3
         assert result.deleted_count == 4
         assert result.orphans_deleted == 1
 
@@ -145,7 +161,7 @@ class TestFactDecayer:
     @pytest.mark.asyncio
     async def test_zero_deletes_on_clean_graph(self):
         """A graph with all fresh, high-confidence facts produces no deletes."""
-        session = _make_neo_session(counts=(50, 0, 0))
+        session = _make_neo_session(counts=(50, 0, 0, 0))
         semantic = SemanticMemory()
         decayer = FactDecayer(semantic=semantic)
 

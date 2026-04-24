@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from sqlalchemy.ext.asyncio import AsyncSession
 from neo4j import AsyncSession as NeoSession
 
-from smritikosh.db.models import Event, FactStatus, SOURCE_CONFIDENCE_DEFAULTS, SourceType
+from smritikosh.db.models import Event, FactContradiction, FactStatus, SOURCE_CONFIDENCE_DEFAULTS, SourceType
 from smritikosh.llm.adapter import LLMAdapter
 from smritikosh.memory.episodic import EpisodicMemory
 from smritikosh.memory.semantic import FactRecord, SemanticMemory
@@ -223,12 +223,13 @@ class Hippocampus:
             extra={"event_id": str(event.id), "user_id": user_id, "facts_extracted": len(extracted_facts)},
         )
 
-        # ── 5. Upsert semantic facts ──────────────────────────────────────
+        # ── 5. Upsert semantic facts (with contradiction detection) ──────────
         stored_facts = await self._upsert_facts(
             neo_session, user_id, app_id, extracted_facts,
             event_id=str(event.id),
             source_type=source_type,
             source_meta=source_meta,
+            pg_session=pg_session,
         )
 
         result = EncodedMemory(
@@ -333,20 +334,67 @@ class Hippocampus:
         event_id: str | None = None,
         source_type: str = SourceType.API_EXPLICIT,
         source_meta: dict | None = None,
+        pg_session: AsyncSession | None = None,
     ) -> list[FactRecord]:
-        """Upsert each extracted fact dict to SemanticMemory. Skips invalid entries."""
+        """
+        Upsert each extracted fact dict to SemanticMemory.
+
+        Runs contradiction detection before each write:
+        - confidence delta > 0.15: overwrite automatically (logs superseded value)
+        - confidence delta ≤ 0.15: write contradiction record to Postgres, skip upsert
+        Skips invalid entries silently.
+        """
         source_ids = [event_id] if event_id else []
-        # Confidence floor for pending — below this the fact needs user review
         pending_threshold = 0.60
-        # Use source-type default as the baseline if the LLM didn't supply confidence
         source_default_conf = SOURCE_CONFIDENCE_DEFAULTS.get(source_type, 0.90)
         stored: list[FactRecord] = []
         for fd in fact_dicts:
             try:
                 raw_conf = float(fd.get("confidence", source_default_conf))
-                # Scale LLM-provided confidence by the source-type ceiling
                 confidence = raw_conf * source_default_conf
                 status = FactStatus.ACTIVE if confidence >= pending_threshold else FactStatus.PENDING
+
+                # ── Contradiction check ──────────────────────────────────────
+                conflict = await self.semantic.check_fact_conflict(
+                    neo_session,
+                    user_id=user_id,
+                    app_id=app_id,
+                    category=fd["category"],
+                    key=fd["key"],
+                    candidate_value=fd["value"],
+                )
+                if conflict:
+                    existing_conf = conflict["existing_confidence"]
+                    if confidence - existing_conf > 0.15:
+                        # High confidence advantage — overwrite, log superseded value
+                        merged_meta = dict(source_meta or {})
+                        merged_meta["superseded"] = conflict["existing_value"]
+                        source_meta_for_write = merged_meta
+                    else:
+                        # Ambiguous — record contradiction and skip this write
+                        if pg_session is not None:
+                            try:
+                                pg_session.add(FactContradiction(
+                                    user_id=user_id,
+                                    app_id=app_id,
+                                    category=fd["category"],
+                                    key=fd["key"],
+                                    existing_value=conflict["existing_value"],
+                                    existing_confidence=existing_conf,
+                                    candidate_value=fd["value"],
+                                    candidate_source=source_type,
+                                    candidate_confidence=confidence,
+                                ))
+                                await pg_session.flush()
+                            except Exception as exc:
+                                logger.warning(
+                                    "Failed to write contradiction record: %s", exc
+                                )
+                        continue
+                else:
+                    source_meta_for_write = source_meta or {}
+                # ────────────────────────────────────────────────────────────
+
                 fact = await self.semantic.upsert_fact(
                     neo_session,
                     user_id=user_id,
@@ -357,12 +405,11 @@ class Hippocampus:
                     confidence=confidence,
                     source_event_ids=source_ids,
                     source_type=source_type,
-                    source_meta=source_meta or {},
+                    source_meta=source_meta_for_write,
                     status=status,
                 )
                 stored.append(fact)
             except (KeyError, ValueError) as exc:
-                # Log and skip — a bad fact dict should not abort the whole pipeline
                 logger.warning(
                     "Skipping invalid fact dict",
                     extra={"fact": fd, "error": str(exc)},

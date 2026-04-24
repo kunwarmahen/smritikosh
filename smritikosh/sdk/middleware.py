@@ -37,6 +37,7 @@ Context manager (auto-closes and flushes):
 """
 from __future__ import annotations
 
+import json as _json
 import threading
 import uuid
 from typing import Any
@@ -45,6 +46,96 @@ import httpx
 
 _DEFAULT_URL = "http://localhost:8080"
 _DEFAULT_EXTRACT_EVERY = 10
+
+# ── remember() tool definitions ───────────────────────────────────────────────
+
+_REMEMBER_TOOL_OPENAI: dict = {
+    "type": "function",
+    "function": {
+        "name": "remember",
+        "description": (
+            "Store something important about the user that should be remembered in "
+            "future conversations. Call this when the user reveals a clear preference, "
+            "fact, goal, or decision."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": "The fact to remember, in plain English",
+                },
+                "category": {
+                    "type": "string",
+                    "enum": [
+                        "preference", "goal", "skill", "habit",
+                        "role", "project", "belief", "context",
+                    ],
+                },
+                "key": {
+                    "type": "string",
+                    "description": "Short label for the fact (e.g. 'editor', 'timezone')",
+                },
+                "value": {
+                    "type": "string",
+                    "description": "The value (e.g. 'neovim', 'UTC+5:30')",
+                },
+            },
+            "required": ["content", "category"],
+        },
+    },
+}
+
+_REMEMBER_TOOL_ANTHROPIC: dict = {
+    "name": "remember",
+    "description": (
+        "Store something important about the user that should be remembered in "
+        "future conversations. Call this when the user reveals a clear preference, "
+        "fact, goal, or decision."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "content": {
+                "type": "string",
+                "description": "The fact to remember, in plain English",
+            },
+            "category": {
+                "type": "string",
+                "enum": [
+                    "preference", "goal", "skill", "habit",
+                    "role", "project", "belief", "context",
+                ],
+            },
+            "key": {
+                "type": "string",
+                "description": "Short label for the fact (e.g. 'editor', 'timezone')",
+            },
+            "value": {
+                "type": "string",
+                "description": "The value (e.g. 'neovim', 'UTC+5:30')",
+            },
+        },
+        "required": ["content", "category"],
+    },
+}
+
+
+def _blocks_to_anthropic_content(content_blocks: list) -> list[dict]:
+    """Serialize Anthropic response content blocks to message-content format."""
+    result = []
+    for b in content_blocks:
+        btype = getattr(b, "type", "")
+        if btype == "text":
+            result.append({"type": "text", "text": getattr(b, "text", "")})
+        elif btype == "tool_use":
+            result.append({
+                "type": "tool_use",
+                "id": getattr(b, "id", ""),
+                "name": getattr(b, "name", ""),
+                "input": getattr(b, "input", {}),
+            })
+    return result
 
 
 class SmritikoshMiddleware:
@@ -84,6 +175,7 @@ class SmritikoshMiddleware:
         extract_every_n_turns: int = _DEFAULT_EXTRACT_EVERY,
         use_trigger_filter: bool = True,
         auto_inject: bool = False,
+        enable_remember_tool: bool = True,
     ) -> None:
         self._llm = llm_client
         self._url = smritikosh_url.rstrip("/")
@@ -97,14 +189,18 @@ class SmritikoshMiddleware:
         self._every_n = extract_every_n_turns
         self._trigger_filter = use_trigger_filter
         self._auto_inject = auto_inject
+        self._enable_remember_tool = enable_remember_tool
 
         self._buffer: list[dict] = []
         self._user_turn_count = 0
-        self._last_ingested_at = 0   # _user_turn_count snapshot at last flush
+        self._last_ingested_at = 0    # _user_turn_count snapshot at last flush
+        self._last_flush_buf_idx = 0  # buffer index of the first unsent turn
         self._lock = threading.Lock()
         self._closed = False
         self._pending_threads: list[threading.Thread] = []
         self._http = httpx.Client(timeout=60.0)
+        # Depth counter prevents re-entrant remember() handling in follow-up calls
+        self._remember_loop_depth = 0
 
     # ── Transparent proxy ─────────────────────────────────────────────────────
 
@@ -125,17 +221,20 @@ class SmritikoshMiddleware:
     # ── Session lifecycle ─────────────────────────────────────────────────────
 
     def close(self) -> None:
-        """Flush any remaining buffered turns as a final (non-partial) ingest."""
+        """Flush any remaining unsent turns as a final (non-partial) ingest."""
         with self._lock:
             if self._closed:
                 return
             self._closed = True
-            turns = list(self._buffer)
+            # Capture only the turns not yet sent by a partial flush.
+            # _last_flush_buf_idx is already up-to-date: it was advanced inside
+            # the lock when each partial flush was scheduled, so no re-read after
+            # join() is needed.
+            turns = list(self._buffer[self._last_flush_buf_idx:])
             pending = list(self._pending_threads)
 
-        # Wait for any in-flight partial flushes to commit their last_turn_index
-        # before sending the final ingest — prevents the server re-processing turns
-        # that were already covered by a partial flush (race condition).
+        # Wait for any in-flight partial flushes to finish before sending the
+        # final ingest — ensures ordering (server processes partials first).
         for t in pending:
             t.join(timeout=30)
 
@@ -190,7 +289,11 @@ class SmritikoshMiddleware:
                 and self._user_turn_count - self._last_ingested_at >= self._every_n
             ):
                 self._last_ingested_at = self._user_turn_count
-                window_to_flush = list(self._buffer)
+                # Send only turns accumulated since the last partial flush (streaming window).
+                # The server uses its stored last_turn_index to skip already-processed turns,
+                # but sending only the new slice avoids re-transmitting the full history.
+                window_to_flush = list(self._buffer[self._last_flush_buf_idx:])
+                self._last_flush_buf_idx = len(self._buffer)
 
         if window_to_flush is not None:
             t = threading.Thread(
@@ -203,6 +306,168 @@ class SmritikoshMiddleware:
                 self._pending_threads = [p for p in self._pending_threads if p.is_alive()]
                 self._pending_threads.append(t)
             t.start()
+
+    # ── remember() tool handling ──────────────────────────────────────────────
+
+    def _store_fact_sync(self, tool_input: dict) -> None:
+        """POST /memory/fact for a remember() tool call. Best-effort, never raises."""
+        try:
+            key = tool_input.get("key") or tool_input.get("content", "unknown")[:50]
+            value = tool_input.get("value") or tool_input.get("content", "unknown")
+            self._http.post(
+                f"{self._url}/memory/fact",
+                json={
+                    "user_id": self.user_id,
+                    "app_id": self.app_id,
+                    "category": tool_input.get("category", "preference"),
+                    "key": key,
+                    "value": value,
+                    "note": tool_input.get("content"),
+                    "source_type": "tool_use",
+                },
+                headers=self._api_headers,
+            )
+        except Exception:
+            pass
+
+    def _handle_openai_remember(
+        self,
+        response: Any,
+        messages: list[dict],
+        create_fn: Any,
+        kwargs: dict,
+    ) -> Any:
+        """
+        Inspect an OpenAI-style response for remember() tool calls.
+
+        Works for any provider whose response follows the OpenAI schema —
+        that includes openai, LiteLLM (all its providers), vLLM, llama.cpp, etc.
+
+        ``create_fn`` is a callable that accepts ``messages=`` and ``**kwargs``
+        and returns another OpenAI-style response, e.g.:
+          - ``self._completions.create``  (OpenAI / OpenAI-compat SDK)
+          - ``litellm.completion``        (LiteLLM)
+
+        - If ALL tool calls are remember(): save facts and do a transparent follow-up
+          LLM call — the app never sees the remember() call.
+        - If mixed with other tools: save facts and return the response as-is.
+        """
+        choices = getattr(response, "choices", None) or []
+        if not choices:
+            return response
+        message = choices[0].message
+        tool_calls = getattr(message, "tool_calls", None) or []
+        remember_calls = [
+            tc for tc in tool_calls
+            if getattr(tc.function, "name", "") == "remember"
+        ]
+        if not remember_calls:
+            return response
+
+        # Parse and store each fact synchronously (we block on follow-up anyway)
+        for tc in remember_calls:
+            try:
+                args = _json.loads(tc.function.arguments)
+            except Exception:
+                args = {"content": str(tc.function.arguments), "category": "preference"}
+            self._store_fact_sync(args)
+
+        other_calls = [
+            tc for tc in tool_calls
+            if getattr(tc.function, "name", "") != "remember"
+        ]
+        if other_calls:
+            # Mixed tool calls — facts saved above; return as-is for app to handle others
+            return response
+
+        # All calls are remember() — make a transparent follow-up call
+        assistant_msg: dict = {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": getattr(tc.function, "name", ""),
+                        "arguments": getattr(tc.function, "arguments", ""),
+                    },
+                }
+                for tc in remember_calls
+            ],
+        }
+        assistant_content = getattr(message, "content", None)
+        if assistant_content is not None:
+            assistant_msg["content"] = assistant_content
+
+        tool_results = [
+            {"role": "tool", "tool_call_id": tc.id, "content": "Memory saved."}
+            for tc in remember_calls
+        ]
+        new_messages = messages + [assistant_msg] + tool_results
+
+        self._remember_loop_depth += 1
+        try:
+            follow_up = create_fn(messages=new_messages, **kwargs)
+        finally:
+            self._remember_loop_depth -= 1
+        return follow_up
+
+    def _handle_anthropic_remember(
+        self,
+        response: Any,
+        messages: list[dict],
+        messages_ns: Any,
+        kwargs: dict,
+    ) -> Any:
+        """
+        Inspect an Anthropic response for remember() tool_use blocks.
+
+        - If ALL tool_use blocks are remember(): save facts and do a transparent follow-up.
+        - If mixed: save facts and return the response as-is.
+        """
+        content_blocks = getattr(response, "content", []) or []
+        remember_blocks = [
+            b for b in content_blocks
+            if getattr(b, "type", "") == "tool_use" and getattr(b, "name", "") == "remember"
+        ]
+        if not remember_blocks:
+            return response
+
+        for b in remember_blocks:
+            self._store_fact_sync(getattr(b, "input", {}) or {})
+
+        other_tool_blocks = [
+            b for b in content_blocks
+            if getattr(b, "type", "") == "tool_use" and getattr(b, "name", "") != "remember"
+        ]
+        if other_tool_blocks:
+            return response
+
+        # All tool_use blocks are remember() — transparent follow-up
+        assistant_content = _blocks_to_anthropic_content(content_blocks)
+        tool_results_msg = {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": getattr(b, "id", ""),
+                    "content": "Memory saved.",
+                }
+                for b in remember_blocks
+            ],
+        }
+        new_messages = (
+            messages
+            + [{"role": "assistant", "content": assistant_content}]
+            + [tool_results_msg]
+        )
+
+        self._remember_loop_depth += 1
+        try:
+            follow_up = messages_ns.create(messages=new_messages, **kwargs)
+        finally:
+            self._remember_loop_depth -= 1
+        return follow_up
 
     def _flush(self, *, partial: bool, turns: list[dict]) -> None:
         """POST /ingest/session — best-effort, never raises."""
@@ -296,12 +561,28 @@ class _OpenAICompletionsProxy:
         """
         Intercept ``chat.completions.create()``.
 
-        1. Optionally inject memory context into the system message.
-        2. Forward to the real OpenAI client.
-        3. Buffer the user turns and fire partial ingestion if threshold is met.
+        1. Inject the remember() tool definition into tools (if enabled and not in loop).
+        2. Optionally inject memory context into the system message.
+        3. Forward to the real OpenAI client.
+        4. Handle any remember() tool calls in the response.
+        5. Buffer the user turns and fire partial ingestion if threshold is met.
         """
+        active = self._mw._enable_remember_tool and self._mw._remember_loop_depth == 0
+
+        if active:
+            tools = list(kwargs.get("tools") or [])
+            if not any(t.get("function", {}).get("name") == "remember" for t in tools):
+                tools.append(_REMEMBER_TOOL_OPENAI)
+            kwargs = {**kwargs, "tools": tools}
+
         outgoing = self._mw._inject_context(messages) if self._mw._auto_inject else messages
         response = self._completions.create(messages=outgoing, **kwargs)
+
+        if active:
+            response = self._mw._handle_openai_remember(
+                response, outgoing, self._completions.create, kwargs
+            )
+
         self._mw._record_and_maybe_flush(messages)  # buffer original (pre-injection) turns
         return response
 
@@ -326,7 +607,16 @@ class _AnthropicMessagesProxy:
         Anthropic passes ``system`` as a top-level kwarg; messages are user/assistant
         pairs only.  We buffer the messages list for extraction.
         If auto_inject is on, a sentinel system block is prepended or merged.
+        Injects the remember() tool and handles any remember() calls in the response.
         """
+        active = self._mw._enable_remember_tool and self._mw._remember_loop_depth == 0
+
+        if active:
+            tools = list(kwargs.get("tools") or [])
+            if not any(t.get("name") == "remember" for t in tools):
+                tools.append(_REMEMBER_TOOL_ANTHROPIC)
+            kwargs = {**kwargs, "tools": tools}
+
         if self._mw._auto_inject:
             query = next(
                 (m.get("content", "") for m in reversed(messages) if m.get("role") == "user"),
@@ -345,5 +635,83 @@ class _AnthropicMessagesProxy:
                 }
 
         response = self._ns.create(messages=messages, **kwargs)
+
+        if active:
+            response = self._mw._handle_anthropic_remember(
+                response, messages, self._ns, kwargs
+            )
+
         self._mw._record_and_maybe_flush(messages)
+        return response
+
+
+# ── LiteLLM middleware ────────────────────────────────────────────────────────
+
+
+class LiteLLMMiddleware(SmritikoshMiddleware):
+    """
+    Memory-extracting wrapper for ``litellm.completion()`` / ``litellm.acompletion()``.
+
+    Covers every provider LiteLLM supports through a single interface:
+      - Gemini   (``model="gemini/gemini-1.5-pro"``)
+      - Ollama   (``model="ollama_chat/llama3"``)
+      - vLLM     (``model="openai/<model>"``, ``api_base=...``)
+      - llama.cpp(``model="openai/<model>"``, ``api_base=...``)
+      - OpenAI   (``model="gpt-4o"``)
+      - Claude   (``model="claude-haiku-4-5-20251001"``)
+
+    LiteLLM responses follow the OpenAI schema, so all ``remember()`` tool
+    injection and interception logic is reused directly.
+
+    Usage::
+
+        import litellm
+        from smritikosh.sdk import LiteLLMMiddleware
+
+        mw = LiteLLMMiddleware(
+            litellm,
+            smritikosh_api_key="sk-smriti-...",
+            user_id="alice",
+            app_id="my-app",
+        )
+        response = mw.completion(model="ollama_chat/llama3", messages=[...])
+        mw.close()
+
+    Context manager::
+
+        with LiteLLMMiddleware(litellm, ...) as mw:
+            response = mw.completion(model="gemini/gemini-1.5-pro", messages=[...])
+    """
+
+    def __init__(self, litellm_module: Any, **kwargs: Any) -> None:
+        # The litellm module is stored as self._llm via the parent __init__.
+        # The chat/messages proxy properties on SmritikoshMiddleware are never
+        # called for LiteLLM — callers use completion() / acompletion() instead.
+        super().__init__(litellm_module, **kwargs)
+        self._litellm = litellm_module
+
+    def completion(self, *, messages: list[dict], **kwargs: Any) -> Any:
+        """
+        Intercept ``litellm.completion()``.
+
+        Injects the ``remember()`` tool, forwards to LiteLLM, handles any
+        ``remember()`` calls transparently, and buffers turns for ingestion.
+        """
+        active = self._enable_remember_tool and self._remember_loop_depth == 0
+
+        if active:
+            tools = list(kwargs.get("tools") or [])
+            if not any(t.get("function", {}).get("name") == "remember" for t in tools):
+                tools.append(_REMEMBER_TOOL_OPENAI)
+            kwargs = {**kwargs, "tools": tools}
+
+        outgoing = self._inject_context(messages) if self._auto_inject else messages
+        response = self._litellm.completion(messages=outgoing, **kwargs)
+
+        if active:
+            response = self._handle_openai_remember(
+                response, outgoing, self._litellm.completion, kwargs
+            )
+
+        self._record_and_maybe_flush(messages)
         return response

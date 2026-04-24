@@ -50,6 +50,7 @@ Smritikosh gives any LLM application persistent, user-specific memory modelled o
   - [Admin users](#admin-users-api)
   - [External ingest](#external-ingest)
   - [Passive Memory Extraction](#passive-memory-extraction)
+  - [Facts QC](#facts-qc-api)
   - [Audit trail](#audit-trail-api)
 - [Audit trail](#audit-trail)
 - [Authentication & API keys](#authentication--api-keys)
@@ -150,19 +151,23 @@ Your application
       │
       ├── SmritikoshMiddleware (Python)  ← wraps OpenAI / Anthropic sync client
       │         │  intercepts create() calls, buffers turns,
-      │         │  fires POST /ingest/session in background
+      │         │  injects remember() tool, fires POST /ingest/session
+      │         ▼
+      ├── LiteLLMMiddleware (Python)   ← wraps litellm.completion()
+      │         │  covers Gemini, Ollama, vLLM, llama.cpp via LiteLLM
       │         ▼
       ├── SmritikoshClient (Python)   smritikosh.sdk   ← async API client
       └── SmritikoshClient (Node.js)  sdk-node/
                 │
                 ▼  REST API (FastAPI)
-        ┌────────────────────────────────────┐
-        │  /memory   /context                │
-        │  /identity /feedback               │
-        │  /procedures                       │
-        │  /ingest/{push,file,slack,session} │
-        │  /admin/{consolidate,prune,…}      │
-        └────────────────────────────────────┘
+        ┌───────────────────────────────────────┐
+        │  /memory   /context                   │
+        │  /identity /feedback                  │
+        │  /facts    (QC: pending, contradictions)│
+        │  /procedures                          │
+        │  /ingest/{push,file,slack,session}    │
+        │  /admin/{consolidate,prune,…}         │
+        └───────────────────────────────────────┘
 ```
 
 ---
@@ -181,7 +186,7 @@ Your application
 | **SynapticPruner** | Background: deletes old low-scoring events | — |
 | **MemoryClusterer** | Background: groups similar events by topic using embeddings | PostgreSQL |
 | **BeliefMiner** | Background: infers durable beliefs and values from event patterns; tracks evidence event IDs | PostgreSQL |
-| **FactDecayer** | Background (weekly): exponential confidence decay on Neo4j facts; deletes stale ones | Neo4j |
+| **FactDecayer** | Background (weekly): exponential confidence decay on Neo4j facts; skips `ui_manual` facts; `cross_system` decays 2× faster; promotes stale facts (confidence < 0.20) to `pending` before deletion | Neo4j |
 | **IdentityBuilder** | Synthesises semantic facts + beliefs into a user identity model | — |
 | **ReinforcementLoop** | Adjusts event importance scores based on user feedback signals | PostgreSQL |
 | **ProceduralMemory** | Stores trigger→instruction rules; fuzzy-matched against each query | PostgreSQL |
@@ -192,8 +197,10 @@ Your application
 | **LLMAdapter** | Unified interface to Claude, OpenAI, Gemini, Ollama, vLLM, llama.cpp; logs resolved provider + model at startup | — |
 | **SmritikoshClient (Python)** | Async Python SDK wrapping the REST API | — |
 | **SmritikoshClient (Node.js)** | TypeScript/ESM SDK with identical surface to the Python SDK | — |
-| **SmritikoshMiddleware** | Sync wrapper for OpenAI/Anthropic clients; buffers turns, fires `POST /ingest/session` in background, optionally auto-injects context | — |
+| **SmritikoshMiddleware** | Sync wrapper for OpenAI/Anthropic clients; auto-injects `remember()` tool, intercepts tool calls transparently, buffers turns, fires `POST /ingest/session` in background, optionally auto-injects context | — |
+| **LiteLLMMiddleware** | Subclass of SmritikoshMiddleware wrapping `litellm.completion()`; covers Gemini, Ollama, vLLM, llama.cpp, OpenAI, Claude through a single interface | — |
 | **TriggerDetector** | Regex pre-filter (30 patterns) — skips LLM extraction when no high-signal phrases detected | — |
+| **QualityControlLayer** | Confidence threshold gate (active/pending/rejected); contradiction detection on fact upsert; auto-promotes or flags conflicts for user review | Neo4j + PostgreSQL |
 
 ---
 
@@ -2290,15 +2297,48 @@ Every memory now carries a `source_type` tracking how it entered the system:
 | `webhook_ingest` | 0.70 | Structured transcript via `/ingest/transcript` |
 | `cross_system` | 0.65 | Synthesized from cross-integration signals |
 
+### `remember()` tool — LLM-curated memory (Phase 5)
+
+The middleware automatically injects a `remember()` tool into every LLM call. When the LLM decides something is worth remembering, it calls the tool — the middleware intercepts it, calls `POST /memory/fact` with `source_type="tool_use"`, and continues the conversation transparently. The app developer sees no tool calls.
+
+```python
+# The LLM may call remember() during reasoning:
+# {"name": "remember", "arguments": {"content": "User prefers neovim", "category": "preference", "key": "editor", "value": "neovim"}}
+# → middleware saves the fact, returns synthetic tool_result, calls LLM again
+# → app receives the continuation response as if no tool call happened
+```
+
+**Two cases handled transparently:**
+- **All calls are `remember()`** → facts saved, follow-up LLM call made, continuation returned to app
+- **Mixed tool calls** → `remember()` facts saved in background, other tool calls passed through to app
+
+**Disable** with `enable_remember_tool=False` on the middleware constructor.
+
 ### Fact status
 
-Facts now have a lifecycle status:
+Facts have a lifecycle — the QC layer gates what enters context assembly:
 
 | Status | Meaning |
 |---|---|
 | `active` | Included in context assembly |
-| `pending` | Below confidence threshold (0.60) — needs user review |
+| `pending` | Below confidence threshold (0.60) or awaiting user review |
 | `rejected` | User dismissed or system discarded |
+
+### Quality Control Layer (Phase 6)
+
+All passive extraction paths pass through a shared control layer before facts are durably written:
+
+**1. Confidence threshold gate** — facts below 0.60 confidence are written as `pending` and excluded from context assembly until the user approves them.
+
+**2. Contradiction detection** — before every fact write, Smritikosh checks whether the same `(user, app, category, key)` already has a *different* value:
+- Confidence delta > 0.15 → overwrite automatically (logs superseded value to `source_meta.superseded`)
+- Confidence delta ≤ 0.15 → create a `fact_contradictions` record and skip the write; surface to user for resolution via `/facts/contradictions/{user_id}`
+- `ui_manual` source → always overwrites (explicit user intent wins)
+
+**3. Decay rules** (weekly FactDecayer job):
+- `ui_manual` facts are **never decayed** — user explicitly stated them
+- `cross_system` facts decay **2× faster** — behavioral patterns shift quickly
+- Facts falling below confidence 0.20 are promoted to `pending` before eventual deletion
 
 ### Anti-contamination rules
 
@@ -2327,7 +2367,7 @@ Posts a realistic 7-turn conversation, verifies trigger detection, tests idempot
 python sample/middleware_demo.py
 ```
 
-Wraps a fake OpenAI-style client with `SmritikoshMiddleware` — no real API keys required. Shows turn buffering, partial flushing every N turns, `auto_inject=True` context prepending, and final flush on `close()`. Swap `FakeOpenAI()` for `openai.OpenAI()` or `anthropic.Anthropic()` in production.
+Wraps a fake OpenAI-style client with `SmritikoshMiddleware` — no real API keys required. Shows turn buffering, windowed partial flushing every N turns, `auto_inject=True` context prepending, and final flush on `close()`. Swap `FakeOpenAI()` for `openai.OpenAI()` or `anthropic.Anthropic()` in production.
 
 ### Dashboard integration (Phase 7)
 
@@ -2336,6 +2376,117 @@ All memory source types are surfaced in the dashboard UI:
 - **Source badges** — every memory card shows a colour-coded badge (amber = Distilled, sky = SDK, blue = Manual, etc.). `api_explicit` shows no badge to avoid noise.
 - **Review queue** (`/dashboard/review`) — auto-extracted memories appear here for human review. Approve (thumbs-up) or remove (trash) each one; filter by source type.
 - **Add Memory form** — the `+` button in the memory timeline opens a modal to manually record a structured fact (category → key → value). Stored as `ui_manual` with confidence 1.0; the identity graph refreshes automatically.
+
+---
+
+## Facts QC API
+
+These endpoints manage the Quality Control layer for semantic facts — the review queue, status changes, and contradiction resolution.
+
+### `GET /facts/{user_id}`
+
+List semantic facts for a user. Use `status=pending` to get the review queue.
+
+```bash
+# Review queue — all pending facts awaiting approval
+curl "http://localhost:8080/facts/alice?status=pending&app_id=myapp" \
+  -H "Authorization: Bearer $TOKEN"
+
+# All facts regardless of status
+curl "http://localhost:8080/facts/alice?app_id=myapp" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Filter by category
+curl "http://localhost:8080/facts/alice?category=preference&app_id=myapp" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```json
+{
+  "user_id": "alice",
+  "app_id": "myapp",
+  "facts": [
+    {
+      "category": "preference",
+      "key": "editor",
+      "value": "neovim",
+      "confidence": 0.54,
+      "frequency_count": 1,
+      "status": "pending",
+      "source_type": "passive_distillation",
+      "first_seen_at": "2026-04-23T10:00:00+00:00",
+      "last_seen_at": "2026-04-23T10:00:00+00:00"
+    }
+  ],
+  "total": 1
+}
+```
+
+### `PATCH /facts/{user_id}/{category}/{key}/status`
+
+Approve (`active`) or reject a pending fact.
+
+```bash
+# Approve a pending fact
+curl -X PATCH "http://localhost:8080/facts/alice/preference/editor/status?app_id=myapp" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"status": "active"}'
+
+# Reject a pending fact
+curl -X PATCH "http://localhost:8080/facts/alice/preference/editor/status?app_id=myapp" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"status": "rejected"}'
+```
+
+### `GET /facts/contradictions/{user_id}`
+
+List unresolved contradictions — cases where a new extraction proposed a different value for an existing fact and the confidence delta was too small to auto-overwrite.
+
+```bash
+curl "http://localhost:8080/facts/contradictions/alice?app_id=myapp" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```json
+{
+  "user_id": "alice",
+  "app_id": "myapp",
+  "contradictions": [
+    {
+      "id": "b2c3d4e5-...",
+      "category": "preference",
+      "key": "editor",
+      "existing_value": "neovim",
+      "existing_confidence": 0.90,
+      "candidate_value": "emacs",
+      "candidate_source": "passive_distillation",
+      "candidate_confidence": 0.75,
+      "created_at": "2026-04-23T12:00:00+00:00"
+    }
+  ],
+  "total": 1
+}
+```
+
+### `PATCH /facts/contradictions/{contradiction_id}`
+
+Resolve a contradiction. `keep=existing` dismisses the candidate; `keep=candidate` overwrites the fact with the candidate value.
+
+```bash
+# Keep the existing value — dismiss the candidate
+curl -X PATCH "http://localhost:8080/facts/contradictions/b2c3d4e5-..." \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"keep": "existing"}'
+
+# Take the candidate — overwrite the fact
+curl -X PATCH "http://localhost:8080/facts/contradictions/b2c3d4e5-..." \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"keep": "candidate"}'
+```
 
 ---
 
@@ -2762,7 +2913,7 @@ async with SmritikoshClient(base_url="http://localhost:8080") as client:
 
 ### SmritikoshMiddleware — transparent LLM wrapper
 
-`SmritikoshMiddleware` wraps any OpenAI or Anthropic **sync** client. The developer changes one line; memory extraction happens invisibly in the background.
+`SmritikoshMiddleware` wraps any OpenAI or Anthropic **sync** client. The developer changes one line; memory extraction and the `remember()` tool happen invisibly in the background.
 
 ```python
 from smritikosh.sdk import SmritikoshMiddleware
@@ -2775,9 +2926,10 @@ with SmritikoshMiddleware(
     smritikosh_api_key="sk-smriti-...",   # JWT or API key
     user_id="alice",
     app_id="my-app",
-    extract_every_n_turns=10,   # partial flush every N user turns (0 = only on close)
-    use_trigger_filter=True,    # skip LLM when no trigger phrases detected
-    auto_inject=False,          # set True to prepend memory context before each call
+    extract_every_n_turns=10,      # partial flush every N user turns (0 = only on close)
+    use_trigger_filter=True,       # skip LLM when no trigger phrases detected
+    auto_inject=False,             # True → prepend memory context before each call
+    enable_remember_tool=True,     # True → auto-inject remember() tool + intercept calls
 ) as llm:
     response = llm.chat.completions.create(model="gpt-4o", messages=[...])
     # ... more turns ...
@@ -2801,17 +2953,61 @@ with SmritikoshMiddleware(
 
 1. All attribute access is proxied to the underlying LLM client unchanged
 2. `chat.completions.create()` / `messages.create()` are intercepted
-3. User turns are buffered in memory for this session
-4. Every N user turns a `POST /ingest/session` (partial) fires in a background thread
-5. `close()` or `__exit__` sends the final non-partial ingest
-6. If `auto_inject=True`, `GET /context` is called before each LLM call and the result is prepended as a sentinel-wrapped system message (which the extraction pass strips automatically)
-7. All network errors are swallowed — the LLM call is never blocked or interrupted
+3. The `remember()` tool definition is auto-injected into every `tools` list
+4. When the LLM returns a `remember()` tool call, the middleware saves the fact via `POST /memory/fact` and makes a transparent follow-up call — the app never sees the `remember()` call
+5. User turns are buffered in memory for this session
+6. Every N user turns a `POST /ingest/session` (partial) fires in a background thread — sends only the **new** turns since the last partial flush (streaming window); server uses `last_turn_index` to resume correctly
+7. `close()` or `__exit__` sends the final non-partial ingest containing only turns not yet covered by a partial flush
+8. If `auto_inject=True`, `GET /context` is called before each LLM call and the result is prepended as a sentinel-wrapped system message (which the extraction pass strips automatically)
+9. All network errors are swallowed — the LLM call is never blocked or interrupted
 
 **Run the demo:**
 
 ```bash
 python sample/middleware_demo.py   # no OpenAI key required — uses a fake client
 ```
+
+### LiteLLMMiddleware — multi-provider wrapper
+
+`LiteLLMMiddleware` is a subclass of `SmritikoshMiddleware` that wraps `litellm.completion()` instead of a provider-specific client. Use this when your app targets multiple providers (Gemini, Ollama, vLLM, llama.cpp) through LiteLLM's unified interface.
+
+```python
+import litellm
+from smritikosh.sdk import LiteLLMMiddleware
+
+with LiteLLMMiddleware(
+    litellm,
+    smritikosh_url="http://localhost:8080",
+    smritikosh_api_key="sk-smriti-...",
+    user_id="alice",
+    app_id="my-app",
+) as mw:
+    # Gemini
+    response = mw.completion(model="gemini/gemini-1.5-pro", messages=[...])
+
+    # Ollama (local)
+    response = mw.completion(model="ollama_chat/llama3", messages=[...])
+
+    # vLLM / llama.cpp
+    response = mw.completion(
+        model="openai/my-model",
+        api_base="http://localhost:8000/v1",
+        messages=[...],
+    )
+```
+
+**Provider coverage:**
+
+| Provider | Config (`LLM_PROVIDER`) | Middleware |
+|---|---|---|
+| OpenAI / Azure | `openai` | `SmritikoshMiddleware(openai.OpenAI(...))` |
+| Anthropic (Claude) | `claude` | `SmritikoshMiddleware(anthropic.Anthropic())` |
+| Google Gemini | `gemini` | `LiteLLMMiddleware(litellm, model="gemini/...")` |
+| Ollama (local) | `ollama` | `LiteLLMMiddleware(litellm, model="ollama_chat/...")` |
+| vLLM (local) | `vllm` | `LiteLLMMiddleware(litellm, model="openai/...", api_base=...)` |
+| llama.cpp (local) | `llamacpp` | `LiteLLMMiddleware(litellm, model="openai/...", api_base=...)` |
+
+All features (turn buffering, `remember()` tool, context injection, session ingest) work identically across providers because LiteLLM responses follow the OpenAI schema.
 
 ---
 
