@@ -33,6 +33,7 @@ from smritikosh.api.deps import (
     get_episodic,
     get_fact_decayer,
     get_pruner,
+    get_synthesizer,
 )
 from smritikosh.api.ratelimit import limiter
 from smritikosh.api.routes import admin, audit, auth, context, facts, feedback, graph, health, identity, ingest, keys, memory, procedures
@@ -74,6 +75,7 @@ async def lifespan(app: FastAPI):
         clusterer=get_clusterer(),
         belief_miner=get_belief_miner(),
         fact_decayer=get_fact_decayer(),
+        synthesizer=get_synthesizer(),
         consolidation_cron=settings.scheduler_consolidation_cron,
         pruning_cron=settings.scheduler_pruning_cron,
         clustering_cron=settings.scheduler_clustering_cron,

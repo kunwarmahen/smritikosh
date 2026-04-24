@@ -20,6 +20,7 @@ from smritikosh.memory.identity import IdentityBuilder
 from smritikosh.memory.narrative import NarrativeMemory
 from smritikosh.memory.procedural import ProceduralMemory
 from smritikosh.processing.belief_miner import BeliefMiner
+from smritikosh.processing.cross_system_synthesizer import CrossSystemSynthesizer
 from smritikosh.processing.fact_decayer import FactDecayer
 from smritikosh.processing.reconsolidation import ReconsolidationEngine
 from smritikosh.processing.memory_clusterer import MemoryClusterer
@@ -132,6 +133,15 @@ def get_pruner() -> SynapticPruner:
 @lru_cache(maxsize=1)
 def get_fact_decayer() -> FactDecayer:
     return FactDecayer(semantic=get_semantic())
+
+
+@lru_cache(maxsize=1)
+def get_synthesizer() -> CrossSystemSynthesizer:
+    return CrossSystemSynthesizer(
+        llm=get_llm(),
+        episodic=get_episodic(),
+        semantic=get_semantic(),
+    )
 
 
 @lru_cache(maxsize=1)

@@ -247,6 +247,55 @@ async def trigger_belief_mining(
     )
 
 
+# ── Cross-system synthesis ─────────────────────────────────────────────────────
+
+
+@router.post("/synthesize", response_model=AdminJobResponse)
+async def trigger_synthesis(
+    body: AdminJobRequest,
+    scheduler: Annotated[MemoryScheduler, Depends(_get_scheduler)],
+    _admin: Annotated[dict, Depends(require_admin)],
+) -> AdminJobResponse:
+    """
+    Run cross-system synthesis immediately.
+
+    Correlates connector signals (calendar, email, Slack) with recent
+    episodic events to infer durable behavioral patterns.
+
+    If ``user_id`` is provided, runs for that user only.
+    If omitted, runs for all users.
+    """
+    if body.user_id:
+        result = await scheduler.run_synthesis_now(
+            user_id=body.user_id, app_id=body.app_id
+        )
+        results = [result]
+    else:
+        results = await scheduler.run_synthesis_for_all_users()
+
+    return AdminJobResponse(
+        job="cross_system_synthesis",
+        users_processed=len(results),
+        results=[
+            AdminJobResult(
+                user_id=r.user_id,
+                app_id=r.app_id,
+                skipped=r.skipped,
+                detail=(
+                    r.skip_reason
+                    if r.skipped
+                    else (
+                        f"sources={','.join(r.connector_sources_found)} "
+                        f"facts_synthesized={r.facts_synthesized} "
+                        f"facts_pending={r.facts_pending}"
+                    )
+                ),
+            )
+            for r in results
+        ],
+    )
+
+
 # ── User management ────────────────────────────────────────────────────────────
 
 

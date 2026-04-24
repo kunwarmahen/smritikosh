@@ -32,6 +32,7 @@ from smritikosh.db.postgres import db_session
 from smritikosh.memory.episodic import EpisodicMemory
 from smritikosh.processing.belief_miner import BeliefMiner, MiningResult
 from smritikosh.processing.consolidator import Consolidator, ConsolidationResult
+from smritikosh.processing.cross_system_synthesizer import CrossSystemSynthesizer, SynthesisResult
 from smritikosh.processing.fact_decayer import DecayResult, FactDecayer
 from smritikosh.processing.memory_clusterer import ClusterResult, MemoryClusterer
 from smritikosh.processing.synaptic_pruner import PruningResult, SynapticPruner
@@ -57,6 +58,8 @@ class MemoryScheduler:
         belief_mining_cron:      Cron expression for belief mining (default: every 12 hours).
         fact_decayer:            Optional FactDecayer instance.
         fact_decay_cron:         Cron expression for fact decay (default: weekly Sunday 03:00 UTC).
+        synthesizer:             Optional CrossSystemSynthesizer instance.
+        synthesis_cron:          Cron expression for cross-system synthesis (default: daily 01:00 UTC).
 
     Cron format: standard 5-field UTC — "minute hour day-of-month month day-of-week"
     Examples:
@@ -78,6 +81,8 @@ class MemoryScheduler:
         belief_mining_cron: str = "0 */12 * * *",
         fact_decayer: FactDecayer | None = None,
         fact_decay_cron: str = "0 3 * * 0",
+        synthesizer: CrossSystemSynthesizer | None = None,
+        synthesis_cron: str = "0 1 * * *",
     ) -> None:
         self.consolidator = consolidator
         self.pruner = pruner
@@ -85,6 +90,7 @@ class MemoryScheduler:
         self.clusterer = clusterer
         self.belief_miner = belief_miner
         self.fact_decayer = fact_decayer
+        self.synthesizer = synthesizer
         self._scheduler = AsyncIOScheduler()
 
         self._scheduler.add_job(
@@ -123,6 +129,14 @@ class MemoryScheduler:
                 trigger=CronTrigger.from_crontab(fact_decay_cron),
                 id="fact_decay_job",
                 name="Semantic Fact Decay",
+                max_instances=1,
+            )
+        if self.synthesizer is not None:
+            self._scheduler.add_job(
+                self.run_synthesis_for_all_users,
+                trigger=CronTrigger.from_crontab(synthesis_cron),
+                id="cross_system_synthesis_job",
+                name="Cross-System Synthesis",
                 max_instances=1,
             )
 
@@ -338,6 +352,54 @@ class MemoryScheduler:
         except Exception as exc:
             logger.error("Fact decay failed: %s", exc)
             result = DecayResult(skipped=True)
+            result.skip_reason = str(exc)
+            return result
+
+    async def run_synthesis_for_all_users(self) -> list[SynthesisResult]:
+        """Run cross-system synthesis for all users. Called daily by the scheduler."""
+        if self.synthesizer is None:
+            return []
+        user_app_pairs = await self._get_all_users()
+        logger.info(
+            "Cross-system synthesis job triggered — %d user(s) found",
+            len(user_app_pairs),
+        )
+        results: list[SynthesisResult] = []
+
+        for user_id, app_id in user_app_pairs:
+            logger.debug("Synthesizing user=%s app=%s", user_id, app_id)
+            result = await self.run_synthesis_now(user_id=user_id, app_id=app_id)
+            results.append(result)
+
+        skipped = sum(1 for r in results if r.skipped)
+        logger.info(
+            "Cross-system synthesis job complete — processed=%d skipped=%d",
+            len(results) - skipped,
+            skipped,
+        )
+        return results
+
+    async def run_synthesis_now(
+        self, *, user_id: str, app_id: str = "default"
+    ) -> SynthesisResult:
+        """Run cross-system synthesis immediately for a specific user."""
+        if self.synthesizer is None:
+            result = SynthesisResult(user_id=user_id, app_id=app_id, skipped=True)
+            result.skip_reason = "No synthesizer configured."
+            return result
+        try:
+            from smritikosh.db.postgres import db_session
+            from smritikosh.db.neo4j import neo4j_session
+            async with db_session() as pg, neo4j_session() as neo:
+                return await self.synthesizer.run(
+                    pg, neo, user_id=user_id, app_id=app_id
+                )
+        except Exception as exc:
+            logger.error(
+                "Cross-system synthesis failed",
+                extra={"user_id": user_id, "error": str(exc)},
+            )
+            result = SynthesisResult(user_id=user_id, app_id=app_id, skipped=True)
             result.skip_reason = str(exc)
             return result
 
