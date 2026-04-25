@@ -915,7 +915,7 @@ Notice that on the last message, the bot knows about the Rust milestone stored v
 
 ---
 
-## Demo scripts (passive extraction + SDK middleware)
+## Demo scripts (passive extraction + SDK middleware + media ingestion)
 
 All scripts live in `sample/` and authenticate as `admin` — no API key setup required.
 Run every command from the **repo root** with the virtualenv active.
@@ -1025,9 +1025,55 @@ Expected output (abbreviated):
 
 ---
 
-### Script 4 — `chatbot.py` (interactive)
+### Script 4 — `media_ingest_demo.py`
 
-A live chat loop against Priya's memories. After running the scripts above, Priya's memory will include extracted facts from both demos.
+Demonstrates media ingestion — uploading a personal notes document and having facts extracted automatically. **No Whisper or Vision API key required** — document extraction runs with your core LLM.
+
+```bash
+python sample/media_ingest_demo.py
+```
+
+**What it does (5 steps):**
+
+| Step | What happens |
+|---|---|
+| 1. Upload | Posts a personal `.md` notes document to `POST /ingest/media`; server returns `status=processing` immediately — no blocking wait |
+| 2. Poll | Calls `GET /ingest/media/{id}/status` every 2 seconds until extraction is done |
+| 3. Review | Shows facts saved automatically (relevance > 0.75) and facts pending review (0.60–0.75) |
+| 4. Confirm | Calls `POST /ingest/media/{id}/confirm` to move pending facts to active status — mirrors the UI review modal |
+| 5. Verify | Calls `GET /context` to confirm the extracted facts appear in context retrieval |
+
+The script's summary also shows the equivalent code snippets for **voice notes** (requires `WHISPER_PROVIDER`), **image uploads** (requires `VISION_PROVIDER`), and **meeting recordings** — so you can extend to those once those optional providers are configured.
+
+Expected output (abbreviated):
+```
+── Step 1 — Upload a personal notes document ────────────────
+  media_id: 550e8400-e29b-41d4-a716-446655440000
+  status:   processing  ← processing runs in the background
+
+── Step 2 — Wait for extraction to complete ─────────────────
+  [1/30] status='processing' … waiting 2s
+  status:               complete
+  facts_extracted:      6
+  facts_pending_review: 2
+
+── Step 3 — Extracted facts ──────────────────────────────────
+  ✓ 6 fact(s) saved automatically
+  2 fact(s) are waiting for your review:
+    [0] shops at Whole Foods every Saturday  confidence=0.71
+    [1] follows mostly plant-based diet      confidence=0.68
+
+── Step 4 — Confirm 2 pending fact(s) ───────────────────────
+  Server response: Confirmed 2 facts
+  facts_pending_review remaining: 0
+  ✓ All pending facts moved to active status
+```
+
+---
+
+### Script 5 — `chatbot.py` (interactive)
+
+A live chat loop against Priya's memories. After running the scripts above, Priya's memory will include extracted facts from all demos.
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...   # required — chatbot makes direct LLM calls
@@ -1048,13 +1094,16 @@ Try asking:
 # 1. One-time setup
 python sample/seed_priya.py
 
-# 2. Passive extraction demo (no LLM key needed in demo itself)
+# 2. Session ingest, streaming, manual facts (no extra API key)
 python sample/passive_extraction_demo.py
 
-# 3. Middleware demo (no OpenAI key needed — uses fake client)
+# 3. SDK middleware + remember() tool (no OpenAI key — uses fake client)
 python sample/middleware_demo.py
 
-# 4. Chat with the enriched memory
+# 4. Media ingestion from a document (no Whisper/Vision key needed)
+python sample/media_ingest_demo.py
+
+# 5. Chat with the fully enriched memory (requires LLM API key)
 export ANTHROPIC_API_KEY=sk-ant-...
 python sample/chatbot.py
 ```

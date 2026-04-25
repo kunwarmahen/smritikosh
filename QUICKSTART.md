@@ -131,6 +131,32 @@ FACT_DECAY_HALF_LIFE_DAYS=60.0           # halve confidence every 60 days
 FACT_DECAY_FLOOR=0.1                     # delete facts below this confidence
 ```
 
+### Optional: media ingestion providers
+
+These settings are **not required** to run Smritikosh. Document ingestion (`.txt`, `.md`, `.pdf`) works with just your core LLM above — no extra keys needed.
+
+To unlock voice note and image uploads, add the relevant keys:
+
+```dotenv
+# Voice note transcription (MP3, WAV, M4A, WebM)
+WHISPER_PROVIDER=openai                  # or: local (self-hosted)
+WHISPER_API_KEY=sk-...                   # same as your OpenAI key, or a separate one
+# WHISPER_PROVIDER=local
+# WHISPER_BASE_URL=http://localhost:8000 # URL of your local Whisper server
+
+# Image description (receipt, screenshot, whiteboard)
+VISION_PROVIDER=openai                   # or: claude / gemini / ollama
+VISION_MODEL=gpt-4o-mini
+VISION_API_KEY=sk-...
+
+# Meeting recording diarization (identifies which speaker is the user)
+# DIARIZATION_PROVIDER=none              # default — falls back to first-person filter
+# DIARIZATION_PROVIDER=pyannote          # full diarization (requires HF_TOKEN + GPU)
+# HF_TOKEN=hf_...                        # Hugging Face token for pyannote/speaker-diarization-3.1
+```
+
+The `sample/media_ingest_demo.py` script demonstrates document ingestion and works with just the core LLM — try it without configuring the optional keys first.
+
 ---
 
 ## Step 6 — Start the databases
@@ -275,6 +301,26 @@ curl -s -X POST http://localhost:8080/auth/register \
 ```
 
 You are now fully set up. See the [Sample project](README.md#sample-project) section in the README to test the full memory flow.
+
+**Try the demos in order:**
+
+```bash
+# Seed a demo user (one-time)
+python sample/seed_priya.py
+
+# Passive extraction from a conversation transcript
+python sample/passive_extraction_demo.py
+
+# SDK middleware with transparent turn buffering
+python sample/middleware_demo.py
+
+# Media ingestion — upload a personal notes document (no extra keys needed)
+python sample/media_ingest_demo.py
+
+# Interactive chat with the enriched memory
+export ANTHROPIC_API_KEY=sk-ant-...
+python sample/chatbot.py
+```
 
 **Verify the LLM adapter resolved correctly** — on startup you should see a log line like:
 

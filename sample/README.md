@@ -31,6 +31,7 @@ cp .env.example .env
 | `chatbot.py` | Interactive memory-aware chatbot loop |
 | `passive_extraction_demo.py` | End-to-end passive extraction demo — session ingest, idempotency, streaming windows, manual facts |
 | `middleware_demo.py` | SmritikoshMiddleware demo — transparent LLM wrapper with turn buffering and `remember()` tool; uses a fake client (no API key needed) |
+| `media_ingest_demo.py` | Media ingestion demo — upload a personal notes document, poll for extraction, review and confirm facts; no Whisper or Vision key needed |
 | `.env.example` | Template for local overrides (copy to `.env`) |
 
 ## Demo personas
@@ -186,19 +187,40 @@ Demonstrates:
 
 Swap `FakeOpenAI()` for `openai.OpenAI()` or `anthropic.Anthropic()` in production.
 
+### `media_ingest_demo.py`
+
+Upload a personal notes document and watch Smritikosh extract facts from it.
+No Whisper or Vision API key required — document extraction runs with your core LLM.
+
+```bash
+python sample/media_ingest_demo.py
+```
+
+Demonstrates:
+- `POST /ingest/media` — upload a `.md` document created in-memory; server returns immediately (async processing)
+- `GET /ingest/media/{id}/status` — poll until extraction finishes
+- Two-tier routing — facts above 0.75 relevance are saved automatically; facts in the 0.60–0.75 band go to **pending** review
+- `POST /ingest/media/{id}/confirm` — user confirms (or dismisses) pending facts
+- `POST /context` — extracted facts now appear in memory retrieval
+
+The script's summary also shows the equivalent curl commands for voice note, image (receipt/screenshot/whiteboard), and meeting recording uploads — so you can extend to those once you have `WHISPER_PROVIDER` and `VISION_PROVIDER` configured.
+
 ### Recommended run order
 
 ```bash
 # 1. One-time seed
 python sample/seed_priya.py
 
-# 2. Session ingest + manual facts
+# 2. Session ingest + manual facts (no extra API keys)
 python sample/passive_extraction_demo.py
 
-# 3. Middleware + remember() tool (no OpenAI key needed)
+# 3. Middleware + remember() tool (no OpenAI key needed — uses fake client)
 python sample/middleware_demo.py
 
-# 4. Chat with the enriched memory (requires LLM API key)
+# 4. Media ingestion from a document (no Whisper/Vision key needed)
+python sample/media_ingest_demo.py
+
+# 5. Chat with the enriched memory (requires LLM API key)
 export ANTHROPIC_API_KEY=sk-ant-...
 python sample/chatbot.py
 ```
