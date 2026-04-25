@@ -1,7 +1,7 @@
 """add user_voice_profiles table for Phase 12 voice enrollment.
 
 Revision ID: 0018
-Revises: 0017
+Revises: 0017_add_media_ingests
 Create Date: 2026-04-24
 """
 
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 revision = "0018"
-down_revision = "0017"
+down_revision = "0017_add_media_ingests"
 branch_labels = None
 depends_on = None
 
