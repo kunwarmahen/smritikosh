@@ -1,12 +1,20 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { FileUp, CheckCircle2, AlertCircle, Loader2, Upload, X } from 'lucide-react';
+import { FileUp, CheckCircle2, AlertCircle, Loader2, Upload, X, Image } from 'lucide-react';
 import { useSession } from 'next-auth/react';
 import { useUploadMedia, useMediaStatus, useConfirmMediaFacts } from '@/hooks/useMemory';
 import { PendingFact } from '@/types';
 
+type MediaCategory = 'voice_note' | 'document' | 'image';
+type ContentType = 'voice_note' | 'document' | 'receipt' | 'screenshot' | 'whiteboard';
 type Step = 'upload' | 'processing' | 'review' | 'success' | 'nothing_found' | 'error';
+
+const IMAGE_SUBTYPES: { value: ContentType; label: string; hint: string }[] = [
+  { value: 'receipt', label: '🧾 Receipt', hint: 'Extracts purchase/lifestyle signals' },
+  { value: 'screenshot', label: '🖥 Screenshot', hint: 'Extracts tool/tech/workflow signals' },
+  { value: 'whiteboard', label: '📋 Whiteboard', hint: 'Extracts project/goal/decision signals' },
+];
 
 interface UploadMediaFormProps {
   onClose: () => void;
@@ -18,11 +26,15 @@ export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
 
   const [step, setStep] = useState<Step>('upload');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [contentType, setContentType] = useState<'voice_note' | 'document'>('voice_note');
+  const [mediaCategory, setMediaCategory] = useState<MediaCategory>('voice_note');
+  const [imageSubtype, setImageSubtype] = useState<ContentType>('receipt');
   const [contextNote, setContextNote] = useState('');
   const [mediaId, setMediaId] = useState<string | null>(null);
   const [selectedFactIndices, setSelectedFactIndices] = useState<Set<number>>(new Set());
   const [savedCount, setSavedCount] = useState(0);
+
+  const contentType: ContentType =
+    mediaCategory === 'image' ? imageSubtype : (mediaCategory as ContentType);
 
   const uploadMedia = useUploadMedia();
   const mediaStatus = useMediaStatus(mediaId);
@@ -136,8 +148,10 @@ export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
                 {selectedFile ? selectedFile.name : 'Drop file or click to browse'}
               </p>
               <p className="text-xs text-zinc-500">
-                {contentType === 'voice_note'
+                {mediaCategory === 'voice_note'
                   ? 'MP3, WAV, M4A, WebM (max 25 MB)'
+                  : mediaCategory === 'image'
+                  ? 'JPG, PNG, WebP, GIF (max 20 MB)'
                   : 'PDF, TXT, MD, CSV (max 10 MB)'}
               </p>
               <input
@@ -145,40 +159,67 @@ export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
                 type="file"
                 onChange={(e) => handleFileSelect(e.target.files)}
                 accept={
-                  contentType === 'voice_note'
+                  mediaCategory === 'voice_note'
                     ? 'audio/*'
+                    : mediaCategory === 'image'
+                    ? 'image/jpeg,image/png,image/gif,image/webp'
                     : '.pdf,.txt,.md,.csv'
                 }
                 className="hidden"
               />
             </div>
 
-            {/* Content Type Selector */}
+            {/* Category Selector */}
             <div>
               <label className="label">Content Type</label>
               <div className="flex gap-2 mt-2">
-                <button
-                  onClick={() => setContentType('voice_note')}
-                  className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    contentType === 'voice_note'
-                      ? 'bg-violet-600 text-white'
-                      : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
-                  }`}
-                >
-                  🎙 Voice Note
-                </button>
-                <button
-                  onClick={() => setContentType('document')}
-                  className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    contentType === 'document'
-                      ? 'bg-violet-600 text-white'
-                      : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
-                  }`}
-                >
-                  📄 Document
-                </button>
+                {(
+                  [
+                    { value: 'voice_note', label: '🎙 Voice Note' },
+                    { value: 'document', label: '📄 Document' },
+                    { value: 'image', label: '🖼 Image' },
+                  ] as { value: MediaCategory; label: string }[]
+                ).map(({ value, label }) => (
+                  <button
+                    key={value}
+                    onClick={() => {
+                      setMediaCategory(value);
+                      setSelectedFile(null);
+                    }}
+                    className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                      mediaCategory === value
+                        ? 'bg-violet-600 text-white'
+                        : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
             </div>
+
+            {/* Image subtype selector */}
+            {mediaCategory === 'image' && (
+              <div>
+                <label className="label">Image Type</label>
+                <div className="flex flex-col gap-2 mt-2">
+                  {IMAGE_SUBTYPES.map(({ value, label, hint }) => (
+                    <button
+                      key={value}
+                      onClick={() => setImageSubtype(value)}
+                      className={`flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm transition-colors text-left ${
+                        imageSubtype === value
+                          ? 'bg-violet-600/20 border border-violet-500 text-zinc-100'
+                          : 'bg-zinc-800 border border-transparent text-zinc-400 hover:bg-zinc-700'
+                      }`}
+                    >
+                      <span className="font-medium">{label}</span>
+                      <span className="text-xs text-zinc-500 ml-auto">{hint}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Context Note */}
             <div>
@@ -237,7 +278,12 @@ export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
           <Loader2 className="h-12 w-12 text-violet-400 mx-auto mb-4 animate-spin" />
           <h3 className="text-lg font-semibold text-zinc-100 mb-2">Processing…</h3>
           <p className="text-sm text-zinc-400">
-            {contentType === 'voice_note' ? 'Transcribing' : 'Analysing'} your file
+            {mediaCategory === 'voice_note'
+              ? 'Transcribing'
+              : mediaCategory === 'image'
+              ? 'Analysing image'
+              : 'Analysing'}{' '}
+            your file
           </p>
         </div>
       </div>

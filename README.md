@@ -1702,7 +1702,9 @@ Every memory card in the timeline and review queue displays a **source badge** s
 | Webhook | indigo | `webhook_ingest` |
 | Tool | purple | `tool_use` |
 | Synthesized | teal | `cross_system` |
-| Voice / Audio / Image / Doc | rose/pink/violet/slate | `media_*` |
+| Voice Note | rose | `media_voice` |
+| Document | slate | `media_document` |
+| Image | cyan | `media_image` |
 
 `api_explicit` is the default and shows no badge (to avoid visual noise for the common case). All other sources display an icon + label.
 
@@ -2256,20 +2258,26 @@ curl -X POST http://localhost:8080/ingest/session \
 
 ---
 
-## Media Ingestion — Voice Notes & Documents (Phase 10)
+## Media Ingestion — Voice Notes, Documents & Images (Phase 10 + 11)
 
-Users can upload audio files (voice notes) or documents to have facts automatically extracted. The pipeline transcribes audio, extracts text from documents, applies first-person filtering to focus on the user, scores relevance, and routes high-confidence facts to memory while presenting borderline cases for user review.
+Users can upload audio files, documents, and images to have facts automatically extracted. The pipeline transcribes audio, extracts or describes file content, applies first-person filtering to focus on the user, scores relevance, and routes high-confidence facts to memory while presenting borderline cases for user review.
 
 ### Supported media types
 
-- **Voice notes** (audio): MP3, WAV, M4A, WebM, OGG — transcribed via Whisper
-- **Documents**: PDF, TXT, MD, CSV — text extracted and first-person filtered
+| Type | Formats | Extraction method |
+|---|---|---|
+| **Voice note** | MP3, WAV, M4A, WebM, OGG | Transcribed via Whisper (OpenAI or local) |
+| **Document** | PDF, TXT, MD, CSV | Text extracted; first-person filtered |
+| **Receipt** | JPG, PNG, WebP, GIF | Vision model → purchase/lifestyle signals |
+| **Screenshot** | JPG, PNG, WebP, GIF | Vision model → tool/tech/workflow signals |
+| **Whiteboard** | JPG, PNG, WebP, GIF | Vision model → project/goal/decision signals |
 
 ### `POST /ingest/media` — upload media for extraction (202 async)
 
 Upload a file and begin the extraction pipeline. Processing is asynchronous; the response includes a `media_id` for status polling.
 
 ```bash
+# Upload a voice note
 curl -X POST http://localhost:8080/ingest/media \
   -H "Authorization: Bearer $TOKEN" \
   -F "file=@note.mp3" \
@@ -2277,6 +2285,14 @@ curl -X POST http://localhost:8080/ingest/media \
   -F "app_id=my-app" \
   -F "content_type=voice_note" \
   -F "context_note=thoughts on our upcoming launch"
+
+# Upload a receipt image
+curl -X POST http://localhost:8080/ingest/media \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@receipt.jpg" \
+  -F "user_id=alice" \
+  -F "app_id=my-app" \
+  -F "content_type=receipt"
 ```
 
 **Form fields:**
@@ -2286,7 +2302,7 @@ curl -X POST http://localhost:8080/ingest/media \
 | `file` | binary | ✓ | The media file to upload |
 | `user_id` | string | ✓ | User ID (must be self or admin) |
 | `app_id` | string | — | App namespace; defaults to "default" |
-| `content_type` | enum | ✓ | `voice_note` or `document` |
+| `content_type` | enum | ✓ | `voice_note` \| `document` \| `receipt` \| `screenshot` \| `whiteboard` |
 | `context_note` | string | — | Optional context (e.g. "what should I know about this?") |
 | `idempotency_key` | string | — | Optional; if provided, re-posting same key returns cached result |
 
@@ -2381,16 +2397,21 @@ curl -X POST http://localhost:8080/ingest/media/550e8400-e29b-41d4-a716-44665544
 
 ```
 1. Validate file extension + size
-2. If audio: transcribe via Whisper (OpenAI or local)
-   If document: extract text (PDF parser or raw text)
-3. Apply first-person filter (documents only) → "I", "my", "we", etc.
-4. LLM extracts candidate facts from filtered content
+2. Route by content_type:
+   a. voice_note  → Whisper transcription
+   b. document    → PDF/text extraction
+   c. receipt     → Vision model: "what does this receipt reveal about the user's lifestyle?"
+      screenshot  → Vision model: "what tools/stack/workflow is visible?"
+      whiteboard  → Vision model: "what project or goal is being planned?"
+3. Apply first-person filter (documents + images) → keeps only "I/my/we" sentences
+4. LLM extracts candidate facts from filtered content (delta-aware: skips already-known facts)
 5. LLM scores each fact for relevance (0–1): "does this tell us something durable about the user?"
 6. Route by score:
    - > 0.75 relevance → save immediately to memory (active status)
    - 0.60–0.75 relevance → queue for user confirmation modal
    - < 0.60 relevance → discard
-7. Hippocampus.encode() registers the media ingest as an episodic event (source_type=media_voice/media_document)
+7. Hippocampus registers the media upload as an episodic event
+   (source_type = media_voice | media_document | media_image)
 ```
 
 ### Routing thresholds
@@ -2419,6 +2440,43 @@ WHISPER_BASE_URL=http://localhost:8000/v1  # or http://localhost:11434 for ollam
 WHISPER_MODEL=whisper-1  # or model name deployed at base URL
 ```
 
+### Vision model configuration
+
+Image description is powered by a multimodal vision model. Configure it in `.env`:
+
+**Option 1: OpenAI (cloud, recommended)**
+```bash
+VISION_PROVIDER=openai
+VISION_MODEL=gpt-4o-mini
+VISION_API_KEY=sk-...  # or falls back to LLM_API_KEY
+```
+
+**Option 2: Anthropic Claude**
+```bash
+VISION_PROVIDER=claude
+VISION_MODEL=claude-haiku-4-5-20251001
+# uses LLM_API_KEY
+```
+
+**Option 3: Local (ollama)**
+```bash
+VISION_PROVIDER=ollama
+VISION_MODEL=llava:13b
+VISION_BASE_URL=http://localhost:11434
+```
+
+The model must support multimodal (image) inputs. The vision call is separate from the main LLM chat model — you can use a cheaper/faster vision model while keeping a more capable model for reasoning.
+
+### Content-type extraction prompts
+
+Each image subtype receives a targeted prompt to guide the vision model:
+
+| `content_type` | Extraction focus |
+|---|---|
+| `receipt` | Items purchased, store, date → lifestyle, dietary, shopping preferences |
+| `screenshot` | App name, tools, code, workflows → tech stack, expertise, work patterns |
+| `whiteboard` | Projects, goals, decisions, diagrams → planning style, current initiatives |
+
 ### Size limits (configurable)
 
 | Type | Default | Env variable |
@@ -2426,6 +2484,7 @@ WHISPER_MODEL=whisper-1  # or model name deployed at base URL
 | Audio file | 25 MB | `MEDIA_MAX_AUDIO_MB` |
 | Document file | 10 MB | `MEDIA_MAX_DOCUMENT_MB` |
 | PDF page count | 50 pages | `MEDIA_MAX_DOCUMENT_PAGES` |
+| Image file | 20 MB | `MEDIA_MAX_IMAGE_MB` |
 
 ### Source badges
 
@@ -2435,6 +2494,7 @@ Media facts appear in the dashboard with source badges:
 |---|---|---|---|
 | `media_voice` | 🎙 Voice Note | Rose | Microphone |
 | `media_document` | 📄 Document | Slate | Document |
+| `media_image` | 🖼 Image | Cyan | Image |
 
 ---
 
@@ -2479,6 +2539,7 @@ Every memory now carries a `source_type` tracking how it entered the system:
 | `passive_streaming` | 0.70 | Mid-session rolling-window extraction |
 | `sdk_middleware` | 0.70 | SDK wrapper intercepted transparently |
 | `webhook_ingest` | 0.70 | Structured transcript via `/ingest/transcript` |
+| `media_image` | 0.70 | Extracted from uploaded image (receipt/screenshot/whiteboard) |
 | `cross_system` | 0.65 | Synthesized from cross-integration signals |
 
 ### `remember()` tool — LLM-curated memory (Phase 5)

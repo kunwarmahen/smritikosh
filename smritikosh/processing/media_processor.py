@@ -27,9 +27,34 @@ _FIRST_PERSON_RE = re.compile(
 
 _VOICE_EXT = {".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".wav", ".webm", ".ogg"}
 _DOC_EXT = {".txt", ".md", ".csv", ".pdf"}
+_IMAGE_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+_IMAGE_CONTENT_TYPES = {"receipt", "screenshot", "whiteboard"}
 
 _MAX_AUDIO_BYTES = 25 * 1024 * 1024  # 25 MB Whisper API limit
 _MAX_DOC_BYTES = 10 * 1024 * 1024  # 10 MB
+_MAX_IMAGE_BYTES = 20 * 1024 * 1024  # 20 MB
+
+# Content-type-specific vision prompts — each targets a different extraction strategy.
+_VISION_PROMPTS: dict[str, str] = {
+    "receipt": (
+        "This is a purchase receipt. Describe what you see in detail: "
+        "the store name, items purchased, categories of goods, and any relevant dates. "
+        "Then state what this suggests about the person's lifestyle, dietary habits, "
+        "shopping preferences, and spending patterns."
+    ),
+    "screenshot": (
+        "This is a screenshot of an application, tool, or piece of code. "
+        "Describe what application or service is shown, what the user appears to be doing, "
+        "and what this reveals about their technical stack, workflows, or areas of expertise. "
+        "Mention specific tools, languages, frameworks, or platforms visible."
+    ),
+    "whiteboard": (
+        "This is a photo of a whiteboard, diagram, or handwritten notes. "
+        "Describe the content: what project, system, goal, or decision is being outlined? "
+        "What does the structure reveal about the person's priorities, current work, "
+        "or planning style? Include any visible text, labels, or key terms."
+    ),
+}
 
 _RELEVANCE_THRESHOLD_AUTO = 0.75
 _RELEVANCE_THRESHOLD_REVIEW = 0.60
@@ -90,7 +115,7 @@ class MediaProcessor:
         media_id: str,
         user_id: str,
         app_id: str,
-        content_type: str,  # voice_note | document
+        content_type: str,  # voice_note | document | receipt | screenshot | whiteboard
         file_bytes: bytes,
         filename: str,
         context_note: str = "",
@@ -123,6 +148,25 @@ class MediaProcessor:
                         status="failed",
                         error_message=f"Audio file too large: {len(file_bytes) / 1024 / 1024:.1f} MB (max 25 MB)",
                     )
+            elif content_type in _IMAGE_CONTENT_TYPES:
+                if ext not in _IMAGE_EXT:
+                    return MediaProcessResult(
+                        media_id=media_id,
+                        user_id=user_id,
+                        app_id=app_id,
+                        content_type=content_type,
+                        status="failed",
+                        error_message=f"Unsupported image format: {ext}. Supported: {', '.join(sorted(_IMAGE_EXT))}",
+                    )
+                if len(file_bytes) > _MAX_IMAGE_BYTES:
+                    return MediaProcessResult(
+                        media_id=media_id,
+                        user_id=user_id,
+                        app_id=app_id,
+                        content_type=content_type,
+                        status="failed",
+                        error_message=f"Image too large: {len(file_bytes) / 1024 / 1024:.1f} MB (max 20 MB)",
+                    )
             elif content_type == "document":
                 if ext not in _DOC_EXT:
                     return MediaProcessResult(
@@ -143,10 +187,15 @@ class MediaProcessor:
                         error_message=f"Document too large: {len(file_bytes) / 1024 / 1024:.1f} MB (max 10 MB)",
                     )
 
-            # 2. Transcribe / extract text
+            # 2. Transcribe / extract text / describe image
             if content_type == "voice_note":
                 raw_text = await self._transcribe_audio(file_bytes, filename)
                 source_type = "media_voice"
+            elif content_type in _IMAGE_CONTENT_TYPES:
+                raw_text = await self._describe_image(file_bytes, filename, content_type)
+                source_type = "media_image"
+                # Apply first-person filter to the vision model's description
+                raw_text = self._first_person_filter(raw_text)
             else:  # document
                 raw_text = await self._extract_document_text(file_bytes, filename)
                 source_type = "media_document"
@@ -170,8 +219,15 @@ class MediaProcessor:
             )
 
             # 5. LLM extract_structured → candidate facts
+            content_label = {
+                "voice_note": "voice note",
+                "document": "document",
+                "receipt": "purchase receipt",
+                "screenshot": "app/tool screenshot",
+                "whiteboard": "whiteboard photo",
+            }.get(content_type, content_type.replace("_", " "))
             delta_prompt = (
-                f"Extract durable facts about the user from this {content_type.replace('_', ' ')}.\n\n"
+                f"Extract durable facts about the user from this {content_label}.\n\n"
                 f"You already know: {existing_facts_text or '(nothing yet)'}\n\n"
                 f"Extract ONLY facts that are NEW or that CONTRADICT existing knowledge.\n\n"
                 f"Content:\n{raw_text[:3000]}"
@@ -261,6 +317,16 @@ class MediaProcessor:
             return file_bytes.decode("utf-8", errors="replace")
         else:
             raise ValueError(f"Unsupported document type: {ext}")
+
+    async def _describe_image(
+        self, file_bytes: bytes, filename: str, content_type: str
+    ) -> str:
+        """Describe an image using a vision model with a content-type-specific prompt."""
+        prompt = _VISION_PROMPTS.get(content_type, _VISION_PROMPTS["screenshot"])
+        logger.info("Describing image: content_type=%s filename=%s", content_type, filename)
+        description = await self.llm.describe_image(file_bytes, filename, prompt)
+        logger.info("Image description complete: %d chars", len(description))
+        return description
 
     @staticmethod
     def _extract_pdf_text(file_bytes: bytes) -> str:

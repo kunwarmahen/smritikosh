@@ -36,8 +36,11 @@ router = APIRouter(prefix="/ingest", tags=["ingest"])
 
 _VOICE_EXT = {".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".wav", ".webm", ".ogg"}
 _DOC_EXT = {".txt", ".md", ".csv", ".pdf"}
+_IMAGE_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+_IMAGE_CONTENT_TYPES = {"receipt", "screenshot", "whiteboard"}
 _MAX_AUDIO_BYTES = 25 * 1024 * 1024
 _MAX_DOC_BYTES = 10 * 1024 * 1024
+_MAX_IMAGE_BYTES = 20 * 1024 * 1024
 
 
 async def _get_async_sessionmaker(request):
@@ -122,10 +125,11 @@ async def ingest_media(
     assert_self_or_admin(current_user, user_id)
 
     # Validate content_type
-    if content_type not in ("voice_note", "document"):
+    _valid_types = {"voice_note", "document"} | _IMAGE_CONTENT_TYPES
+    if content_type not in _valid_types:
         raise HTTPException(
             status_code=422,
-            detail=f"Invalid content_type: {content_type}. Must be 'voice_note' or 'document'",
+            detail=f"Invalid content_type: {content_type}. Must be one of: {', '.join(sorted(_valid_types))}",
         )
 
     # Validate file extension and size
@@ -137,6 +141,12 @@ async def ingest_media(
             raise HTTPException(
                 status_code=422,
                 detail=f"Invalid audio format: {ext}. Supported: {', '.join(sorted(_VOICE_EXT))}",
+            )
+    elif content_type in _IMAGE_CONTENT_TYPES:
+        if ext not in _IMAGE_EXT:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid image format: {ext}. Supported: {', '.join(sorted(_IMAGE_EXT))}",
             )
     elif content_type == "document":
         if ext not in _DOC_EXT:
@@ -189,6 +199,11 @@ async def ingest_media(
         raise HTTPException(
             status_code=413,
             detail=f"Audio file too large: {file_size_mb:.1f} MB (max 25 MB)",
+        )
+    elif content_type in _IMAGE_CONTENT_TYPES and len(file_bytes) > _MAX_IMAGE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Image too large: {file_size_mb:.1f} MB (max 20 MB)",
         )
     elif content_type == "document" and len(file_bytes) > _MAX_DOC_BYTES:
         raise HTTPException(

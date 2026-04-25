@@ -152,8 +152,11 @@ class FactStatus(StrEnum):
 
 class MediaContentType(StrEnum):
     """Type of media uploaded for memory extraction."""
-    VOICE_NOTE = "voice_note"    # user's spoken audio
-    DOCUMENT   = "document"       # text document (PDF, TXT, etc.)
+    VOICE_NOTE  = "voice_note"   # user's spoken audio
+    DOCUMENT    = "document"     # text document (PDF, TXT, etc.)
+    RECEIPT     = "receipt"      # image: purchase receipt → lifestyle/preference signals
+    SCREENSHOT  = "screenshot"   # image: app/tool screenshot → tech/workflow signals
+    WHITEBOARD  = "whiteboard"   # image: whiteboard/diagram → project/goal signals
 
 
 class MediaIngestStatus(StrEnum):

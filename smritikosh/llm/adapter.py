@@ -185,6 +185,72 @@ class LLMAdapter:
         wait=wait_exponential(multiplier=1, min=2, max=10),
         before_sleep=before_sleep_log(logger, logging.WARNING),
     )
+    async def describe_image(self, image_bytes: bytes, filename: str, prompt: str) -> str:
+        """
+        Describe an image using a vision-capable model.
+
+        Encodes the image as base64 and sends it alongside the prompt using
+        the OpenAI multimodal message format, which LiteLLM translates for
+        Claude, Gemini, and local providers automatically.
+
+        Args:
+            image_bytes: Raw image file bytes.
+            filename:    Original filename — used to infer the MIME type.
+            prompt:      Task-specific instruction (e.g. receipt vs screenshot prompt).
+
+        Returns:
+            A plain-text description of the image content.
+        """
+        import base64
+
+        ext_to_mime = {
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".png": "image/png",
+            ".gif": "image/gif",
+            ".webp": "image/webp",
+        }
+        ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        mime_type = ext_to_mime.get(ext, "image/jpeg")
+
+        b64_data = base64.b64encode(image_bytes).decode("utf-8")
+        data_url = f"data:{mime_type};base64,{b64_data}"
+
+        vision_model = self._resolve_vision_model(self._cfg)
+        api_key = self._cfg.vision_api_key or self._cfg.llm_api_key
+        api_base = self._cfg.vision_base_url or self._cfg.llm_base_url
+
+        logger.debug(
+            "Describing image: model=%s filename=%s size=%d",
+            vision_model,
+            filename,
+            len(image_bytes),
+        )
+
+        response = await litellm.acompletion(
+            model=vision_model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": data_url}},
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ],
+            temperature=0.2,
+            api_key=api_key,
+            api_base=api_base,
+        )
+        content = response.choices[0].message.content or ""
+        logger.debug("Image description complete: %d chars", len(content))
+        return content
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+    )
     async def transcribe(self, audio_bytes: bytes, filename: str) -> str:
         """
         Transcribe audio file using Whisper.
@@ -296,6 +362,20 @@ class LLMAdapter:
         if provider in ("vllm", "llamacpp") and not model.startswith("openai/"):
             return f"openai/{model}"
         # claude and openai use the model name directly
+        return model
+
+    @staticmethod
+    def _resolve_vision_model(cfg: Settings) -> str:
+        """Same routing logic for the vision model."""
+        provider = cfg.vision_provider.lower()
+        model = cfg.vision_model
+
+        if provider == "gemini" and not model.startswith("gemini/"):
+            return f"gemini/{model}"
+        if provider == "ollama" and not model.startswith("ollama_chat/"):
+            return f"ollama_chat/{model}"
+        if provider in ("vllm", "llamacpp") and not model.startswith("openai/"):
+            return f"openai/{model}"
         return model
 
     @staticmethod

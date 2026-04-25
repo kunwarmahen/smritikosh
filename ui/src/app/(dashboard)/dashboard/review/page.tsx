@@ -26,6 +26,7 @@ const SOURCE_FILTER_OPTIONS = [
   { value: "tool_use",             label: "Tool" },
   { value: "media_voice",          label: "Voice Note" },
   { value: "media_document",       label: "Document" },
+  { value: "media_image",          label: "Image" },
 ];
 
 function ReviewCard({ event, onApproved }: { event: MemoryEvent; onApproved: () => void }) {

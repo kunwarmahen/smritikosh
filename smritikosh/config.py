@@ -93,6 +93,15 @@ class Settings(BaseSettings):
     media_max_audio_mb: int = 25  # Whisper API limit
     media_max_document_mb: int = 10
     media_max_document_pages: int = 50  # PDF page cap
+    media_max_image_mb: int = 20
+
+    # ── Vision model (image description) ─────────────────────────────────
+    # Provider: "openai" (cloud, gpt-4o-mini) or "claude" (anthropic) or "ollama" (local)
+    # The vision model must support multimodal (image) inputs.
+    vision_provider: str = "openai"
+    vision_model: str = "gpt-4o-mini"
+    vision_api_key: str | None = None   # defaults to llm_api_key if unset
+    vision_base_url: str | None = None  # for local providers
 
 
 # Single shared instance — import this everywhere

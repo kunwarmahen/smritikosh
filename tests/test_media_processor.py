@@ -9,6 +9,8 @@ from smritikosh.processing.media_processor import (
     MediaProcessor,
     MediaProcessResult,
     _FIRST_PERSON_RE,
+    _VISION_PROMPTS,
+    _IMAGE_CONTENT_TYPES,
 )
 from smritikosh.llm.adapter import LLMAdapter
 from smritikosh.memory.hippocampus import Hippocampus
@@ -347,3 +349,199 @@ class TestMediaProcessResult:
         assert result.media_id == "m1"
         assert result.facts_extracted == 2
         assert result.status == "complete"
+
+
+# ── Phase 11: Image ingestion tests ──────────────────────────────────────────
+
+class TestVisionPrompts:
+    def test_all_image_subtypes_have_prompts(self):
+        for ct in _IMAGE_CONTENT_TYPES:
+            assert ct in _VISION_PROMPTS
+            assert len(_VISION_PROMPTS[ct]) > 20
+
+    def test_receipt_prompt_mentions_purchase(self):
+        assert "receipt" in _VISION_PROMPTS["receipt"].lower()
+
+    def test_screenshot_prompt_mentions_tool(self):
+        assert "screenshot" in _VISION_PROMPTS["screenshot"].lower()
+
+    def test_whiteboard_prompt_mentions_project(self):
+        assert "whiteboard" in _VISION_PROMPTS["whiteboard"].lower()
+
+
+@pytest.mark.asyncio
+async def test_process_image_receipt_calls_describe_image(processor, mock_llm):
+    """Processor calls describe_image (not transcribe) for receipt uploads."""
+    mock_llm.describe_image = AsyncMock(
+        return_value="I bought oat milk and coffee. I prefer organic brands."
+    )
+
+    result = await processor.process(
+        pg=MagicMock(),
+        neo=MagicMock(),
+        media_id="media-img-1",
+        user_id="user-1",
+        app_id="default",
+        content_type="receipt",
+        file_bytes=b"fake image bytes",
+        filename="receipt.jpg",
+        context_note="",
+    )
+
+    mock_llm.describe_image.assert_called_once()
+    mock_llm.transcribe.assert_not_called()
+    call_args = mock_llm.describe_image.call_args
+    assert call_args.args[2] == _VISION_PROMPTS["receipt"]
+    assert result.status == "complete"
+
+
+@pytest.mark.asyncio
+async def test_process_image_screenshot_uses_screenshot_prompt(processor, mock_llm):
+    """Screenshot upload uses the screenshot-specific vision prompt."""
+    mock_llm.describe_image = AsyncMock(
+        return_value="I am using VS Code. My stack includes TypeScript and React."
+    )
+
+    await processor.process(
+        pg=MagicMock(),
+        neo=MagicMock(),
+        media_id="media-img-2",
+        user_id="user-1",
+        app_id="default",
+        content_type="screenshot",
+        file_bytes=b"fake image bytes",
+        filename="screen.png",
+        context_note="",
+    )
+
+    call_args = mock_llm.describe_image.call_args
+    assert call_args.args[2] == _VISION_PROMPTS["screenshot"]
+
+
+@pytest.mark.asyncio
+async def test_process_image_whiteboard_uses_whiteboard_prompt(processor, mock_llm):
+    """Whiteboard upload uses the whiteboard-specific vision prompt."""
+    mock_llm.describe_image = AsyncMock(
+        return_value="I am planning a new microservices architecture. Our team is migrating from monolith."
+    )
+
+    await processor.process(
+        pg=MagicMock(),
+        neo=MagicMock(),
+        media_id="media-img-3",
+        user_id="user-1",
+        app_id="default",
+        content_type="whiteboard",
+        file_bytes=b"fake image bytes",
+        filename="board.png",
+        context_note="",
+    )
+
+    call_args = mock_llm.describe_image.call_args
+    assert call_args.args[2] == _VISION_PROMPTS["whiteboard"]
+
+
+@pytest.mark.asyncio
+async def test_process_image_unsupported_extension_fails(processor):
+    """Image uploads with non-image extensions are rejected."""
+    result = await processor.process(
+        pg=MagicMock(),
+        neo=MagicMock(),
+        media_id="media-img-4",
+        user_id="user-1",
+        app_id="default",
+        content_type="receipt",
+        file_bytes=b"data",
+        filename="receipt.pdf",  # wrong extension for an image type
+        context_note="",
+    )
+
+    assert result.status == "failed"
+    assert "Unsupported image format" in result.error_message
+
+
+@pytest.mark.asyncio
+async def test_process_image_too_large_fails(processor):
+    """Images exceeding 20 MB are rejected."""
+    large_image = b"x" * (21 * 1024 * 1024)
+
+    result = await processor.process(
+        pg=MagicMock(),
+        neo=MagicMock(),
+        media_id="media-img-5",
+        user_id="user-1",
+        app_id="default",
+        content_type="screenshot",
+        file_bytes=large_image,
+        filename="large.jpg",
+        context_note="",
+    )
+
+    assert result.status == "failed"
+    assert "too large" in result.error_message.lower()
+
+
+@pytest.mark.asyncio
+async def test_process_image_source_type_is_media_image(processor, mock_llm, mock_hippocampus):
+    """Facts extracted from images are stored with source_type='media_image'."""
+    mock_llm.describe_image = AsyncMock(
+        return_value="I prefer oat milk based on this receipt."
+    )
+
+    await processor.process(
+        pg=MagicMock(),
+        neo=MagicMock(),
+        media_id="media-img-6",
+        user_id="user-1",
+        app_id="default",
+        content_type="receipt",
+        file_bytes=b"image",
+        filename="receipt.jpg",
+        context_note="",
+    )
+
+    call_kwargs = mock_hippocampus.encode_preextracted.call_args.kwargs
+    assert call_kwargs["source_type"] == "media_image"
+
+
+@pytest.mark.asyncio
+async def test_process_image_nothing_found_when_no_first_person(processor, mock_llm):
+    """Images whose descriptions contain no first-person content produce nothing_found."""
+    mock_llm.describe_image = AsyncMock(
+        return_value="The whiteboard shows a diagram. There are several boxes connected by arrows."
+    )
+    # No first-person pronouns → first_person_filter returns empty → nothing_found
+    result = await processor.process(
+        pg=MagicMock(),
+        neo=MagicMock(),
+        media_id="media-img-7",
+        user_id="user-1",
+        app_id="default",
+        content_type="whiteboard",
+        file_bytes=b"image",
+        filename="board.png",
+        context_note="",
+    )
+
+    assert result.status == "nothing_found"
+
+
+@pytest.mark.asyncio
+async def test_process_image_describe_failure_returns_error(processor, mock_llm):
+    """Failure in describe_image is caught and returned as failed status."""
+    mock_llm.describe_image = AsyncMock(side_effect=Exception("Vision API down"))
+
+    result = await processor.process(
+        pg=MagicMock(),
+        neo=MagicMock(),
+        media_id="media-img-8",
+        user_id="user-1",
+        app_id="default",
+        content_type="screenshot",
+        file_bytes=b"image",
+        filename="screen.webp",
+        context_note="",
+    )
+
+    assert result.status == "failed"
+    assert "error" in result.error_message.lower()
