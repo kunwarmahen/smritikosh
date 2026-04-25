@@ -669,13 +669,6 @@ class MediaIngest(Base):
 
     __tablename__ = "media_ingests"
     __table_args__ = (
-        UniqueConstraint(
-            "user_id",
-            "app_id",
-            "idempotency_key",
-            name="uq_media_ingests_idempotency",
-            postgresql_where="idempotency_key IS NOT NULL",
-        ),
         Index("ix_media_ingests_user_app", "user_id", "app_id"),
         Index("ix_media_ingests_status", "status"),
     )

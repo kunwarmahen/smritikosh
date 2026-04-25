@@ -37,12 +37,9 @@ def mock_llm():
 @pytest.fixture
 def mock_hippocampus():
     hippocampus = AsyncMock(spec=Hippocampus)
-    hippocampus.encode = AsyncMock(
-        return_value=MagicMock(
-            event=MagicMock(id="event-123"),
-            facts=[],
-        )
-    )
+    _encoded = MagicMock(event=MagicMock(id="event-123"), facts=[])
+    hippocampus.encode = AsyncMock(return_value=_encoded)
+    hippocampus.encode_preextracted = AsyncMock(return_value=_encoded)
     return hippocampus
 
 
@@ -91,7 +88,7 @@ class TestRouteFactsByRelevance:
             {"content": "fact 1", "relevance_score": 0.80},
             {"content": "fact 2", "relevance_score": 0.76},
         ]
-        auto_save, pending = MediaProcessor._route_facts(None, facts)
+        auto_save, pending = MediaProcessor._route_facts(facts)
         assert len(auto_save) == 2
         assert len(pending) == 0
 
@@ -100,7 +97,7 @@ class TestRouteFactsByRelevance:
             {"content": "fact 1", "relevance_score": 0.72},
             {"content": "fact 2", "relevance_score": 0.65},
         ]
-        auto_save, pending = MediaProcessor._route_facts(None, facts)
+        auto_save, pending = MediaProcessor._route_facts(facts)
         assert len(auto_save) == 0
         assert len(pending) == 2
 
@@ -109,7 +106,7 @@ class TestRouteFactsByRelevance:
             {"content": "fact 1", "relevance_score": 0.59},
             {"content": "fact 2", "relevance_score": 0.40},
         ]
-        auto_save, pending = MediaProcessor._route_facts(None, facts)
+        auto_save, pending = MediaProcessor._route_facts(facts)
         assert len(auto_save) == 0
         assert len(pending) == 0
 
@@ -119,22 +116,22 @@ class TestRouteFactsByRelevance:
             {"content": "fact 2", "relevance_score": 0.70},  # pending
             {"content": "fact 3", "relevance_score": 0.50},  # discard
         ]
-        auto_save, pending = MediaProcessor._route_facts(None, facts)
+        auto_save, pending = MediaProcessor._route_facts(facts)
         assert len(auto_save) == 1
         assert len(pending) == 1
 
 
 class TestExtractDocumentText:
-    def test_extract_plain_text(self):
-        content = "Hello world\nThis is a test"
-        result = MediaProcessor._extract_pdf_text(None, content.encode('utf-8'))
-        # Placeholder for actual PDF extraction test
-        assert isinstance(result, str)
+    @pytest.mark.asyncio
+    async def test_extract_plain_text_txt(self, processor):
+        content = b"Hello world\nThis is a test"
+        result = await processor._extract_document_text(content, "test.txt")
+        assert "Hello world" in result
 
-    def test_extract_utf8_with_errors(self):
-        # Test that invalid UTF-8 is handled gracefully
+    @pytest.mark.asyncio
+    async def test_extract_utf8_with_errors(self, processor):
         content = b"Valid text \xff\xfe invalid bytes"
-        result = MediaProcessor._extract_document_text(None, content, "test.txt")
+        result = await processor._extract_document_text(content, "test.txt")
         assert "Valid text" in result
 
 
@@ -278,10 +275,10 @@ async def test_relevance_scoring_integrated(processor, mock_llm):
 
 @pytest.mark.asyncio
 async def test_document_first_person_filter_applied(processor, mock_llm):
-    """Test that documents are filtered to first-person content."""
-    # Mock transcription to return mixed-person text
-    mock_llm.transcribe.return_value = (
-        "I went to the store. He bought milk. We discussed pricing."
+    """Test that documents are filtered to first-person content and extraction runs."""
+    # file_bytes must contain first-person sentences so they survive the filter
+    first_person_content = (
+        b"I went to the store. He bought milk. We discussed pricing. I prefer oat milk."
     )
 
     result = await processor.process(
@@ -291,14 +288,46 @@ async def test_document_first_person_filter_applied(processor, mock_llm):
         user_id="user-1",
         app_id="default",
         content_type="document",
-        file_bytes=b"text content",
+        file_bytes=first_person_content,
         filename="note.txt",
         context_note="",
     )
 
-    # First-person filter should have been applied
-    # Verify by checking that LLM was called with filtered text
+    # After first-person filter, extraction LLM should have been called
     assert mock_llm.extract_structured.called
+
+
+@pytest.mark.asyncio
+async def test_auto_save_facts_written_via_encode_preextracted(processor, mock_llm, mock_hippocampus):
+    """encode_preextracted is called with the auto-save facts — no double LLM extraction."""
+    mock_llm.extract_structured.side_effect = [
+        {
+            "facts": [
+                {"content": "prefers oat milk", "category": "preference", "key": "milk", "value": "oat milk"},
+                {"content": "lives in London", "category": "location", "key": "city", "value": "London"},
+            ]
+        },
+        {"scores": [0.90, 0.65]},  # first > 0.75 auto, second 0.60–0.75 pending
+    ]
+
+    result = await processor.process(
+        pg=MagicMock(), neo=MagicMock(),
+        media_id="m1", user_id="u1", app_id="default",
+        content_type="voice_note", file_bytes=b"audio", filename="note.mp3", context_note="",
+    )
+
+    assert result.status == "complete"
+    assert result.facts_extracted == 1    # one auto-saved (>0.75)
+    assert result.facts_pending_review == 1  # one for review (0.60–0.75)
+
+    # encode_preextracted called with the auto-save fact only
+    mock_hippocampus.encode_preextracted.assert_called_once()
+    call_kwargs = mock_hippocampus.encode_preextracted.call_args.kwargs
+    assert len(call_kwargs["extracted_facts"]) == 1
+    assert call_kwargs["extracted_facts"][0]["value"] == "oat milk"
+
+    # encode() should NOT be called (no double extraction)
+    mock_hippocampus.encode.assert_not_called()
 
 
 class TestMediaProcessResult:

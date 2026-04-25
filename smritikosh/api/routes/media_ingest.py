@@ -9,6 +9,7 @@ Handles file uploads with background processing:
 
 import logging
 import uuid
+from datetime import datetime, timezone
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
@@ -20,11 +21,12 @@ from smritikosh.api.schemas import (
     MediaIngestResponse,
     MediaStatusResponse,
 )
-from smritikosh.auth.deps import get_current_user
-from smritikosh.auth.utils import assert_self_or_admin
+from smritikosh.auth.deps import assert_self_or_admin, get_current_user
 from smritikosh.db.models import MediaIngest, MediaIngestStatus, SourceType
-from smritikosh.db.neo4j import get_neo4j_session
-from smritikosh.db.postgres import get_async_sessionmaker, get_session
+from neo4j import AsyncSession as NeoSession
+
+from smritikosh.db.neo4j import get_neo4j_session, neo4j_session
+from smritikosh.db.postgres import _SessionFactory, get_session
 from smritikosh.memory.semantic import SemanticMemory
 from smritikosh.processing.media_processor import MediaProcessor
 
@@ -57,10 +59,9 @@ async def _run_processing(
     async_sessionmaker,
 ):
     """Background task: process media and update MediaIngest record."""
-    # Create new DB sessions for background task
     async_session_factory = async_sessionmaker
     async with async_session_factory() as pg:
-        async with get_neo4j_session() as neo:
+        async with neo4j_session() as neo:
             # Process the file
             result = await media_processor.process(
                 pg,
@@ -84,7 +85,7 @@ async def _run_processing(
                 ingest.event_id = uuid.UUID(result.event_id) if result.event_id else None
                 ingest.source_type = content_type  # voice_note or document
                 ingest.error_message = result.error_message
-                ingest.processed_at = pg.execute(lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc))
+                ingest.processed_at = datetime.now(timezone.utc)
                 await pg.flush()
 
             await pg.commit()
@@ -196,10 +197,9 @@ async def ingest_media(
         )
 
     # Enqueue background task
-    async_sessionmaker = await _get_async_sessionmaker(request) if request else None
+    async_sessionmaker = (await _get_async_sessionmaker(request)) if request else None
     if not async_sessionmaker:
-        # Fallback: use get_async_sessionmaker directly
-        async_sessionmaker = get_async_sessionmaker()
+        async_sessionmaker = _SessionFactory
 
     background_tasks.add_task(
         _run_processing,
@@ -262,6 +262,7 @@ async def confirm_media_facts(
     media_id: str,
     body: MediaFactConfirmRequest,
     pg: AsyncSession = Depends(get_session),
+    neo: NeoSession = Depends(get_neo4j_session),
     semantic: SemanticMemory = Depends(get_semantic),
     current_user: dict = Depends(get_current_user),
 ) -> MediaIngestResponse:
@@ -294,9 +295,24 @@ async def confirm_media_facts(
         if 0 <= idx < len(ingest.pending_facts):
             confirmed_facts.append(ingest.pending_facts[idx])
 
-    # Save confirmed facts to SemanticMemory
-    # (In a real implementation, you'd call semantic.upsert_fact for each)
-    # For now, just clear pending_facts
+    # Save confirmed facts to SemanticMemory (Neo4j)
+    source_type = ingest.source_type or "media_document"
+    for fact in confirmed_facts:
+        try:
+            await semantic.upsert_fact(
+                neo,
+                user_id=ingest.user_id,
+                app_id=ingest.app_id,
+                category=fact.get("category", "general"),
+                key=fact.get("key", "unknown"),
+                value=fact.get("value", fact.get("content", "")),
+                source_type=source_type,
+                source_meta={"confirmed_from_media": str(ingest.id)},
+                status="active",
+            )
+        except Exception:
+            logger.warning("Failed to save confirmed fact: %s", fact)
+
     ingest.pending_facts = []
     ingest.facts_pending_review = 0
     await pg.flush()

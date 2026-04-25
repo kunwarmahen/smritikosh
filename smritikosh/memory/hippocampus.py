@@ -281,6 +281,66 @@ class Hippocampus:
 
         return result
 
+    async def encode_preextracted(
+        self,
+        pg_session: AsyncSession,
+        neo_session: NeoSession,
+        *,
+        user_id: str,
+        raw_text: str,
+        extracted_facts: list[dict],
+        app_id: str = "default",
+        metadata: dict | None = None,
+        source_type: str = SourceType.API_EXPLICIT,
+        source_meta: dict | None = None,
+    ) -> EncodedMemory:
+        """
+        Like encode() but accepts pre-extracted, pre-filtered facts.
+
+        Skips LLM extraction entirely — only embeds the raw_text, stores one
+        episodic event, and upserts the supplied fact dicts. Contradiction
+        detection still runs via _upsert_facts().
+
+        Use this when the caller has already run extraction + relevance scoring
+        and wants to write only the surviving facts (e.g. media_processor).
+        """
+        importance_score = self.amygdala.score(raw_text)
+
+        embedding: list[float] | None = None
+        try:
+            embedding = await self.llm.embed(raw_text)
+        except Exception as exc:
+            logger.warning("Embedding failed in encode_preextracted: %s", exc)
+
+        event = await self.episodic.store(
+            pg_session,
+            user_id=user_id,
+            app_id=app_id,
+            raw_text=raw_text,
+            embedding=embedding,
+            importance_score=importance_score,
+            metadata=metadata,
+            source_type=source_type,
+            source_meta=source_meta,
+        )
+
+        stored_facts = await self._upsert_facts(
+            neo_session,
+            user_id,
+            app_id,
+            extracted_facts,
+            event_id=str(event.id),
+            source_type=source_type,
+            source_meta=source_meta,
+            pg_session=pg_session,
+        )
+
+        return EncodedMemory(
+            event=event,
+            facts=stored_facts,
+            importance_score=importance_score,
+        )
+
     # ── Helpers ────────────────────────────────────────────────────────────
 
     async def _embed_and_extract(

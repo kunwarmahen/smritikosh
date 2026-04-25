@@ -11,7 +11,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision = "0017_add_media_ingests"
-down_revision = "0016_add_fact_contradictions"
+down_revision = "0016"
 branch_labels = None
 depends_on = None
 
@@ -70,13 +70,13 @@ def upgrade() -> None:
             ondelete="SET NULL",
         ),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint(
-            "user_id",
-            "app_id",
-            "idempotency_key",
-            name="uq_media_ingests_idempotency",
-            postgresql_where="idempotency_key IS NOT NULL",
-        ),
+    )
+    op.create_index(
+        "uq_media_ingests_idempotency",
+        "media_ingests",
+        ["user_id", "app_id", "idempotency_key"],
+        unique=True,
+        postgresql_where=sa.text("idempotency_key IS NOT NULL"),
     )
     op.create_index(
         "ix_media_ingests_user_app",
@@ -89,4 +89,5 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_media_ingests_status", table_name="media_ingests")
     op.drop_index("ix_media_ingests_user_app", table_name="media_ingests")
+    op.drop_index("uq_media_ingests_idempotency", table_name="media_ingests")
     op.drop_table("media_ingests")

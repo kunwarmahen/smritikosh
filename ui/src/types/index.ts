@@ -204,7 +204,7 @@ export interface PendingFact {
   key: string;
   value: string;
   relevance_score: number;
-  confidence: number;
+  confidence?: number;
 }
 
 export interface MediaUploadResponse {

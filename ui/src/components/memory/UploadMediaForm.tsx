@@ -22,6 +22,7 @@ export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
   const [contextNote, setContextNote] = useState('');
   const [mediaId, setMediaId] = useState<string | null>(null);
   const [selectedFactIndices, setSelectedFactIndices] = useState<Set<number>>(new Set());
+  const [savedCount, setSavedCount] = useState(0);
 
   const uploadMedia = useUploadMedia();
   const mediaStatus = useMediaStatus(mediaId);
@@ -40,10 +41,10 @@ export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
       setStep('error');
     } else if (status === 'complete') {
       if (mediaStatus.data.facts_pending_review > 0) {
-        // Initialize all pending facts as checked
         setSelectedFactIndices(new Set(mediaStatus.data.pending_facts.map((_, i) => i)));
         setStep('review');
       } else {
+        setSavedCount(mediaStatus.data.facts_extracted);
         setStep('success');
       }
     }
@@ -88,13 +89,16 @@ export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
   const handleConfirmFacts = async () => {
     if (!mediaId || !session) return;
 
+    const confirmedIndices = Array.from(selectedFactIndices);
     await confirmFacts.mutateAsync({
       mediaId,
       user_id: session.user.id,
       app_id: 'default',
-      confirmed_indices: Array.from(selectedFactIndices),
+      confirmed_indices: confirmedIndices,
     });
 
+    const autoSaved = mediaStatus.data?.facts_extracted ?? 0;
+    setSavedCount(autoSaved + confirmedIndices.length);
     setStep('success');
   };
 
@@ -336,15 +340,14 @@ export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
   }
 
   // ── Step: Success ─────────────────────────────────────────────────────
-  if (step === 'success' && mediaStatus.data) {
+  if (step === 'success') {
     return (
       <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-md shadow-2xl p-8 text-center">
           <CheckCircle2 className="h-12 w-12 text-emerald-400 mx-auto mb-4" />
           <h3 className="text-lg font-semibold text-zinc-100 mb-2">Memories Saved!</h3>
           <p className="text-sm text-zinc-400 mb-6">
-            Saved {mediaStatus.data.facts_extracted + mediaStatus.data.facts_pending_review} fact
-            {mediaStatus.data.facts_extracted + mediaStatus.data.facts_pending_review !== 1 ? 's' : ''}
+            Saved {savedCount} fact{savedCount !== 1 ? 's' : ''}
           </p>
           <button
             onClick={onClose}

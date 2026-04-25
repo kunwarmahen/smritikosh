@@ -116,7 +116,7 @@ export function useMediaStatus(mediaId: string | null) {
     queryKey: ["media", "status", mediaId],
     queryFn: () => createApiClient(token).getMediaStatus(mediaId!),
     enabled: !!mediaId && !!token,
-    refetchInterval: (data) => (data?.status === "processing" ? 2000 : false),
+    refetchInterval: (query) => (query.state.data?.status === "processing" ? 2000 : false),
   });
 }
 
@@ -140,6 +140,7 @@ export function useConfirmMediaFacts() {
       qc.invalidateQueries({ queryKey: ["memory"] });
       qc.invalidateQueries({ queryKey: ["identity"] });
       qc.invalidateQueries({ queryKey: ["factGraph"] });
+      qc.invalidateQueries({ queryKey: ["media"] });
     },
   });
 }

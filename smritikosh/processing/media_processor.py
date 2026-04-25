@@ -201,26 +201,24 @@ class MediaProcessor:
             # 7. Route by relevance score
             auto_save, pending_review = self._route_facts(scored_facts)
 
-            # 8. hippocampus.encode() for auto-save facts (high confidence)
+            # 8. Write auto-save facts + episodic event (no double LLM extraction)
             event_id = None
-            if auto_save:
-                raw_text_summary = raw_text[:2000]  # truncate for episodic storage
-                source_meta = {
-                    "filename": filename,
-                    "content_type": content_type,
-                    "context_note": context_note,
-                    "fact_count": len(auto_save),
-                }
-                encoded = await self.hippocampus.encode(
-                    pg,
-                    neo,
-                    user_id=user_id,
-                    app_id=app_id,
-                    raw_text=raw_text_summary,
-                    source_type=source_type,
-                    source_meta=source_meta,
-                )
-                event_id = str(encoded.event.id) if encoded.event else None
+            source_meta = {
+                "filename": filename,
+                "content_type": content_type,
+                "context_note": context_note,
+            }
+            encoded = await self.hippocampus.encode_preextracted(
+                pg,
+                neo,
+                user_id=user_id,
+                app_id=app_id,
+                raw_text=raw_text[:2000],
+                extracted_facts=auto_save,
+                source_type=source_type,
+                source_meta=source_meta,
+            )
+            event_id = str(encoded.event.id) if encoded.event else None
 
             # 9. Return result
             return MediaProcessResult(
