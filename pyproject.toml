@@ -52,6 +52,14 @@ dev = [
     "ruff>=0.8.0",
 ]
 
+# Speaker voice embedding for meeting recording diarization (Phase 12).
+# Install: pip install smritikosh[diarization]
+diarization = [
+    "resemblyzer>=0.1.1.dev0",  # speaker d-vector embedding (no HF auth required)
+    "pyannote.audio>=3.1.0",    # full speaker diarization (requires HF_TOKEN + torch)
+    "torch>=2.0.0",
+]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

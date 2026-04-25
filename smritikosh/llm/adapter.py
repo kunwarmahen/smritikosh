@@ -13,8 +13,10 @@ LiteLLM translates all of these to one consistent interface, so the rest of
 the codebase never needs to know which provider is active.
 """
 
+import asyncio
 import json
 import logging
+from functools import partial
 from typing import Any
 
 import litellm
@@ -26,6 +28,12 @@ logger = logging.getLogger(__name__)
 
 # Suppress litellm's verbose startup banner
 litellm.suppress_debug_info = True
+
+
+async def _run_in_thread(fn, *args, **kwargs):
+    """Run a blocking function in a thread pool to avoid blocking the event loop."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, partial(fn, *args, **kwargs))
 
 
 class LLMAdapter:
@@ -333,6 +341,109 @@ class LLMAdapter:
         text = response.text if hasattr(response, "text") else str(response)
         logger.debug("Local transcription complete: length=%d chars", len(text))
         return text
+
+    async def embed_speaker(self, audio_bytes: bytes, filename: str) -> list[float] | None:
+        """
+        Generate a speaker d-vector embedding using resemblyzer.
+
+        Returns a 256-dim float list usable for cosine-similarity speaker matching,
+        or None if resemblyzer is not installed (voice enrollment is recorded but
+        meeting-recording diarization falls back to first-person filter).
+
+        Install: pip install resemblyzer
+        """
+        try:
+            from resemblyzer import VoiceEncoder, preprocess_wav  # type: ignore[import]
+        except ImportError:
+            logger.warning(
+                "resemblyzer not installed — voice embedding unavailable. "
+                "Install it: pip install resemblyzer"
+            )
+            return None
+
+        import os
+        import tempfile
+
+        ext = ("." + filename.rsplit(".", 1)[-1].lower()) if "." in filename else ".wav"
+        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+            tmp.write(audio_bytes)
+            tmp_path = tmp.name
+
+        try:
+            wav = preprocess_wav(tmp_path)
+            encoder = VoiceEncoder()
+            embedding = encoder.embed_utterance(wav)
+            return embedding.tolist()
+        except Exception as exc:
+            logger.warning("Speaker embedding failed: %s", exc)
+            return None
+        finally:
+            os.unlink(tmp_path)
+
+    async def diarize(self, audio_bytes: bytes, filename: str) -> list[dict]:
+        """
+        Run speaker diarization and return a list of speaker segments.
+
+        Each segment: {"start": float, "end": float, "speaker": str}
+
+        Provider routing:
+        - diarization_provider="none"    → single segment covering full audio (no diarization)
+        - diarization_provider="pyannote" → pyannote/speaker-diarization-3.1 (requires HF_TOKEN)
+
+        If pyannote is configured but fails, falls back to single-segment mode.
+        """
+        provider = self._cfg.diarization_provider.lower()
+
+        if provider == "none":
+            return [{"start": 0.0, "end": float("inf"), "speaker": "SPEAKER_00"}]
+
+        if provider == "pyannote":
+            return await self._diarize_pyannote(audio_bytes, filename)
+
+        logger.warning("Unknown diarization_provider=%r; skipping diarization", provider)
+        return [{"start": 0.0, "end": float("inf"), "speaker": "SPEAKER_00"}]
+
+    async def _diarize_pyannote(self, audio_bytes: bytes, filename: str) -> list[dict]:
+        """Diarize with pyannote/speaker-diarization-3.1. Requires pyannote.audio + HF_TOKEN."""
+        try:
+            from pyannote.audio import Pipeline  # type: ignore[import]
+        except ImportError:
+            logger.warning(
+                "pyannote.audio not installed — falling back to no diarization. "
+                "Install: pip install pyannote.audio torch"
+            )
+            return [{"start": 0.0, "end": float("inf"), "speaker": "SPEAKER_00"}]
+
+        if not self._cfg.hf_token:
+            raise ValueError(
+                "HF_TOKEN is required for pyannote diarization. "
+                "Set HF_TOKEN in your .env file."
+            )
+
+        import os
+        import tempfile
+
+        ext = ("." + filename.rsplit(".", 1)[-1].lower()) if "." in filename else ".wav"
+        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+            tmp.write(audio_bytes)
+            tmp_path = tmp.name
+
+        try:
+            pipeline = Pipeline.from_pretrained(
+                "pyannote/speaker-diarization-3.1",
+                use_auth_token=self._cfg.hf_token,
+            )
+            diarization = await _run_in_thread(pipeline, tmp_path)
+
+            segments = []
+            for turn, _, speaker in diarization.itertracks(yield_label=True):
+                segments.append({"start": turn.start, "end": turn.end, "speaker": speaker})
+            return segments
+        except Exception as exc:
+            logger.warning("pyannote diarization failed: %s — falling back", exc)
+            return [{"start": 0.0, "end": float("inf"), "speaker": "SPEAKER_00"}]
+        finally:
+            os.unlink(tmp_path)
 
     # ── Model string resolution ────────────────────────────────────────────
 

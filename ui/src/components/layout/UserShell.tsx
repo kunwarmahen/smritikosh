@@ -11,6 +11,7 @@ import {
   ScrollText,
   Zap,
   Key,
+  Mic,
   ShieldCheck,
   LogOut,
   ChevronLeft,
@@ -30,7 +31,8 @@ const USER_NAV = [
 ];
 
 const SETTINGS_NAV = [
-  { href: "/dashboard/settings/api-keys", icon: Key, label: "API Keys" },
+  { href: "/dashboard/settings/api-keys",          icon: Key, label: "API Keys" },
+  { href: "/dashboard/settings/voice-enrollment",  icon: Mic, label: "Voice" },
 ];
 
 const ADMIN_NAV = [

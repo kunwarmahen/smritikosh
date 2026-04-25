@@ -2267,6 +2267,7 @@ Users can upload audio files, documents, and images to have facts automatically 
 | Type | Formats | Extraction method |
 |---|---|---|
 | **Voice note** | MP3, WAV, M4A, WebM, OGG | Transcribed via Whisper (OpenAI or local) |
+| **Meeting recording** | MP3, WAV, M4A, WebM, MP4 | Transcribed → diarized → user segments extracted |
 | **Document** | PDF, TXT, MD, CSV | Text extracted; first-person filtered |
 | **Receipt** | JPG, PNG, WebP, GIF | Vision model → purchase/lifestyle signals |
 | **Screenshot** | JPG, PNG, WebP, GIF | Vision model → tool/tech/workflow signals |
@@ -2302,7 +2303,7 @@ curl -X POST http://localhost:8080/ingest/media \
 | `file` | binary | ✓ | The media file to upload |
 | `user_id` | string | ✓ | User ID (must be self or admin) |
 | `app_id` | string | — | App namespace; defaults to "default" |
-| `content_type` | enum | ✓ | `voice_note` \| `document` \| `receipt` \| `screenshot` \| `whiteboard` |
+| `content_type` | enum | ✓ | `voice_note` \| `meeting_recording` \| `document` \| `receipt` \| `screenshot` \| `whiteboard` |
 | `context_note` | string | — | Optional context (e.g. "what should I know about this?") |
 | `idempotency_key` | string | — | Optional; if provided, re-posting same key returns cached result |
 
@@ -2485,6 +2486,7 @@ Each image subtype receives a targeted prompt to guide the vision model:
 | Document file | 10 MB | `MEDIA_MAX_DOCUMENT_MB` |
 | PDF page count | 50 pages | `MEDIA_MAX_DOCUMENT_PAGES` |
 | Image file | 20 MB | `MEDIA_MAX_IMAGE_MB` |
+| Meeting recording | 500 MB | `MEDIA_MAX_MEETING_MB` |
 
 ### Source badges
 
@@ -2495,6 +2497,103 @@ Media facts appear in the dashboard with source badges:
 | `media_voice` | 🎙 Voice Note | Rose | Microphone |
 | `media_document` | 📄 Document | Slate | Document |
 | `media_image` | 🖼 Image | Cyan | Image |
+| `media_audio` | 🎧 Meeting | Pink | Headphones |
+
+---
+
+## Meeting Recordings + Voice Enrollment (Phase 12)
+
+Smritikosh can extract memories from meeting and call recordings. Because multiple people speak, the system identifies the user's voice segments before extraction — only what **you** said is analysed.
+
+### How it works
+
+```
+Meeting recording (MP3, WAV, M4A, WebM, MP4)
+        │
+        ▼
+  Whisper transcription (full audio)
+        │
+        ▼
+  Has enrolled voice + diarization enabled?
+     │                          │
+    YES                         NO
+     │                          │
+     ▼                          ▼
+  Diarize → find user speaker   First-person filter
+  → extract user segments       (I / my / we / our)
+        │
+        ▼
+  Fact extraction → relevance scoring → write/pending/discard
+  (source_type = media_audio)
+```
+
+### Voice enrollment
+
+Enroll once from the dashboard (Settings → Voice) or via API:
+
+```bash
+# Upload a 30-second voice sample
+curl -X POST http://localhost:8080/user/alice/voice-enrollment \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "app_id=default" \
+  -F "file=@sample.wav"
+```
+
+```json
+{
+  "user_id": "alice",
+  "enrolled": true,
+  "has_embedding": true,
+  "embedding_dim": 256,
+  "enrolled_at": "2026-04-25T10:00:00+00:00",
+  "message": "Voice enrolled successfully with speaker embedding."
+}
+```
+
+Without resemblyzer installed (`pip install resemblyzer`), enrollment is recorded but speaker matching falls back to the first-person filter — still useful, just less precise.
+
+### Voice enrollment endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/user/{user_id}/voice-enrollment` | Upload 30-sec sample, compute d-vector, store profile |
+| `GET` | `/user/{user_id}/voice-enrollment` | Check enrollment status |
+| `DELETE` | `/user/{user_id}/voice-enrollment` | Remove voice profile |
+
+### Meeting recording upload
+
+```bash
+curl -X POST http://localhost:8080/ingest/media \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "user_id=alice" \
+  -F "app_id=default" \
+  -F "content_type=meeting_recording" \
+  -F "context_note=Weekly engineering standup" \
+  -F "file=@standup_2026-04-25.mp4"
+```
+
+Returns `media_id` immediately; poll `/ingest/media/{id}/status` for results. Same two-tier routing as other media types (auto-save > 0.75, pending review 0.60–0.75).
+
+### Diarization configuration
+
+| `DIARIZATION_PROVIDER` | Behaviour | Requirements |
+|---|---|---|
+| `none` (default) | No diarization — first-person filter on full transcript | None |
+| `pyannote` | Full speaker diarization + voice matching | `pip install pyannote.audio torch` + `HF_TOKEN` |
+
+```bash
+# .env — to enable pyannote diarization:
+DIARIZATION_PROVIDER=pyannote
+HF_TOKEN=hf_your_read_token_here      # https://huggingface.co/settings/tokens
+SPEAKER_SIMILARITY_THRESHOLD=0.75     # 0–1; lower = more permissive matching
+```
+
+For speaker d-vector embedding (voice enrollment matching):
+```bash
+pip install resemblyzer          # lightweight, no HF auth required
+# or install the optional extra:
+pip install smritikosh[diarization]  # includes resemblyzer + pyannote.audio + torch
+```
 
 ---
 

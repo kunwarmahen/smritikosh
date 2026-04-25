@@ -191,6 +191,16 @@ export function createApiClient(token?: string) {
     }) =>
       request(`/ingest/media/${mediaId}/confirm`, opts({ method: "POST", body: JSON.stringify(body) })),
 
+    // ── Voice enrollment ──────────────────────────────────────────────────
+    getVoiceEnrollmentStatus: (userId: string, appId = "default") =>
+      request(`/user/${userId}/voice-enrollment?app_id=${appId}`, opts()),
+
+    enrollVoice: (userId: string, formData: FormData) =>
+      request(`/user/${userId}/voice-enrollment`, opts({ method: "POST", body: formData })),
+
+    deleteVoiceEnrollment: (userId: string, appId = "default") =>
+      request(`/user/${userId}/voice-enrollment?app_id=${appId}`, opts({ method: "DELETE" })),
+
     // ── Memory event detail & links ───────────────────────────────────────
     getEvent: (eventId: string) =>
       request(`/memory/event/${eventId}`, opts()),

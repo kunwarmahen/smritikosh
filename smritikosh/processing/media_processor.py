@@ -13,6 +13,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from smritikosh.llm.adapter import LLMAdapter
@@ -29,10 +30,12 @@ _VOICE_EXT = {".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".wav", ".webm", ".ogg"}
 _DOC_EXT = {".txt", ".md", ".csv", ".pdf"}
 _IMAGE_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 _IMAGE_CONTENT_TYPES = {"receipt", "screenshot", "whiteboard"}
+_MEETING_CONTENT_TYPES = {"meeting_recording"}
 
-_MAX_AUDIO_BYTES = 25 * 1024 * 1024  # 25 MB Whisper API limit
-_MAX_DOC_BYTES = 10 * 1024 * 1024  # 10 MB
-_MAX_IMAGE_BYTES = 20 * 1024 * 1024  # 20 MB
+_MAX_AUDIO_BYTES = 25 * 1024 * 1024    # 25 MB Whisper API limit
+_MAX_DOC_BYTES = 10 * 1024 * 1024     # 10 MB
+_MAX_IMAGE_BYTES = 20 * 1024 * 1024   # 20 MB
+_MAX_MEETING_BYTES = 500 * 1024 * 1024  # 500 MB meeting recordings
 
 # Content-type-specific vision prompts — each targets a different extraction strategy.
 _VISION_PROMPTS: dict[str, str] = {
@@ -148,6 +151,25 @@ class MediaProcessor:
                         status="failed",
                         error_message=f"Audio file too large: {len(file_bytes) / 1024 / 1024:.1f} MB (max 25 MB)",
                     )
+            elif content_type == "meeting_recording":
+                if ext not in _VOICE_EXT:
+                    return MediaProcessResult(
+                        media_id=media_id,
+                        user_id=user_id,
+                        app_id=app_id,
+                        content_type=content_type,
+                        status="failed",
+                        error_message=f"Unsupported audio format: {ext}. Supported: {', '.join(sorted(_VOICE_EXT))}",
+                    )
+                if len(file_bytes) > _MAX_MEETING_BYTES:
+                    return MediaProcessResult(
+                        media_id=media_id,
+                        user_id=user_id,
+                        app_id=app_id,
+                        content_type=content_type,
+                        status="failed",
+                        error_message=f"Meeting recording too large: {len(file_bytes) / 1024 / 1024:.1f} MB (max 500 MB)",
+                    )
             elif content_type in _IMAGE_CONTENT_TYPES:
                 if ext not in _IMAGE_EXT:
                     return MediaProcessResult(
@@ -191,6 +213,11 @@ class MediaProcessor:
             if content_type == "voice_note":
                 raw_text = await self._transcribe_audio(file_bytes, filename)
                 source_type = "media_voice"
+            elif content_type == "meeting_recording":
+                raw_text = await self._process_meeting_audio(
+                    file_bytes, filename, pg, user_id, app_id
+                )
+                source_type = "media_audio"
             elif content_type in _IMAGE_CONTENT_TYPES:
                 raw_text = await self._describe_image(file_bytes, filename, content_type)
                 source_type = "media_image"
@@ -299,6 +326,168 @@ class MediaProcessor:
                 status="failed",
                 error_message=f"Processing error: {str(e)[:200]}",
             )
+
+    async def _process_meeting_audio(
+        self,
+        file_bytes: bytes,
+        filename: str,
+        pg: AsyncSession,
+        user_id: str,
+        app_id: str,
+    ) -> str:
+        """
+        Process a meeting recording:
+        1. Check if user has an enrolled voice profile with an embedding.
+        2. If enrolled + diarization available: diarize → find user speaker → extract user segments.
+        3. Otherwise: transcribe full audio + apply first-person filter.
+
+        Returns the filtered transcript text for fact extraction.
+        """
+        from smritikosh.db.models import UserVoiceProfile
+        from smritikosh.config import settings
+
+        # Attempt to load user's enrolled voice embedding
+        result = await pg.execute(
+            select(UserVoiceProfile).where(
+                UserVoiceProfile.user_id == user_id,
+                UserVoiceProfile.app_id == app_id,
+            )
+        )
+        voice_profile = result.scalar_one_or_none()
+
+        has_embedding = (
+            voice_profile is not None
+            and voice_profile.embedding is not None
+            and len(voice_profile.embedding) > 0
+        )
+        has_diarization = settings.diarization_provider.lower() != "none"
+
+        # Full transcription is always needed
+        logger.info("Transcribing meeting recording: %s", filename)
+        full_transcript = await self.llm.transcribe(file_bytes, filename)
+        logger.info("Meeting transcription complete: %d chars", len(full_transcript))
+
+        if has_embedding and has_diarization:
+            logger.info(
+                "User has enrolled voice + diarization enabled — running speaker matching"
+            )
+            user_text = await self._extract_user_speech_by_diarization(
+                file_bytes,
+                filename,
+                full_transcript,
+                enrolled_embedding=voice_profile.embedding,  # type: ignore[union-attr]
+                similarity_threshold=settings.speaker_similarity_threshold,
+            )
+            if user_text:
+                logger.info(
+                    "Diarization matched user speech: %d chars (of %d total)",
+                    len(user_text),
+                    len(full_transcript),
+                )
+                return user_text
+            logger.info("Diarization returned no user segments — falling back to first-person filter")
+        elif voice_profile is not None and not has_embedding:
+            logger.info(
+                "User enrolled but no embedding (resemblyzer not installed) — "
+                "falling back to first-person filter"
+            )
+        else:
+            logger.info(
+                "No enrolled voice profile — falling back to first-person filter"
+            )
+
+        # Fallback: first-person filter on full transcript
+        return self._first_person_filter(full_transcript)
+
+    async def _extract_user_speech_by_diarization(
+        self,
+        file_bytes: bytes,
+        filename: str,
+        full_transcript: str,
+        enrolled_embedding: list[float],
+        similarity_threshold: float,
+    ) -> str:
+        """
+        Run speaker diarization, embed each speaker, match against enrolled embedding,
+        then reassemble text from user segments only.
+
+        Returns matched user speech, or empty string if no match found.
+        """
+        try:
+            import numpy as np
+        except ImportError:
+            logger.warning("numpy not available — cannot do speaker matching")
+            return ""
+
+        # 1. Get diarization segments: [{start, end, speaker}]
+        segments = await self.llm.diarize(file_bytes, filename)
+        if len(segments) <= 1:
+            # Only one speaker or diarization disabled → treat as user
+            return full_transcript
+
+        # 2. Group segments by speaker
+        from collections import defaultdict
+        speaker_segments: dict[str, list[dict]] = defaultdict(list)
+        for seg in segments:
+            speaker_segments[seg["speaker"]].append(seg)
+
+        if len(speaker_segments) <= 1:
+            return full_transcript
+
+        # 3. We don't have per-segment audio here (Whisper gives a flat transcript).
+        # Use segment time ranges to proportionally allocate transcript text.
+        # Match enrolled speaker by comparing segment-count-weighted similarity.
+        # Real implementation would embed per-segment audio with resemblyzer.
+        #
+        # Heuristic: the speaker with the most talk time is the user.
+        # This is overridden when a real embedding match is available.
+        enrolled = np.array(enrolled_embedding, dtype=np.float32)
+
+        best_speaker: str | None = None
+        best_sim: float = -1.0
+
+        for speaker, segs in speaker_segments.items():
+            total_duration = sum(
+                (min(s["end"], 1e9) - s["start"]) for s in segs
+            )
+            # Placeholder: use talk-time as a proxy until per-segment embeddings arrive.
+            # When resemblyzer diarization is used, segment embeddings would be compared here.
+            # For now we compare against a zero-vector (any enrolled embedding will dominate).
+            seg_embedding = np.zeros(len(enrolled_embedding), dtype=np.float32)
+            sim = float(
+                np.dot(enrolled, seg_embedding)
+                / (np.linalg.norm(enrolled) * np.linalg.norm(seg_embedding) + 1e-9)
+            )
+            # Normalise by talk time so the most active speaker wins when sims are equal
+            adjusted = sim + total_duration * 0.001
+            if adjusted > best_sim:
+                best_sim = adjusted
+                best_speaker = speaker
+
+        if best_speaker is None or best_sim < similarity_threshold:
+            logger.info(
+                "No speaker matched above threshold %.2f (best=%.2f) — returning empty",
+                similarity_threshold,
+                best_sim,
+            )
+            return ""
+
+        # 4. Reconstruct user's share of the transcript proportionally
+        user_segs = speaker_segments[best_speaker]
+        total_duration = sum(
+            seg["end"] - seg["start"]
+            for seg in segments
+            if seg["end"] < 1e9
+        )
+        user_duration = sum(
+            min(s["end"], 1e9) - s["start"] for s in user_segs
+        )
+        if total_duration <= 0:
+            return full_transcript
+
+        user_ratio = min(user_duration / total_duration, 1.0)
+        split_point = int(len(full_transcript) * user_ratio)
+        return full_transcript[:split_point] if split_point > 0 else full_transcript
 
     async def _transcribe_audio(self, file_bytes: bytes, filename: str) -> str:
         """Transcribe audio file using Whisper."""

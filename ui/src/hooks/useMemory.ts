@@ -11,6 +11,7 @@ import type {
   FactResponse,
   MediaUploadResponse,
   MediaStatusResponse,
+  VoiceEnrollmentStatus,
 } from "@/types";
 
 export function useRecentEvents(params?: { limit?: number; app_id?: string }) {
@@ -141,6 +142,47 @@ export function useConfirmMediaFacts() {
       qc.invalidateQueries({ queryKey: ["identity"] });
       qc.invalidateQueries({ queryKey: ["factGraph"] });
       qc.invalidateQueries({ queryKey: ["media"] });
+    },
+  });
+}
+
+export function useVoiceEnrollmentStatus(appId = "default") {
+  const { data: session } = useSession();
+  const userId = session?.user?.id;
+  const token = session?.accessToken;
+
+  return useQuery<VoiceEnrollmentStatus>({
+    queryKey: ["voiceEnrollment", userId, appId],
+    queryFn: () =>
+      createApiClient(token).getVoiceEnrollmentStatus(userId!, appId) as Promise<VoiceEnrollmentStatus>,
+    enabled: !!userId && !!token,
+  });
+}
+
+export function useEnrollVoice() {
+  const { data: session } = useSession();
+  const token = session?.accessToken;
+  const qc = useQueryClient();
+
+  return useMutation<VoiceEnrollmentStatus, Error, FormData>({
+    mutationFn: (formData) =>
+      createApiClient(token).enrollVoice(session!.user.id, formData) as Promise<VoiceEnrollmentStatus>,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["voiceEnrollment"] });
+    },
+  });
+}
+
+export function useDeleteVoiceEnrollment() {
+  const { data: session } = useSession();
+  const token = session?.accessToken;
+  const qc = useQueryClient();
+
+  return useMutation<unknown, Error, void>({
+    mutationFn: () =>
+      createApiClient(token).deleteVoiceEnrollment(session!.user.id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["voiceEnrollment"] });
     },
   });
 }

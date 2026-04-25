@@ -1,13 +1,14 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { FileUp, CheckCircle2, AlertCircle, Loader2, Upload, X, Image } from 'lucide-react';
+import Link from 'next/link';
+import { FileUp, CheckCircle2, AlertCircle, Loader2, Upload, X, Image, Mic } from 'lucide-react';
 import { useSession } from 'next-auth/react';
-import { useUploadMedia, useMediaStatus, useConfirmMediaFacts } from '@/hooks/useMemory';
+import { useUploadMedia, useMediaStatus, useConfirmMediaFacts, useVoiceEnrollmentStatus } from '@/hooks/useMemory';
 import { PendingFact } from '@/types';
 
-type MediaCategory = 'voice_note' | 'document' | 'image';
-type ContentType = 'voice_note' | 'document' | 'receipt' | 'screenshot' | 'whiteboard';
+type MediaCategory = 'voice_note' | 'meeting' | 'document' | 'image';
+type ContentType = 'voice_note' | 'meeting_recording' | 'document' | 'receipt' | 'screenshot' | 'whiteboard';
 type Step = 'upload' | 'processing' | 'review' | 'success' | 'nothing_found' | 'error';
 
 const IMAGE_SUBTYPES: { value: ContentType; label: string; hint: string }[] = [
@@ -23,6 +24,7 @@ interface UploadMediaFormProps {
 export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
   const { data: session } = useSession();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const enrollmentStatus = useVoiceEnrollmentStatus();
 
   const [step, setStep] = useState<Step>('upload');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -34,7 +36,11 @@ export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
   const [savedCount, setSavedCount] = useState(0);
 
   const contentType: ContentType =
-    mediaCategory === 'image' ? imageSubtype : (mediaCategory as ContentType);
+    mediaCategory === 'image'
+      ? imageSubtype
+      : mediaCategory === 'meeting'
+      ? 'meeting_recording'
+      : (mediaCategory as ContentType);
 
   const uploadMedia = useUploadMedia();
   const mediaStatus = useMediaStatus(mediaId);
@@ -150,6 +156,8 @@ export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
               <p className="text-xs text-zinc-500">
                 {mediaCategory === 'voice_note'
                   ? 'MP3, WAV, M4A, WebM (max 25 MB)'
+                  : mediaCategory === 'meeting'
+                  ? 'MP3, WAV, M4A, WebM, MP4 (max 500 MB)'
                   : mediaCategory === 'image'
                   ? 'JPG, PNG, WebP, GIF (max 20 MB)'
                   : 'PDF, TXT, MD, CSV (max 10 MB)'}
@@ -159,8 +167,8 @@ export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
                 type="file"
                 onChange={(e) => handleFileSelect(e.target.files)}
                 accept={
-                  mediaCategory === 'voice_note'
-                    ? 'audio/*'
+                  mediaCategory === 'voice_note' || mediaCategory === 'meeting'
+                    ? 'audio/*,video/*'
                     : mediaCategory === 'image'
                     ? 'image/jpeg,image/png,image/gif,image/webp'
                     : '.pdf,.txt,.md,.csv'
@@ -172,10 +180,11 @@ export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
             {/* Category Selector */}
             <div>
               <label className="label">Content Type</label>
-              <div className="flex gap-2 mt-2">
+              <div className="flex gap-2 mt-2 flex-wrap">
                 {(
                   [
                     { value: 'voice_note', label: '🎙 Voice Note' },
+                    { value: 'meeting', label: '🎧 Meeting' },
                     { value: 'document', label: '📄 Document' },
                     { value: 'image', label: '🖼 Image' },
                   ] as { value: MediaCategory; label: string }[]
@@ -197,6 +206,45 @@ export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
                 ))}
               </div>
             </div>
+
+            {/* Meeting diarization info */}
+            {mediaCategory === 'meeting' && (
+              <div className={`rounded-lg px-4 py-3 text-xs ${
+                enrollmentStatus.data?.has_embedding
+                  ? 'bg-emerald-950/40 border border-emerald-800/50 text-emerald-300'
+                  : 'bg-zinc-800 border border-zinc-700 text-zinc-400'
+              }`}>
+                {enrollmentStatus.data?.has_embedding ? (
+                  <>
+                    <p className="font-medium mb-0.5">Speaker matching enabled</p>
+                    <p>Your enrolled voice will be used to identify your speech segments automatically.</p>
+                  </>
+                ) : enrollmentStatus.data?.enrolled ? (
+                  <>
+                    <p className="font-medium mb-0.5 text-amber-300">Enrolled without speaker embedding</p>
+                    <p>
+                      Install resemblyzer for speaker matching:{' '}
+                      <code className="font-mono bg-zinc-700 px-1 rounded">pip install resemblyzer</code>
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="font-medium mb-0.5">No voice enrolled</p>
+                    <p>
+                      First-person filter will be applied to the full transcript.{' '}
+                      <Link
+                        href="/dashboard/settings/voice-enrollment"
+                        className="text-violet-400 hover:text-violet-300 underline"
+                        onClick={onClose}
+                      >
+                        Enroll your voice
+                      </Link>{' '}
+                      for accurate speaker matching.
+                    </p>
+                  </>
+                )}
+              </div>
+            )}
 
             {/* Image subtype selector */}
             {mediaCategory === 'image' && (
@@ -280,6 +328,8 @@ export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
           <p className="text-sm text-zinc-400">
             {mediaCategory === 'voice_note'
               ? 'Transcribing'
+              : mediaCategory === 'meeting'
+              ? 'Transcribing and identifying speakers in'
               : mediaCategory === 'image'
               ? 'Analysing image'
               : 'Analysing'}{' '}

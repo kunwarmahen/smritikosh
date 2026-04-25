@@ -38,9 +38,11 @@ _VOICE_EXT = {".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".wav", ".webm", ".ogg"}
 _DOC_EXT = {".txt", ".md", ".csv", ".pdf"}
 _IMAGE_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 _IMAGE_CONTENT_TYPES = {"receipt", "screenshot", "whiteboard"}
+_MEETING_CONTENT_TYPES = {"meeting_recording"}
 _MAX_AUDIO_BYTES = 25 * 1024 * 1024
 _MAX_DOC_BYTES = 10 * 1024 * 1024
 _MAX_IMAGE_BYTES = 20 * 1024 * 1024
+_MAX_MEETING_BYTES = 500 * 1024 * 1024
 
 
 async def _get_async_sessionmaker(request):
@@ -125,7 +127,7 @@ async def ingest_media(
     assert_self_or_admin(current_user, user_id)
 
     # Validate content_type
-    _valid_types = {"voice_note", "document"} | _IMAGE_CONTENT_TYPES
+    _valid_types = {"voice_note", "document"} | _IMAGE_CONTENT_TYPES | _MEETING_CONTENT_TYPES
     if content_type not in _valid_types:
         raise HTTPException(
             status_code=422,
@@ -136,7 +138,7 @@ async def ingest_media(
     ext = file.filename.split(".")[-1].lower() if file.filename else ""
     ext = f".{ext}" if ext else ""
 
-    if content_type == "voice_note":
+    if content_type in ("voice_note", "meeting_recording"):
         if ext not in _VOICE_EXT:
             raise HTTPException(
                 status_code=422,
@@ -199,6 +201,11 @@ async def ingest_media(
         raise HTTPException(
             status_code=413,
             detail=f"Audio file too large: {file_size_mb:.1f} MB (max 25 MB)",
+        )
+    elif content_type == "meeting_recording" and len(file_bytes) > _MAX_MEETING_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Meeting recording too large: {file_size_mb:.1f} MB (max 500 MB)",
         )
     elif content_type in _IMAGE_CONTENT_TYPES and len(file_bytes) > _MAX_IMAGE_BYTES:
         raise HTTPException(

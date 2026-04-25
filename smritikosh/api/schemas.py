@@ -514,3 +514,17 @@ class MediaFactConfirmRequest(BaseModel):
     user_id: str
     app_id: str = "default"
     confirmed_indices: list[int]  # indices into pending_facts to save
+
+
+# ── POST/GET/DELETE /user/{user_id}/voice-enrollment ──────────────────────────
+
+
+class VoiceEnrollmentResponse(BaseModel):
+    """Response for voice enrollment endpoints."""
+    user_id: str
+    app_id: str
+    enrolled: bool
+    has_embedding: bool            # True if resemblyzer computed a speaker d-vector
+    embedding_dim: Optional[int]   # 256 for resemblyzer; None if unavailable
+    enrolled_at: Optional[str]     # ISO datetime of last enrollment; None if not enrolled
+    message: str = ""

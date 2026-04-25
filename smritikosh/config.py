@@ -103,6 +103,18 @@ class Settings(BaseSettings):
     vision_api_key: str | None = None   # defaults to llm_api_key if unset
     vision_base_url: str | None = None  # for local providers
 
+    # ── Speaker diarization (Phase 12 — meeting recordings) ───────────────
+    # Provider: "none" (default, no diarization — first-person filter only) | "pyannote"
+    # "pyannote" requires: pip install pyannote.audio torch  +  HF_TOKEN set below.
+    diarization_provider: str = "none"
+    # HuggingFace token — required for pyannote/speaker-diarization-3.1 model download.
+    # Generate at https://huggingface.co/settings/tokens (role: read).
+    hf_token: str | None = None
+    # Cosine similarity threshold for voice matching (0–1). Higher = stricter.
+    speaker_similarity_threshold: float = 0.75
+    # Max meeting recording file size (MB)
+    media_max_meeting_mb: int = 500
+
 
 # Single shared instance — import this everywhere
 settings = Settings()

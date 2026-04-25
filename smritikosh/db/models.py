@@ -152,11 +152,12 @@ class FactStatus(StrEnum):
 
 class MediaContentType(StrEnum):
     """Type of media uploaded for memory extraction."""
-    VOICE_NOTE  = "voice_note"   # user's spoken audio
-    DOCUMENT    = "document"     # text document (PDF, TXT, etc.)
-    RECEIPT     = "receipt"      # image: purchase receipt → lifestyle/preference signals
-    SCREENSHOT  = "screenshot"   # image: app/tool screenshot → tech/workflow signals
-    WHITEBOARD  = "whiteboard"   # image: whiteboard/diagram → project/goal signals
+    VOICE_NOTE         = "voice_note"         # user's spoken audio
+    MEETING_RECORDING  = "meeting_recording"  # multi-speaker audio/video → diarization → user segments
+    DOCUMENT           = "document"           # text document (PDF, TXT, etc.)
+    RECEIPT            = "receipt"            # image: purchase receipt → lifestyle/preference signals
+    SCREENSHOT         = "screenshot"         # image: app/tool screenshot → tech/workflow signals
+    WHITEBOARD         = "whiteboard"         # image: whiteboard/diagram → project/goal signals
 
 
 class MediaIngestStatus(StrEnum):
@@ -717,4 +718,44 @@ class MediaIngest(Base):
         return (
             f"<MediaIngest id={self.id!r} type={self.content_type} "
             f"status={self.status} facts={self.facts_extracted}>"
+        )
+
+
+class UserVoiceProfile(Base):
+    """
+    Speaker voice profile for diarization-based memory extraction (Phase 12).
+
+    Stores a speaker d-vector embedding computed from a user's 30-second voice
+    enrollment sample. Used to identify the user's speech segments within meeting
+    recordings via cosine similarity matching.
+
+    Requires resemblyzer to be installed for embedding computation.
+    If resemblyzer is unavailable, the record is still created (enrolled=True) but
+    embedding is NULL — meeting recordings fall back to first-person filter only.
+    """
+
+    __tablename__ = "user_voice_profiles"
+    __table_args__ = (
+        UniqueConstraint("user_id", "app_id", name="uq_user_voice_profile"),
+        Index("ix_user_voice_profiles_user_id", "user_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    app_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    # Speaker d-vector (256-dim float list). NULL if resemblyzer is not installed.
+    embedding: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True, default=None)
+    embedding_dim: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
+    enrolled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+    def __repr__(self) -> str:
+        has_emb = self.embedding is not None
+        return (
+            f"<UserVoiceProfile user={self.user_id!r} "
+            f"app={self.app_id!r} embedding={'yes' if has_emb else 'no'}>"
         )

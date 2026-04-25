@@ -222,6 +222,18 @@ export interface MediaStatusResponse extends MediaUploadResponse {
   pending_facts: PendingFact[];
 }
 
+// ── Voice enrollment types ────────────────────────────────────────────────────
+
+export interface VoiceEnrollmentStatus {
+  user_id: string;
+  app_id: string;
+  enrolled: boolean;
+  has_embedding: boolean;    // true if resemblyzer computed a speaker d-vector
+  embedding_dim: number | null;
+  enrolled_at: string | null;
+  message: string;
+}
+
 // ── UI-only types ─────────────────────────────────────────────────────────────
 
 export type ImportanceLevel = "high" | "medium" | "low";
