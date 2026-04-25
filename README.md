@@ -377,7 +377,8 @@ alembic upgrade head
 This runs all the database migrations — it creates every table, enables the pgvector extension, and sets up the vector index. You should see output ending with something like:
 
 ```
-INFO  [alembic.runtime.migration] Running upgrade ... -> 0009, multi-app access: app_ids array on app_users; create api_keys table
+INFO  [alembic.runtime.migration] Running upgrade 0016 -> 0017, add media_ingests table
+INFO  [alembic.runtime.migration] Running upgrade 0017 -> 0018, add user_voice_profiles table
 ```
 
 ---
@@ -1078,10 +1079,16 @@ smritikosh/
 │       ├── identity.py      # GET /identity/{user_id}
 │       ├── feedback.py      # POST /feedback
 │       ├── procedures.py    # CRUD /procedures + DELETE /procedures/user/{id}
-│       ├── admin.py         # POST /admin/{consolidate,prune,cluster,mine-beliefs,reconsolidate}
+│       ├── admin.py         # POST /admin/{consolidate,prune,cluster,mine-beliefs,reconsolidate,synthesize}
 │       │                    #   GET /admin/users, GET /admin/users/{username},
 │       │                    #   PATCH /admin/users/{username}
-│       └── ingest.py        # POST /ingest/{push,file,slack/events,email/sync,calendar}
+│       ├── ingest.py        # POST /ingest/{push,file,slack/events,email/sync,calendar}
+│       ├── session_ingest.py # POST /ingest/session, POST /ingest/transcript
+│       ├── facts.py         # GET /facts/{user_id}, PATCH /facts/.../status,
+│       │                    #   GET /facts/contradictions/{user_id}, PATCH /facts/contradictions/{id}
+│       ├── media_ingest.py  # POST /ingest/media, GET /ingest/media/{id}/status,
+│       │                    #   POST /ingest/media/{id}/confirm
+│       └── voice_enrollment.py # POST/GET/DELETE /user/{user_id}/voice-enrollment
 ├── auth/
 │   ├── __init__.py          # Re-exports router, require_admin, require_auth
 │   ├── deps.py              # require_auth / require_admin FastAPI dependencies
@@ -1119,7 +1126,13 @@ smritikosh/
 │   ├── belief_miner.py      # Infer beliefs/values from consolidated events
 │   ├── reinforcement.py     # Adjust importance scores from user feedback
 │   ├── reconsolidation.py   # Re-summarise events after recall
-│   └── scheduler.py         # APScheduler background jobs
+│   ├── fact_decayer.py      # Weekly Neo4j confidence decay; staleness→pending promotion
+│   ├── trigger_detector.py  # Regex pre-filter: detects high-signal phrases before LLM
+│   ├── transcript_utils.py  # sentinel-strip, user_turns_only, delta prompt builder
+│   ├── cross_system_synthesizer.py  # Daily job: correlates connector signals → cross_system facts
+│   ├── media_processor.py   # MediaProcessor: transcription, text extraction, vision, relevance routing
+│   └── scheduler.py         # APScheduler background jobs (consolidation, pruning, clustering,
+│                             #   belief mining, fact decay, cross-system synthesis)
 ├── retrieval/
 │   └── context_builder.py   # Build memory context for LLM calls
 ├── audit/
@@ -1128,8 +1141,12 @@ smritikosh/
 │   └── mongodb.py           # Motor connection, lazy init, index creation
 └── sdk/
     ├── client.py            # SmritikoshClient (async HTTP)
+    ├── middleware.py        # SmritikoshMiddleware (OpenAI/Anthropic sync wrapper);
+    │                        #   LiteLLMMiddleware; remember() tool injection + interception
+    ├── __init__.py          # Exports SmritikoshClient, SmritikoshMiddleware, LiteLLMMiddleware,
+    │                        #   SessionIngestResult
     └── types.py             # EncodedEvent, MemoryContext, RecentEvent,
-                             #   IdentityProfile, FeedbackRecord, HealthStatus
+                             #   IdentityProfile, FeedbackRecord, HealthStatus, SessionIngestResult
 
 sdk-node/                    # TypeScript / Node.js SDK
 ├── src/
@@ -1150,14 +1167,17 @@ ui/                          # Next.js 16 dashboard (App Router)
 │   │   ├── (auth)/login/    # Sign-in page with error handling
 │   │   ├── (dashboard)/dashboard/
 │   │   │   ├── page.tsx            # Redirect → /dashboard/memories
-│   │   │   ├── memories/           # Memory timeline list (+ Add Memory button)
+│   │   │   ├── memories/           # Memory timeline list (+ Add Memory + Upload buttons)
 │   │   │   │   └── [id]/           # Memory detail: importance card + narrative graph
 │   │   │   ├── review/             # Auto-extracted memory review queue (approve / remove)
 │   │   │   ├── search/             # Hybrid search with score breakdown
 │   │   │   ├── identity/           # Identity profile + React Flow fact graph toggle
 │   │   │   ├── clusters/           # Events grouped by topic cluster
 │   │   │   ├── audit/              # Personal audit timeline + stats
-│   │   │   └── procedures/         # Procedural rules CRUD
+│   │   │   ├── procedures/         # Procedural rules CRUD
+│   │   │   └── settings/
+│   │   │       ├── api-keys/       # Generate and revoke API keys
+│   │   │       └── voice-enrollment/  # 30-sec voice sample recording, waveform, enrollment status
 │   │   └── (admin)/admin/
 │   │       ├── page.tsx            # Redirect → /admin/users
 │   │       ├── users/              # Paginated user list
@@ -1167,11 +1187,13 @@ ui/                          # Next.js 16 dashboard (App Router)
 │   │       └── audit/              # Global audit log (all users)
 │   ├── components/
 │   │   ├── memory/
-│   │   │   ├── MemoryTimeline.tsx  # Event list with importance badges + Add Memory button
+│   │   │   ├── MemoryTimeline.tsx  # Event list with importance badges + Add Memory + Upload buttons
 │   │   │   ├── MemoryCard.tsx      # Memory card with source badge
 │   │   │   ├── MemoryGraphView.tsx # React Flow: narrative links (caused/preceded/…)
 │   │   │   ├── SourceBadge.tsx     # Reusable source-type badge (13 types, icon + colour)
-│   │   │   └── AddMemoryForm.tsx   # Modal: manual fact entry → POST /memory/fact
+│   │   │   ├── AddMemoryForm.tsx   # Modal: manual fact entry → POST /memory/fact
+│   │   │   └── UploadMediaForm.tsx # Multi-step upload modal (voice / document / image / meeting);
+│   │   │                           #   upload → processing → review → success/nothing_found
 │   │   ├── identity/
 │   │   │   ├── IdentityProfile.tsx # Dimension grid + confidence bars + beliefs
 │   │   │   └── IdentityFactGraph.tsx # React Flow: radial fact knowledge graph
@@ -1224,7 +1246,7 @@ tests/
 alembic/
 └── versions/
     ├── 0001_initial_schema.py        # events, user_facts, memory_links + IVFFlat index
-    ├── 0002_narrative_links.py       # memory_links relation types
+    ├── 0002_add_recall_count.py      # recall_count on events
     ├── 0003_add_cluster_fields.py    # cluster_id, cluster_label on events
     ├── 0004_add_memory_feedback.py   # memory_feedback table
     ├── 0005_add_user_beliefs.py      # user_beliefs table
@@ -1233,7 +1255,14 @@ alembic/
     ├── 0008_add_app_users.py         # app_users table (username, role, is_active, app_id)
     ├── 0009_multi_app_ids.py         # app_ids TEXT[] on app_users and api_keys; create api_keys table
     ├── 0010_add_belief_evidence_ids.py  # evidence_event_ids JSONB on user_beliefs
-    └── 0011_hnsw_index.py            # replace IVFFlat with HNSW index on events.embedding
+    ├── 0011_hnsw_index.py            # replace IVFFlat with HNSW index on events.embedding
+    ├── 0012_resize_embedding_dims.py # resize embedding column to configured dimension
+    ├── 0013_dynamic_embedding_dims.py # dynamic embedding dimension support
+    ├── 0014_add_source_type_and_fact_status.py  # source_type + source_meta on events + user_facts; FactStatus
+    ├── 0015_add_processed_sessions.py           # processed_sessions table (idempotency + last_turn_index)
+    ├── 0016_add_fact_contradictions.py          # fact_contradictions table (QC contradiction log)
+    ├── 0017_add_media_ingests.py                # media_ingests table (async processing + status)
+    └── 0018_add_user_voice_profiles.py          # user_voice_profiles table (speaker d-vector enrollment)
 ```
 
 ---
@@ -1611,6 +1640,26 @@ All backend settings are read from the environment (or `.env`). Every field has 
 | `RATE_LIMIT_SEARCH` | `120/minute` | Per-user rate limit for `POST /memory/search`. Set to `""` to disable. |
 | `FACT_DECAY_HALF_LIFE_DAYS` | `60.0` | Days for Neo4j fact confidence to halve without reinforcement. |
 | `FACT_DECAY_FLOOR` | `0.1` | Facts whose confidence falls below this threshold are deleted. |
+| **Whisper (audio transcription)** | | |
+| `WHISPER_PROVIDER` | `openai` | `openai` (cloud) or `local` (self-hosted via Ollama / vLLM / llama.cpp) |
+| `WHISPER_MODEL` | `whisper-1` | Whisper model name |
+| `WHISPER_API_KEY` | — | API key for cloud Whisper; falls back to `EMBEDDING_API_KEY` if unset |
+| `WHISPER_BASE_URL` | — | Base URL for local Whisper provider (e.g. `http://localhost:11434`) |
+| **Vision (image description)** | | |
+| `VISION_PROVIDER` | `openai` | `openai` / `claude` / `gemini` / `ollama` / `vllm` / `llamacpp` |
+| `VISION_MODEL` | `gpt-4o-mini` | Multimodal model for image description |
+| `VISION_API_KEY` | — | API key for cloud vision provider; falls back to `LLM_API_KEY` if unset |
+| `VISION_BASE_URL` | — | Base URL for local vision provider |
+| **Diarization (speaker identification)** | | |
+| `DIARIZATION_PROVIDER` | `none` | `none` (first-person filter only) or `pyannote` (full speaker diarization) |
+| `HF_TOKEN` | — | Hugging Face read token — required for `pyannote` diarization |
+| `SPEAKER_SIMILARITY_THRESHOLD` | `0.75` | Cosine similarity threshold for matching a diarized speaker to enrolled voice (0–1) |
+| **Media size limits** | | |
+| `MEDIA_MAX_AUDIO_MB` | `25` | Max size for voice note uploads (Whisper API limit) |
+| `MEDIA_MAX_DOCUMENT_MB` | `10` | Max size for document uploads |
+| `MEDIA_MAX_DOCUMENT_PAGES` | `50` | Max PDF page count |
+| `MEDIA_MAX_IMAGE_MB` | `20` | Max size for image uploads |
+| `MEDIA_MAX_MEETING_MB` | `500` | Max size for meeting recording uploads |
 
 ### UI environment variables
 
@@ -1668,6 +1717,8 @@ npm start        # serve the production build
 | `/admin/audit` | Admin | System-wide audit log |
 | `/admin/users` | Admin | Paginated user list — create, activate/deactivate, change role |
 | `/admin/users/[userId]` | Admin | Per-user detail, role toggle, memory wipe |
+| `/dashboard/settings/api-keys` | User | Generate and revoke long-lived API keys |
+| `/dashboard/settings/voice-enrollment` | User | Record a 30-second voice sample for speaker diarization; waveform visualiser, re-record, delete enrollment |
 
 ### Authentication
 
@@ -2023,6 +2074,24 @@ curl -X POST http://localhost:8080/admin/reconsolidate \
   "updated": true,
   "new_summary": "Alice is a founder who recently expanded her team...",
   "reconsolidation_count": 1
+}
+```
+
+### `POST /admin/synthesize`
+
+Trigger cross-system synthesis immediately for one user. Correlates signals across all connector sources (calendar, email, Slack, webhook) to infer behavioral patterns.
+
+```bash
+curl -X POST "http://localhost:8080/admin/synthesize?user_id=alice&app_id=myapp"
+```
+
+```json
+{
+  "user_id": "alice",
+  "app_id": "myapp",
+  "facts_written": 3,
+  "facts_pending": 1,
+  "facts_skipped": 2
 }
 ```
 
@@ -3474,7 +3543,7 @@ npm run test:watch
 pytest
 ```
 
-The default run executes **~750 tests** in about 10 seconds. All tests that require real API keys, a local Ollama server, or running databases are automatically skipped.
+The default run executes **~830 tests** in about 10–15 seconds. All tests that require real API keys, a local Ollama server, or running databases are automatically skipped.
 
 Run the Node.js SDK tests separately:
 
@@ -3553,7 +3622,11 @@ pytest tests/test_amygdala.py::TestAmygdala::test_scores_decision_text -v
 | `test_e2e_pipeline.py` | 17 | Full encode → consolidate → context pipeline; embedding failure survival |
 | `test_trigger_detector.py` | 33 | TriggerDetector patterns, filter_turns, any_triggered, collect_all_phrases; transcript_utils sentinel stripping and delta prompt |
 | `test_session_ingest.py` | 21 | POST /ingest/session (201, shape, idempotency, trigger filter, partial flag, assistant-only → 0 turns); POST /memory/fact (ui_manual defaults, confidence, status, low-confidence → pending) |
-| `test_sdk_middleware.py` | 28 | SmritikoshMiddleware proxy, buffering, partial flush threshold, close() idempotency, auto_inject (OpenAI + Anthropic), error resilience, thread safety |
+| `test_sdk_middleware.py` | 55 | SmritikoshMiddleware proxy, buffering, partial flush threshold, close() idempotency, auto_inject (OpenAI + Anthropic), remember() tool injection + interception, LiteLLMMiddleware, windowed streaming, error resilience, thread safety |
+| `test_cross_system_synthesizer.py` | 20 | CrossSystemSynthesizer prompt builder, connector summary builder, active/pending/skipped confidence routing, LLM failure handling, empty response handling |
+| `test_media_processor.py` | 31 | MediaProcessor transcription, PDF/text extraction, vision model description, first-person filter, relevance scoring, content-type routing, error handling; image subtypes (receipt/screenshot/whiteboard) |
+| `test_media_ingest.py` | 12 | POST /ingest/media (upload, status polling, confirm), async processing, idempotency, size gate enforcement |
+| `test_voice_enrollment.py` | 15 | Voice enrollment API (enroll/status/delete/re-enroll), meeting recording processor (validation, first-person fallback, diarization path, no-embedding fallback, size limit) |
 
 #### Node.js (`vitest`)
 
@@ -3681,6 +3754,7 @@ The `MemoryScheduler` runs five jobs inside the FastAPI process using APSchedule
 | **Memory clustering** | every 6 hours | Groups similar events by topic using embeddings |
 | **Belief mining** | every 12 hours | Infers durable beliefs and values from event patterns |
 | **Semantic fact decay** | every 1 week | Decays Neo4j fact confidence over time; deletes facts below threshold |
+| **Cross-system synthesis** | daily at 01:00 UTC | Correlates calendar/email/Slack/webhook behavioral signals → `cross_system` facts |
 
 ### Consolidation (every hour)
 
@@ -3727,6 +3801,26 @@ new_confidence = confidence × exp(−ln2 × age_days / half_life_days)
 
 The default half-life is **60 days** (`FACT_DECAY_HALF_LIFE_DAYS`). Facts whose confidence drops below `0.1` (`FACT_DECAY_FLOOR`) are deleted. Orphaned `Fact` nodes with no remaining user relationship are also cleaned up in a third pass.
 
+### Cross-system synthesis (daily at 01:00 UTC)
+
+The `CrossSystemSynthesizer` queries connector-originated events (calendar, email, Slack, webhook) for the last 30 days, computes per-connector behavioral summaries (send-time distributions, active weekdays, topic samples), and prompts the LLM to infer durable patterns that no single source could surface alone.
+
+Examples of what it finds:
+- "User rescheduled 3 meetings this week" + "mentioned being overwhelmed in chat" → stress/capacity preference
+- "No emails after 6pm for 30 days" + "mentioned work-life balance" → boundary preference
+- "Slack messages spike on Tuesdays" + "mentioned standup prep" → weekly routine
+
+Confidence routing: ≥ 0.50 → `active`, 0.40–0.49 → `pending` for user review, < 0.40 → skipped.
+
+Facts are tagged `source_type="cross_system"` and decay **2× faster** than other sources in the weekly decay job — behavioral patterns shift quickly.
+
+Trigger via `POST /admin/synthesize` or from Python:
+
+```python
+await scheduler.run_synthesis_now(user_id="alice", app_id="myapp")
+await scheduler.run_synthesis_for_all_users()
+```
+
 ### Manual triggers (admin / testing)
 
 ```python
@@ -3737,6 +3831,7 @@ await scheduler.run_consolidation_now(user_id="alice", app_id="myapp")
 await scheduler.run_pruning_now(user_id="alice", app_id="myapp")
 await scheduler.run_clustering_now(user_id="alice", app_id="myapp")
 await scheduler.run_belief_mining_now(user_id="alice", app_id="myapp")
+await scheduler.run_synthesis_now(user_id="alice", app_id="myapp")
 
 # Run batch across all users
 await scheduler.run_consolidation_for_all_users()
@@ -3744,6 +3839,7 @@ await scheduler.run_pruning_for_all_users()
 await scheduler.run_clustering_for_all_users()
 await scheduler.run_belief_mining_for_all_users()
 await scheduler.run_fact_decay()
+await scheduler.run_synthesis_for_all_users()
 ```
 
 ### Tune the schedule

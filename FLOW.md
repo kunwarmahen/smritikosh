@@ -403,6 +403,135 @@ ranking self-calibrates to what is actually useful to each user.
 
 ---
 
+## Act 8 — Passive extraction (no developer work required)
+
+Alice is using a new AI assistant at her startup that has `SmritikoshMiddleware` wrapped around the OpenAI client. She never calls `/remember` explicitly — the middleware captures everything automatically.
+
+She has a conversation:
+
+```
+Alice: I always start my day with a standup at 9am, then prefer deep work until lunch.
+Alice: My goal is to ship the new inference pipeline before the end of Q2.
+Alice: I prefer written async updates over video calls — I think better in text.
+```
+
+### What happens invisibly
+
+The middleware is configured with `extract_every_n_turns=3`. After Alice's third turn:
+
+```
+SmritikoshMiddleware (background thread)
+  │
+  ├── _last_flush_buf_idx tracked: sends only turns since last flush
+  │
+  ▼
+POST /ingest/session   partial=True
+  │
+  ├── user_turns_only()      → discards any assistant turns
+  ├── strip_sentinels()      → removes injected context blocks
+  ├── TriggerDetector        → "I always", "My goal is", "I prefer" → TRIGGERED
+  │
+  ▼
+LLM delta extraction   "extract only NEW facts not already known"
+  │
+  ├── "standup at 9am"       → habit/morning_routine → pending (confidence 0.70)
+  ├── "ship inference pipeline by Q2" → goal/q2_pipeline → active (confidence 0.70)
+  └── "prefers async text over video" → preference/communication → active (confidence 0.70)
+```
+
+When Alice's session ends, `close()` flushes any remaining turns since the last partial flush. The app developer changed **one line** — everything else is automatic.
+
+### What the `remember()` tool adds
+
+The middleware also auto-injects a `remember()` tool into every LLM call. When the LLM notices something important during its own reasoning, it calls the tool directly:
+
+```json
+{
+  "name": "remember",
+  "arguments": {
+    "content": "Alice explicitly prefers async text communication over video calls",
+    "category": "preference",
+    "key": "communication",
+    "value": "async text"
+  }
+}
+```
+
+The middleware intercepts it, calls `POST /memory/fact` with `source_type="tool_use"` (confidence 0.90 — highest of all auto-extracted types), and the LLM's conversation continues as if the tool call never happened. The app sees only the final response.
+
+---
+
+## Act 9 — Media ingestion (a voice note and a receipt)
+
+The next day Alice records a voice note on her phone and uploads it to the dashboard.
+
+### Voice note
+
+She selects **Voice Note** and records: *"Reminder to myself — I should start using Notion for project tracking instead of the chaotic Google Doc mess. Also, I finally decided I'm going to the Tokyo conference in September."*
+
+```
+POST /ingest/media   content_type=voice_note
+  │
+  ├── Whisper transcription → full text
+  ├── First-person filter → keeps: "I should start using Notion", "I'm going to the Tokyo conference"
+  │
+  ▼
+LLM extract_facts() + relevance scoring
+  ├── "uses Notion for project tracking"    relevance=0.83 → SAVE immediately  (media_voice, conf=0.85)
+  └── "attending Tokyo conference September 2026" relevance=0.79 → SAVE immediately (media_voice, conf=0.85)
+```
+
+Both facts are written directly as `active` — no user confirmation needed for high-relevance extractions.
+
+### Receipt upload
+
+Alice uploads a photo of a grocery receipt. She selects **Receipt** and adds context: *"My weekly shop"*.
+
+```
+POST /ingest/media   content_type=receipt
+  │
+  ├── Vision model → "receipt from Whole Foods, 2026-04-24, items include oat milk,
+  │                   organic spinach, sourdough bread, almond butter, sparkling water"
+  ├── First-person filter → all items relevant (user uploaded their own receipt)
+  │
+  ▼
+LLM extract_facts() + relevance scoring
+  ├── "shops at Whole Foods"                relevance=0.81 → SAVE  (media_image, conf=0.70)
+  ├── "uses oat milk"                       relevance=0.77 → SAVE  (media_image, conf=0.70)
+  ├── "buys organic produce"               relevance=0.72 → PENDING review (0.60–0.75 range)
+  └── "shops weekly"                       relevance=0.64 → PENDING review (0.60–0.75 range)
+```
+
+Alice sees a review modal: two facts are already saved; two are pending confirmation. She approves "buys organic produce" and dismisses "shops weekly" (too inferred). Those decisions are applied immediately via `POST /ingest/media/{id}/confirm`.
+
+---
+
+## Act 10 — Cross-system synthesis (patterns emerge from signals)
+
+A week later, Smritikosh's daily synthesis job (`CrossSystemSynthesizer`) runs at 01:00 UTC. It queries Alice's connector events across calendar, email, and Slack metadata:
+
+```
+Calendar:  3 meetings rescheduled this week, 0 meetings before 9:30am over 30 days
+Email:     No emails sent after 6:30pm for 28 days, avg reply time 4 hours
+Slack:     Message volume spikes Tuesday/Wednesday, drops Friday afternoon
+Recent episodic events include: "mentioned wanting better work-life balance"
+```
+
+The LLM synthesis pass produces:
+
+```
+Inferred patterns:
+  "Maintains strong evening boundary — no work communication after 6:30pm" → conf 0.62 → ACTIVE
+  "Async-first — long reply cadence, no late-night emails"                 → conf 0.58 → ACTIVE
+  "Productive peak: Tuesday and Wednesday mornings"                         → conf 0.51 → PENDING
+```
+
+These facts are stored with `source_type="cross_system"` and appear in the Review page. The "Tuesday/Wednesday peak" goes to pending because its confidence is above 0.40 but below 0.50 — it needs one more corroborating signal before it becomes active.
+
+Alice sees these in the dashboard's Review page tagged with the **Synthesized** badge (teal). She can approve, dismiss, or let the system promote them automatically after 3 independent corroborations.
+
+---
+
 ## What makes this different from RAG or a vector database
 
 | Capability | Plain vector DB | Smritikosh |
@@ -417,6 +546,13 @@ ranking self-calibrates to what is actually useful to each user.
 | Belief inference | No | Yes — higher-order patterns |
 | Provenance/audit | No | Yes — full lineage per event |
 | Multi-tenant isolation | Depends | Yes — user_id at every layer |
+| Passive extraction | No | Yes — SDK middleware, session ingest, `remember()` tool |
+| Source provenance | No | Yes — 13 source types, confidence by source |
+| Quality control | No | Yes — pending gate, contradiction detection, decay rules |
+| Media ingestion | No | Yes — voice, documents, images, meeting recordings |
+| Speaker diarization | No | Yes — voice enrollment + pyannote diarization |
+| Cross-system synthesis | No | Yes — correlates calendar/email/Slack signals into behavioral patterns |
+| Manual memory entry | No | Yes — UI form with instant graph refresh |
 
 Smritikosh is not a vector store with an API wrapper. It is a full memory
 system: encoding, retrieval, consolidation, belief formation, and provenance

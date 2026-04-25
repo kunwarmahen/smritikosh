@@ -28,7 +28,9 @@ cp .env.example .env
 | `client.py` | Thin wrapper around the Smritikosh REST API |
 | `seed.py` | Pre-loads 10 memories for `alice` — run once |
 | `seed_priya.py` | Pre-loads 15 memories for `priya` — run once |
-| `chatbot.py` | The interactive memory-aware chatbot loop |
+| `chatbot.py` | Interactive memory-aware chatbot loop |
+| `passive_extraction_demo.py` | End-to-end passive extraction demo — session ingest, idempotency, streaming windows, manual facts |
+| `middleware_demo.py` | SmritikoshMiddleware demo — transparent LLM wrapper with turn buffering and `remember()` tool; uses a fake client (no API key needed) |
 | `.env.example` | Template for local overrides (copy to `.env`) |
 
 ## Demo personas
@@ -147,14 +149,79 @@ Goodbye!
 | LLM responded | Model answered using the injected context |
 | Exchange stored | The full Q&A was stored as a new memory event for future sessions |
 
+## Passive extraction demos
+
+These scripts use `priya` as their subject. Run them after `seed_priya.py`.
+
+### `passive_extraction_demo.py`
+
+No API key required — the demo posts transcripts directly to the server.
+
+```bash
+python sample/seed_priya.py           # one-time seed
+python sample/passive_extraction_demo.py
+```
+
+Demonstrates:
+- `POST /ingest/session` — passive extraction from a 7-turn conversation
+- Idempotency — re-posting the same `session_id` is a safe no-op
+- Streaming windows — three partial `POST /ingest/session` calls with `partial=True`; each window sends only new turns via `last_turn_index` tracking
+- Manual facts — `store_fact()` four times with `source_type="ui_manual"`, confidence 1.0
+- Verification — `GET /context` confirms all extracted facts appear in retrieval
+
+### `middleware_demo.py`
+
+Uses a fake OpenAI-style client — no real API key required.
+
+```bash
+python sample/middleware_demo.py
+```
+
+Demonstrates:
+- One-line change: `SmritikoshMiddleware(FakeOpenAI(), ...)` instead of `FakeOpenAI()`
+- Turn buffering and windowed partial flush every N turns
+- `remember()` tool auto-injected into every LLM call; intercepted transparently
+- `auto_inject=True` — memory context fetched and prepended before each call
+- Final `close()` flush of remaining turns
+
+Swap `FakeOpenAI()` for `openai.OpenAI()` or `anthropic.Anthropic()` in production.
+
+### Recommended run order
+
+```bash
+# 1. One-time seed
+python sample/seed_priya.py
+
+# 2. Session ingest + manual facts
+python sample/passive_extraction_demo.py
+
+# 3. Middleware + remember() tool (no OpenAI key needed)
+python sample/middleware_demo.py
+
+# 4. Chat with the enriched memory (requires LLM API key)
+export ANTHROPIC_API_KEY=sk-ant-...
+python sample/chatbot.py
+```
+
+---
+
 ## Where to look next
 
 - **Dashboard** (`http://localhost:3000`) — log in as the active user, browse the memory timeline and fact graph
-- **Identity page** — see the Neo4j knowledge graph as a React Flow canvas
-- **Admin panel** — log in as `admin` to trigger consolidation or check system health
+- **Review page** (`/dashboard/review`) — approve or dismiss auto-extracted memories; filter by source type (Distilled, SDK, Tool, etc.)
+- **Identity page** — see the Neo4j knowledge graph as a 3D/2D force-directed canvas; click any fact node to see which memories contributed to it
+- **Voice enrollment** (`/dashboard/settings/voice-enrollment`) — record a 30-second voice sample to enable speaker diarization for meeting recording uploads
+- **Upload media** — the `+` / Upload buttons in the memory timeline let you upload voice notes, documents, images, and meeting recordings directly
+- **Admin panel** — log in as `admin` to trigger consolidation, synthesis, or check system health
 - **Run consolidation** — compresses memories into summaries and extracts more facts:
 
 ```bash
 curl -X POST "http://localhost:8080/admin/consolidate?user_id=alice"
 curl -X POST "http://localhost:8080/admin/consolidate?user_id=priya"
+```
+
+- **Run cross-system synthesis** — infers behavioral patterns from connector signals:
+
+```bash
+curl -X POST "http://localhost:8080/admin/synthesize?user_id=priya"
 ```

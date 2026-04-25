@@ -192,9 +192,9 @@ alembic upgrade head
 
 You should see output ending with something like:
 ```
-INFO  [alembic.runtime.migration] Running upgrade ... -> 0009, multi-app access: app_ids array on app_users; create api_keys table
-INFO  [alembic.runtime.migration] Running upgrade 0009 -> 0010, add belief evidence_event_ids column
-INFO  [alembic.runtime.migration] Running upgrade 0010 -> 0011, hnsw index on events.embedding
+INFO  [alembic.runtime.migration] Running upgrade 0015 -> 0016, add fact_contradictions table
+INFO  [alembic.runtime.migration] Running upgrade 0016 -> 0017, add media_ingests table
+INFO  [alembic.runtime.migration] Running upgrade 0017 -> 0018, add user_voice_profiles table
 ```
 
 ---
