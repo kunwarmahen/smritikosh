@@ -40,6 +40,13 @@ _SessionFactory = async_sessionmaker(
 )
 
 
+# ── Session factory accessor ──────────────────────────────────────────────────
+
+
+def get_async_sessionmaker() -> async_sessionmaker:
+    return _SessionFactory
+
+
 # ── FastAPI dependency ─────────────────────────────────────────────────────────
 
 
