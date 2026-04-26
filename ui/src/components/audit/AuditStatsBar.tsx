@@ -31,12 +31,12 @@ export function AuditStatsBar() {
           .map(([type, count]) => (
             <div
               key={type}
-              className="bg-zinc-800/50 rounded-lg px-3 py-2 border border-zinc-700/50"
+              className="bg-zinc-100 dark:bg-zinc-800/50 rounded-lg px-3 py-2 border border-zinc-200 dark:border-zinc-700/50"
             >
               <p className={`text-xs font-medium truncate ${EVENT_TYPE_COLORS[type] ?? "text-zinc-400"}`}>
                 {EVENT_TYPE_LABELS[type] ?? type}
               </p>
-              <p className="text-lg font-semibold text-zinc-200 mt-0.5">
+              <p className="text-lg font-semibold text-zinc-800 dark:text-zinc-200 mt-0.5">
                 {count.toLocaleString()}
               </p>
             </div>

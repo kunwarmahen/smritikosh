@@ -7,7 +7,7 @@ import type { IdentityDimension, UserBelief } from "@/types";
 
 function ConfidenceBar({ value }: { value: number }) {
   return (
-    <div className="h-0.5 w-full bg-zinc-800 rounded-full overflow-hidden mt-2">
+    <div className="h-0.5 w-full bg-zinc-200 dark:bg-zinc-800 rounded-full overflow-hidden mt-2">
       <div
         className={clsx(
           "h-full rounded-full transition-all",
@@ -21,12 +21,12 @@ function ConfidenceBar({ value }: { value: number }) {
 
 function DimensionCard({ dim }: { dim: IdentityDimension }) {
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-3.5">
+    <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3.5">
       <div className="flex items-start justify-between gap-2 mb-1">
         <p className="section-heading">{dim.category}</p>
         <span className="mono text-zinc-600" title={`${dim.fact_count} facts`}>{dim.fact_count}f</span>
       </div>
-      <p className="text-sm text-zinc-200 font-medium leading-snug">{dim.dominant_value}</p>
+      <p className="text-sm text-zinc-800 dark:text-zinc-200 font-medium leading-snug">{dim.dominant_value}</p>
       <ConfidenceBar value={dim.confidence} />
       <p className="text-[10px] text-zinc-700 mt-1.5">{(dim.confidence * 100).toFixed(0)}% confidence</p>
     </div>
@@ -40,11 +40,11 @@ function BeliefRow({ belief }: { belief: UserBelief }) {
     "text-zinc-600";
 
   return (
-    <div className="flex items-start gap-4 py-3 border-b border-zinc-800/60 last:border-0">
+    <div className="flex items-start gap-4 py-3 border-b border-zinc-200 dark:border-zinc-800/60 last:border-0">
       <div className="flex-1 min-w-0">
-        <p className="text-sm text-zinc-300 leading-relaxed">{belief.statement}</p>
+        <p className="text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed">{belief.statement}</p>
         <div className="flex items-center gap-2 mt-1.5">
-          <span className="badge bg-zinc-800 text-zinc-500 border border-zinc-700/50">
+          <span className="badge bg-zinc-100 dark:bg-zinc-800 text-zinc-500 border border-zinc-200 dark:border-zinc-700/50">
             {belief.category}
           </span>
           <span className="text-[10px] text-zinc-600">{belief.evidence_count} evidence</span>
@@ -97,7 +97,7 @@ export function IdentityProfilePanel() {
           <Sparkles className="w-3.5 h-3.5 text-violet-400" />
           <span className="section-heading text-violet-500">AI Summary</span>
         </div>
-        <p className="text-sm text-zinc-300 leading-relaxed">{data.summary}</p>
+        <p className="text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed">{data.summary}</p>
         <p className="mono text-zinc-700 mt-3">
           {data.total_facts} facts · {new Date(data.computed_at).toLocaleDateString()}
         </p>

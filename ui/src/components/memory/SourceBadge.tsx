@@ -24,7 +24,7 @@ interface SourceConfig {
 }
 
 const SOURCE_CONFIG: Record<string, SourceConfig> = {
-  api_explicit:         { label: "API",        icon: Code2,      className: "bg-zinc-800 text-zinc-400 border-zinc-700/60" },
+  api_explicit:         { label: "API",        icon: Code2,      className: "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 border-zinc-200 dark:border-zinc-700/60" },
   ui_manual:            { label: "Manual",     icon: PenLine,    className: "bg-blue-500/10 text-blue-400 border-blue-500/20" },
   passive_distillation: { label: "Distilled",  icon: Sparkles,   className: "bg-amber-500/10 text-amber-400 border-amber-500/20" },
   passive_streaming:    { label: "Streaming",  icon: Activity,   className: "bg-orange-500/10 text-orange-400 border-orange-500/20" },

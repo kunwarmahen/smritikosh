@@ -51,9 +51,9 @@ function NewKeyModal({ onClose }: { onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-zinc-950/80 backdrop-blur-sm" onClick={!createdKey ? onClose : undefined} />
-      <div className="relative z-10 w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800">
-          <h2 className="text-sm font-semibold text-zinc-100">
+      <div className="relative z-10 w-full max-w-md bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-2xl">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-200 dark:border-zinc-800">
+          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
             {createdKey ? "Key created" : "New API key"}
           </h2>
         </div>
@@ -68,9 +68,9 @@ function NewKeyModal({ onClose }: { onClose: () => void }) {
               </p>
             </div>
 
-            <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-3 flex items-center gap-2">
+            <div className="bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-lg p-3 flex items-center gap-2">
               <code className="flex-1 text-xs text-violet-300 font-mono break-all">{createdKey}</code>
-              <button onClick={copyKey} className="flex-shrink-0 text-zinc-500 hover:text-zinc-300 transition-colors">
+              <button onClick={copyKey} className="flex-shrink-0 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 transition-colors">
                 {copied ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
               </button>
             </div>
@@ -104,7 +104,7 @@ function NewKeyModal({ onClose }: { onClose: () => void }) {
                       "px-2.5 py-1 rounded-md text-xs font-mono border transition-colors",
                       selectedAppIds.includes(id)
                         ? "bg-violet-500/15 border-violet-500/40 text-violet-300"
-                        : "bg-zinc-800 border-zinc-700 text-zinc-500 hover:text-zinc-300",
+                        : "bg-zinc-100 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300",
                     )}
                   >
                     {id}
@@ -143,13 +143,13 @@ function KeyRow({ apiKey }: { apiKey: ApiKeyItem }) {
   const [confirm, setConfirm] = useState(false);
 
   return (
-    <div className="flex items-center justify-between py-3 border-b border-zinc-800/60 last:border-0">
+    <div className="flex items-center justify-between py-3 border-b border-zinc-200 dark:border-zinc-800/60 last:border-0">
       <div className="flex items-center gap-3 min-w-0">
-        <div className="w-7 h-7 rounded-lg bg-zinc-800 flex items-center justify-center flex-shrink-0">
+        <div className="w-7 h-7 rounded-lg bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center flex-shrink-0">
           <Key className="w-3.5 h-3.5 text-zinc-500" />
         </div>
         <div className="min-w-0">
-          <p className="text-sm text-zinc-200 truncate">{apiKey.name}</p>
+          <p className="text-sm text-zinc-800 dark:text-zinc-200 truncate">{apiKey.name}</p>
           <div className="flex items-center gap-2 mt-0.5">
             <code className="text-xs text-zinc-600 font-mono">
               sk-smriti-{apiKey.key_prefix}…
@@ -250,7 +250,7 @@ export default function ApiKeysPage() {
         <div className="card">
           <p className="section-heading mb-3">Using your key</p>
           <p className="text-xs text-zinc-500 mb-2">Pass the key as a Bearer token in the Authorization header:</p>
-          <pre className="bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2.5 text-xs text-violet-300 font-mono overflow-x-auto">
+          <pre className="bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-lg px-3 py-2.5 text-xs text-violet-600 dark:text-violet-300 font-mono overflow-x-auto">
 {`Authorization: Bearer sk-smriti-your-key-here`}
           </pre>
           <p className="text-xs text-zinc-600 mt-3">

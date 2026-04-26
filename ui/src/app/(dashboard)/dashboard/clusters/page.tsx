@@ -40,7 +40,7 @@ export default function ClustersPage() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-base font-semibold text-zinc-100 tracking-tight">Clusters</h1>
+        <h1 className="text-base font-semibold text-zinc-900 dark:text-zinc-100 tracking-tight">Clusters</h1>
         <p className="text-sm text-zinc-500 mt-1">
           Memories grouped by topic via semantic clustering.
         </p>
@@ -84,11 +84,11 @@ export default function ClustersPage() {
                   <Tag className={clsx("w-3.5 h-3.5", isUnclustered ? "text-zinc-600" : "text-violet-400")} />
                   <span className={clsx(
                     "text-sm font-medium",
-                    isUnclustered ? "text-zinc-500" : "text-zinc-200",
+                    isUnclustered ? "text-zinc-500" : "text-zinc-800 dark:text-zinc-200",
                   )}>
                     {label}
                   </span>
-                  <span className="badge bg-zinc-800 text-zinc-500 border border-zinc-700/50 text-xs">
+                  <span className="badge bg-zinc-100 dark:bg-zinc-800 text-zinc-500 border border-zinc-200 dark:border-zinc-700/50 text-xs">
                     {events.length}
                   </span>
                 </div>

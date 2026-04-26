@@ -307,6 +307,8 @@ npm run dev
 
 Open **http://localhost:3000** and sign in with `admin` / `changeme123`.
 
+The shell header includes a **theme toggle** (sun/moon icon) — click it to switch between light and dark mode; your preference is saved in the browser. On a small screen, tap the **hamburger menu** in the top-left to open the navigation drawer.
+
 ---
 
 ## Step 10 — Create a regular user for testing

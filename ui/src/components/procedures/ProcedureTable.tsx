@@ -31,7 +31,7 @@ function ProcedureRow({ proc }: { proc: Procedure }) {
             <span className="badge bg-violet-500/10 text-violet-400 border border-violet-500/20 text-xs">
               {proc.category || "general"}
             </span>
-            <span className="badge bg-zinc-800 text-zinc-500 border border-zinc-700/50 text-xs">
+            <span className="badge bg-zinc-100 dark:bg-zinc-800 text-zinc-500 border border-zinc-200 dark:border-zinc-700/50 text-xs">
               priority {proc.priority}
             </span>
             <span className="text-xs text-zinc-600">{proc.hit_count} hit{proc.hit_count !== 1 ? "s" : ""}</span>
@@ -39,7 +39,7 @@ function ProcedureRow({ proc }: { proc: Procedure }) {
           <p className="text-xs text-zinc-500 mb-1">
             <span className="font-medium text-zinc-400">Trigger:</span> {proc.trigger}
           </p>
-          <p className="text-sm text-zinc-300 leading-relaxed">{proc.instruction}</p>
+          <p className="text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed">{proc.instruction}</p>
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
           <button

@@ -93,7 +93,7 @@ function LoginForm() {
 
 export default function LoginPage() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-zinc-950 px-4">
+    <div className="min-h-screen flex items-center justify-center bg-zinc-50 dark:bg-zinc-950 px-4">
       {/* Ambient glow */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2
@@ -111,12 +111,12 @@ export default function LoginPage() {
                           bg-violet-600 rounded-2xl mb-5 shadow-lg shadow-violet-950">
             <Brain className="w-6 h-6 text-white" />
           </div>
-          <h1 className="text-xl font-semibold text-zinc-100 tracking-tight">Smritikosh</h1>
+          <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100 tracking-tight">Smritikosh</h1>
           <p className="text-zinc-600 text-sm mt-1">Memory Dashboard</p>
         </div>
 
         {/* Form card */}
-        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
+        <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-6">
           <Suspense fallback={
             <div className="flex justify-center py-10">
               <Loader2 className="w-5 h-5 animate-spin text-zinc-600" />

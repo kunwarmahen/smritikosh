@@ -58,7 +58,7 @@ function AuditRow({ event }: { event: AuditEvent }) {
             className={clsx(
               "badge border text-xs",
               EVENT_TYPE_COLORS[event.event_type] ?? "text-zinc-400",
-              "bg-zinc-800/50 border-zinc-700/50",
+              "bg-zinc-100 dark:bg-zinc-800/50 border-zinc-200 dark:border-zinc-700/50",
             )}
           >
             {EVENT_TYPE_LABELS[event.event_type] ?? event.event_type}
@@ -74,7 +74,7 @@ function AuditRow({ event }: { event: AuditEvent }) {
           {payloadEntries.length > 0 && (
             <button
               onClick={() => setOpen((v) => !v)}
-              className="text-zinc-600 hover:text-zinc-300 transition-colors"
+              className="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 transition-colors"
             >
               {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
             </button>
@@ -83,7 +83,7 @@ function AuditRow({ event }: { event: AuditEvent }) {
       </div>
 
       {open && payloadEntries.length > 0 && (
-        <div className="mt-3 pt-3 border-t border-zinc-800 space-y-1">
+        <div className="mt-3 pt-3 border-t border-zinc-200 dark:border-zinc-800 space-y-1">
           {payloadEntries.map(([k, v]) => (
             <PayloadRow key={k} label={k} value={v} />
           ))}

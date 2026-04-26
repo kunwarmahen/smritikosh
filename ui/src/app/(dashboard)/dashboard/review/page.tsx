@@ -56,7 +56,7 @@ function ReviewCard({ event, onApproved }: { event: MemoryEvent; onApproved: () 
   return (
     <div
       className={clsx(
-        "group bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3.5",
+        "group bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl px-4 py-3.5",
         "border-l-2 border-l-amber-500/50 transition-all duration-200",
         approved && "opacity-50 scale-[0.99]",
       )}
@@ -66,7 +66,7 @@ function ReviewCard({ event, onApproved }: { event: MemoryEvent; onApproved: () 
         <div className="flex items-center gap-2 flex-wrap">
           {event.source_type && <SourceBadge sourceType={event.source_type} />}
           {event.consolidated && (
-            <span className="badge bg-zinc-800 text-zinc-500 border border-zinc-700/60 text-xs">
+            <span className="badge bg-zinc-100 dark:bg-zinc-800 text-zinc-500 border border-zinc-200 dark:border-zinc-700/60 text-xs">
               consolidated
             </span>
           )}
@@ -75,11 +75,11 @@ function ReviewCard({ event, onApproved }: { event: MemoryEvent; onApproved: () 
       </div>
 
       {/* Text */}
-      <p className="text-sm text-zinc-300 leading-relaxed">{event.raw_text}</p>
+      <p className="text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed">{event.raw_text}</p>
 
       {/* Summary */}
       {event.summary && event.consolidated && (
-        <div className="mt-3 pt-3 border-t border-zinc-800">
+        <div className="mt-3 pt-3 border-t border-zinc-200 dark:border-zinc-800">
           <p className="text-xs text-zinc-600 font-medium uppercase tracking-wide mb-1">Summary</p>
           <p className="text-xs text-zinc-500 leading-relaxed">{event.summary}</p>
         </div>
@@ -87,7 +87,7 @@ function ReviewCard({ event, onApproved }: { event: MemoryEvent; onApproved: () 
 
       {/* Actions */}
       <div
-        className="flex items-center justify-between mt-3 pt-2.5 border-t border-zinc-800/60
+        className="flex items-center justify-between mt-3 pt-2.5 border-t border-zinc-200/80 dark:border-zinc-800/60
                    opacity-0 group-hover:opacity-100 transition-opacity duration-150"
       >
         <button
@@ -160,7 +160,7 @@ export default function ReviewPage() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-base font-semibold text-zinc-100 tracking-tight">Review</h1>
+        <h1 className="text-base font-semibold text-zinc-900 dark:text-zinc-100 tracking-tight">Review</h1>
         <p className="text-sm text-zinc-500 mt-1">
           Auto-extracted memories waiting for your review. Approve or remove them.
         </p>
@@ -182,8 +182,8 @@ export default function ReviewPage() {
                 className={clsx(
                   "text-xs px-2.5 py-1 rounded-md border transition-colors",
                   sourceFilter === opt.value
-                    ? "bg-violet-500/15 text-violet-300 border-violet-500/30"
-                    : "bg-zinc-800/60 text-zinc-500 border-zinc-700/50 hover:text-zinc-300",
+                    ? "bg-violet-500/15 text-violet-700 dark:text-violet-300 border-violet-500/30"
+                    : "bg-zinc-100 dark:bg-zinc-800/60 text-zinc-500 border-zinc-200 dark:border-zinc-700/50 hover:text-zinc-700 dark:hover:text-zinc-300",
                 )}
               >
                 {opt.label}

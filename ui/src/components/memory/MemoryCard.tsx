@@ -59,9 +59,9 @@ export function MemoryCard({ event, onViewGraph }: Props) {
   return (
     <div
       className={clsx(
-        "group relative bg-zinc-900 border border-zinc-800 rounded-xl",
+        "group relative bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl",
         "border-l-2 pl-4 pr-4 py-3.5",
-        "hover:border-zinc-700 transition-colors duration-100",
+        "hover:border-zinc-300 dark:hover:border-zinc-700 transition-colors duration-100",
         IMPORTANCE_BORDER[level],
       )}
     >
@@ -76,7 +76,7 @@ export function MemoryCard({ event, onViewGraph }: Props) {
             {(event.importance_score * 100).toFixed(0)}%
           </span>
           {event.consolidated && (
-            <span className="badge bg-zinc-800 text-zinc-500 border border-zinc-700/60">
+            <span className="badge bg-zinc-100 dark:bg-zinc-800 text-zinc-500 border border-zinc-200 dark:border-zinc-700/60">
               <GitMerge className="w-3 h-3" />
               consolidated
             </span>
@@ -104,7 +104,7 @@ export function MemoryCard({ event, onViewGraph }: Props) {
       </div>
 
       {/* Text body */}
-      <p className="text-sm text-zinc-300 leading-relaxed">{displayText}</p>
+      <p className="text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed">{displayText}</p>
       {isLong && (
         <button
           onClick={() => setExpanded(!expanded)}
@@ -116,7 +116,7 @@ export function MemoryCard({ event, onViewGraph }: Props) {
 
       {/* Summary */}
       {event.summary && event.consolidated && (
-        <div className="mt-3 pt-3 border-t border-zinc-800">
+        <div className="mt-3 pt-3 border-t border-zinc-200 dark:border-zinc-800">
           <p className="section-heading mb-1">Summary</p>
           <p className="text-xs text-zinc-500 leading-relaxed">{event.summary}</p>
         </div>
@@ -124,7 +124,7 @@ export function MemoryCard({ event, onViewGraph }: Props) {
 
       {/* Actions — visible on hover */}
       <div
-        className="flex items-center justify-between mt-3 pt-2.5 border-t border-zinc-800/60
+        className="flex items-center justify-between mt-3 pt-2.5 border-t border-zinc-200/80 dark:border-zinc-800/60
                    opacity-0 group-hover:opacity-100 transition-opacity duration-150"
       >
         <div className="flex items-center gap-0.5">
@@ -137,7 +137,7 @@ export function MemoryCard({ event, onViewGraph }: Props) {
                 "w-6 h-6 flex items-center justify-center rounded transition-colors",
                 feedbackGiven === type
                   ? type === "positive" ? "text-emerald-400" : "text-rose-400"
-                  : "text-zinc-700 hover:text-zinc-400 hover:bg-zinc-800",
+                  : "text-zinc-400 dark:text-zinc-700 hover:text-zinc-600 dark:hover:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800",
               )}
               title={type}
             >

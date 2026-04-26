@@ -14,7 +14,7 @@ function StatusChip({ status }: { status: Status }) {
       status === "ok"             && "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
       status === "degraded"       && "bg-amber-500/10   text-amber-400   border-amber-500/20",
       status === "error"          && "bg-rose-500/10    text-rose-400    border-rose-500/20",
-      status === "not_configured" && "bg-zinc-500/10    text-zinc-500    border-zinc-700/40",
+      status === "not_configured" && "bg-zinc-500/10    text-zinc-500    border-zinc-300 dark:border-zinc-700/40",
     )}>
       {status === "ok"             && <CheckCircle2  className="w-3 h-3" />}
       {status === "degraded"       && <AlertTriangle className="w-3 h-3" />}
@@ -27,7 +27,7 @@ function StatusChip({ status }: { status: Status }) {
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between py-3 border-b border-zinc-800/60 last:border-0">
+    <div className="flex items-center justify-between py-3 border-b border-zinc-200 dark:border-zinc-800/60 last:border-0">
       <span className="text-sm text-zinc-500">{label}</span>
       {children}
     </div>

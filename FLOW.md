@@ -331,7 +331,10 @@ cross-contamination.
 ## Act 6 — What the UI shows
 
 After a few sessions and a consolidation run, here is what each UI page
-reflects:
+reflects. The header includes a **theme toggle** (sun/moon icon) that
+switches between light and dark mode; the preference is saved to localStorage
+so it persists across page loads. On mobile a **hamburger button** opens the
+sidebar as a drawer overlay.
 
 ### Memories page
 

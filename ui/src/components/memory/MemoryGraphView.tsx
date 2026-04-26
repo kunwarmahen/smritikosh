@@ -49,7 +49,7 @@ interface MemGraphLink {
 // ── Legend ────────────────────────────────────────────────────────────────────
 function Legend() {
   return (
-    <div className="absolute bottom-3 left-3 z-10 bg-zinc-900/90 border border-zinc-700/50
+    <div className="absolute bottom-3 left-3 z-10 bg-white/90 dark:bg-zinc-900/90 border border-zinc-200/80 dark:border-zinc-700/50
                     rounded-xl p-3 backdrop-blur-sm">
       <p className="text-[10px] font-semibold text-zinc-500 mb-2 uppercase tracking-widest">Relations</p>
       <div className="space-y-1.5">

@@ -47,11 +47,11 @@ export function NewProcedureDrawer({ open, onClose }: Props) {
       />
 
       {/* Panel */}
-      <div className="relative z-10 w-full sm:max-w-lg bg-zinc-900 border border-zinc-700
+      <div className="relative z-10 w-full sm:max-w-lg bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700
                       rounded-t-2xl sm:rounded-2xl shadow-2xl p-6">
         <div className="flex items-center justify-between mb-5">
-          <h2 className="text-base font-semibold text-zinc-100">New Procedure</h2>
-          <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300">
+          <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">New Procedure</h2>
+          <button onClick={onClose} className="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300">
             <X className="w-4 h-4" />
           </button>
         </div>

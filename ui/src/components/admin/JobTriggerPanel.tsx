@@ -24,9 +24,9 @@ function JobRow({
   onRun: () => void;
 }) {
   return (
-    <div className="flex items-center gap-4 py-3.5 border-b border-zinc-800/60 last:border-0">
+    <div className="flex items-center gap-4 py-3.5 border-b border-zinc-200 dark:border-zinc-800/60 last:border-0">
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-zinc-200">{title}</p>
+        <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">{title}</p>
         <p className="text-xs text-zinc-600 mt-0.5">{description}</p>
       </div>
       <div className="flex items-center gap-2.5 flex-shrink-0">
@@ -46,7 +46,7 @@ function JobRow({
           className={clsx(
             "w-7 h-7 flex items-center justify-center rounded-lg transition-colors",
             status === "running"
-              ? "bg-zinc-800 text-zinc-600 cursor-not-allowed"
+              ? "bg-zinc-200 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-600 cursor-not-allowed"
               : "bg-violet-600 hover:bg-violet-500 text-white",
           )}
           title={`Run ${title}`}

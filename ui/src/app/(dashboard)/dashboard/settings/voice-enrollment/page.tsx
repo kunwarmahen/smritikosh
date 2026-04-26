@@ -150,7 +150,7 @@ export default function VoiceEnrollmentPage() {
   return (
     <div className="max-w-2xl">
       <div className="mb-8">
-        <h1 className="text-2xl font-semibold text-zinc-100 mb-1">Voice Enrollment</h1>
+        <h1 className="text-2xl font-semibold text-zinc-900 dark:text-zinc-100 mb-1">Voice Enrollment</h1>
         <p className="text-sm text-zinc-400">
           Record a 30-second voice sample to enable speaker identification in meeting recordings.
           Your voice profile is used to find your speech segments and extract only what you said.
@@ -158,9 +158,9 @@ export default function VoiceEnrollmentPage() {
       </div>
 
       {/* Current enrollment status */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 mb-6">
+      <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5 mb-6">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-medium text-zinc-300">Enrollment Status</h2>
+          <h2 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Enrollment Status</h2>
           {enrollmentStatus.isLoading && (
             <Loader2 className="h-4 w-4 text-zinc-500 animate-spin" />
           )}
@@ -172,7 +172,7 @@ export default function VoiceEnrollmentPage() {
               <>
                 <CheckCircle2 className="h-5 w-5 text-emerald-400 flex-shrink-0" />
                 <div>
-                  <p className="text-sm font-medium text-zinc-100">
+                  <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
                     {hasEmbedding ? 'Enrolled with speaker embedding' : 'Enrolled (no embedding)'}
                   </p>
                   <p className="text-xs text-zinc-500 mt-0.5">
@@ -184,7 +184,7 @@ export default function VoiceEnrollmentPage() {
                 <button
                   onClick={handleDelete}
                   disabled={deleteEnrollment.isPending}
-                  className="ml-auto text-zinc-500 hover:text-rose-400 transition-colors p-1.5 rounded-lg hover:bg-rose-950"
+                  className="ml-auto text-zinc-500 hover:text-rose-400 transition-colors p-1.5 rounded-lg hover:bg-rose-100 dark:hover:bg-rose-950"
                   title="Remove enrollment"
                 >
                   {deleteEnrollment.isPending ? (
@@ -205,13 +205,13 @@ export default function VoiceEnrollmentPage() {
       </div>
 
       {/* Recorder */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
-        <h2 className="text-sm font-medium text-zinc-300 mb-4">
+      <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl p-5">
+        <h2 className="text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-4">
           {isEnrolled ? 'Re-enroll' : 'Record Voice Sample'}
         </h2>
 
         {/* Waveform visualiser */}
-        <div className="flex items-end justify-center gap-0.5 h-16 mb-5 bg-zinc-950 rounded-lg px-4 py-2">
+        <div className="flex items-end justify-center gap-0.5 h-16 mb-5 bg-zinc-100 dark:bg-zinc-950 rounded-lg px-4 py-2">
           {waveformData.map((h, i) => (
             <div
               key={i}
@@ -255,7 +255,7 @@ export default function VoiceEnrollmentPage() {
             <div className="flex items-center gap-3">
               <button
                 onClick={handleReRecord}
-                className="flex items-center gap-2 px-4 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl font-medium text-sm transition-colors"
+                className="flex items-center gap-2 px-4 py-2.5 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 rounded-xl font-medium text-sm transition-colors"
               >
                 <RefreshCw className="h-4 w-4" />
                 Re-record
@@ -285,7 +285,7 @@ export default function VoiceEnrollmentPage() {
               </div>
               <button
                 onClick={handleReRecord}
-                className="flex items-center gap-2 px-4 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl font-medium text-sm transition-colors"
+                className="flex items-center gap-2 px-4 py-2.5 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 rounded-xl font-medium text-sm transition-colors"
               >
                 <RefreshCw className="h-4 w-4" />
                 Re-record
@@ -301,7 +301,7 @@ export default function VoiceEnrollmentPage() {
               </div>
               <button
                 onClick={handleReRecord}
-                className="flex items-center gap-2 px-4 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl font-medium text-sm transition-colors"
+                className="flex items-center gap-2 px-4 py-2.5 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 rounded-xl font-medium text-sm transition-colors"
               >
                 <RefreshCw className="h-4 w-4" />
                 Try again
@@ -316,7 +316,7 @@ export default function VoiceEnrollmentPage() {
       </div>
 
       {/* How it works */}
-      <div className="mt-6 bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-5 space-y-2">
+      <div className="mt-6 bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800/50 rounded-xl p-5 space-y-2">
         <h3 className="text-xs font-medium text-zinc-500 uppercase tracking-widest mb-3">How it works</h3>
         <div className="flex gap-3 text-sm text-zinc-400">
           <span className="text-violet-400 font-mono text-xs mt-0.5">1</span>

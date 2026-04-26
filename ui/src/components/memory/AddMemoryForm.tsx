@@ -68,22 +68,22 @@ export function AddMemoryForm({ onClose }: Props) {
       className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-md shadow-2xl animate-fade-in">
+      <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl w-full max-w-md shadow-2xl animate-fade-in">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-200 dark:border-zinc-800">
           <div className="flex items-center gap-2.5">
             <div className="w-6 h-6 bg-blue-500/15 rounded-md flex items-center justify-center">
               <PenLine className="w-3.5 h-3.5 text-blue-400" />
             </div>
             <div>
-              <h2 className="text-sm font-semibold text-zinc-100">Add a memory</h2>
+              <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Add a memory</h2>
               <p className="text-xs text-zinc-500">Stored as a verified fact</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="w-7 h-7 flex items-center justify-center rounded text-zinc-600
-                       hover:text-zinc-300 hover:bg-zinc-800 transition-colors"
+            className="w-7 h-7 flex items-center justify-center rounded text-zinc-500
+                       hover:text-zinc-700 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
           >
             <X className="w-4 h-4" />
           </button>

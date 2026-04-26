@@ -40,7 +40,7 @@ export default function MemoryGraphPage({
           Back
         </button>
         <div className="min-w-0">
-          <h1 className="text-base font-semibold text-zinc-100 tracking-tight flex items-center gap-2">
+          <h1 className="text-base font-semibold text-zinc-900 dark:text-zinc-100 tracking-tight flex items-center gap-2">
             <Network className="w-5 h-5 text-violet-400 flex-shrink-0" />
             Memory Graph
           </h1>
@@ -58,7 +58,7 @@ export default function MemoryGraphPage({
               </span>
             )}
             {event.consolidated && (
-              <span className="badge bg-slate-700/50 text-zinc-400 border border-slate-600/50 text-xs">
+              <span className="badge bg-slate-100 dark:bg-slate-700/50 text-zinc-500 dark:text-zinc-400 border border-slate-200 dark:border-slate-600/50 text-xs">
                 Consolidated
               </span>
             )}
@@ -71,9 +71,9 @@ export default function MemoryGraphPage({
               {formatDistanceToNow(new Date(event.created_at), { addSuffix: true })}
             </span>
           </div>
-          <p className="text-sm text-zinc-300 leading-relaxed">{event.raw_text}</p>
+          <p className="text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed">{event.raw_text}</p>
           {event.summary && (
-            <div className="mt-3 pt-3 border-t border-zinc-800">
+            <div className="mt-3 pt-3 border-t border-zinc-200 dark:border-zinc-800">
               <p className="text-xs text-zinc-500 mb-1 font-medium">Summary</p>
               <p className="text-xs text-zinc-400 leading-relaxed">{event.summary}</p>
             </div>
@@ -95,7 +95,7 @@ export default function MemoryGraphPage({
             {auditEvents.map((evt) => (
               <div key={evt.id} className="card py-2.5 px-4 flex items-center gap-3">
                 <span className={clsx(
-                  "badge border text-xs bg-zinc-800/50 border-zinc-700/50",
+                  "badge border text-xs bg-zinc-100 dark:bg-zinc-800/50 border-zinc-200 dark:border-zinc-700/50",
                   EVENT_TYPE_COLORS[evt.event_type] ?? "text-zinc-400",
                 )}>
                   {EVENT_TYPE_LABELS[evt.event_type] ?? evt.event_type}

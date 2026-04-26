@@ -124,16 +124,16 @@ export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
   if (step === 'upload') {
     return (
       <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-xl shadow-2xl">
+        <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl w-full max-w-xl shadow-2xl">
           {/* Header */}
-          <div className="border-b border-zinc-800 p-5 flex items-center justify-between">
+          <div className="border-b border-zinc-200 dark:border-zinc-800 p-5 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <Upload className="h-5 w-5 text-violet-400" />
-              <h2 className="text-lg font-semibold text-zinc-100">Upload Media</h2>
+              <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Upload Media</h2>
             </div>
             <button
               onClick={onClose}
-              className="text-zinc-500 hover:text-zinc-300 transition-colors"
+              className="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 transition-colors"
             >
               <X className="h-5 w-5" />
             </button>
@@ -146,11 +146,11 @@ export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
-              className="border-2 border-dashed border-zinc-700 rounded-lg p-8 text-center transition-colors cursor-pointer hover:border-zinc-600"
+              className="border-2 border-dashed border-zinc-300 dark:border-zinc-700 rounded-lg p-8 text-center transition-colors cursor-pointer hover:border-zinc-400 dark:hover:border-zinc-600"
               onClick={() => fileInputRef.current?.click()}
             >
               <FileUp className="h-12 w-12 text-zinc-600 mx-auto mb-3" />
-              <p className="text-sm font-medium text-zinc-300 mb-1">
+              <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">
                 {selectedFile ? selectedFile.name : 'Drop file or click to browse'}
               </p>
               <p className="text-xs text-zinc-500">
@@ -198,7 +198,7 @@ export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
                     className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                       mediaCategory === value
                         ? 'bg-violet-600 text-white'
-                        : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+                        : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700'
                     }`}
                   >
                     {label}
@@ -212,7 +212,7 @@ export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
               <div className={`rounded-lg px-4 py-3 text-xs ${
                 enrollmentStatus.data?.has_embedding
                   ? 'bg-emerald-950/40 border border-emerald-800/50 text-emerald-300'
-                  : 'bg-zinc-800 border border-zinc-700 text-zinc-400'
+                  : 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400'
               }`}>
                 {enrollmentStatus.data?.has_embedding ? (
                   <>
@@ -257,8 +257,8 @@ export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
                       onClick={() => setImageSubtype(value)}
                       className={`flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm transition-colors text-left ${
                         imageSubtype === value
-                          ? 'bg-violet-600/20 border border-violet-500 text-zinc-100'
-                          : 'bg-zinc-800 border border-transparent text-zinc-400 hover:bg-zinc-700'
+                          ? 'bg-violet-600/20 border border-violet-500 text-zinc-900 dark:text-zinc-100'
+                          : 'bg-zinc-100 dark:bg-zinc-800 border border-transparent text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700'
                       }`}
                     >
                       <span className="font-medium">{label}</span>
@@ -282,7 +282,7 @@ export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
           </div>
 
           {/* Footer */}
-          <div className="border-t border-zinc-800 p-4 flex justify-end gap-3">
+          <div className="border-t border-zinc-200 dark:border-zinc-800 p-4 flex justify-end gap-3">
             <button
               onClick={onClose}
               className="btn-secondary"
@@ -309,7 +309,7 @@ export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
           </div>
 
           {uploadMedia.isError && (
-            <div className="bg-rose-950 border-t border-rose-800 px-5 py-3 text-sm text-rose-300">
+            <div className="bg-rose-50 dark:bg-rose-950 border-t border-rose-200 dark:border-rose-800 px-5 py-3 text-sm text-rose-600 dark:text-rose-300">
               {uploadMedia.error?.message || 'Upload failed'}
             </div>
           )}
@@ -322,9 +322,9 @@ export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
   if (step === 'processing') {
     return (
       <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-md shadow-2xl p-8 text-center">
+        <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl w-full max-w-md shadow-2xl p-8 text-center">
           <Loader2 className="h-12 w-12 text-violet-400 mx-auto mb-4 animate-spin" />
-          <h3 className="text-lg font-semibold text-zinc-100 mb-2">Processing…</h3>
+          <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 mb-2">Processing…</h3>
           <p className="text-sm text-zinc-400">
             {mediaCategory === 'voice_note'
               ? 'Transcribing'
@@ -344,13 +344,13 @@ export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
   if (step === 'review' && mediaStatus.data) {
     return (
       <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-lg shadow-2xl">
+        <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl w-full max-w-lg shadow-2xl">
           {/* Header */}
-          <div className="border-b border-zinc-800 p-5 flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-zinc-100">Review Facts</h2>
+          <div className="border-b border-zinc-200 dark:border-zinc-800 p-5 flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">Review Facts</h2>
             <button
               onClick={onClose}
-              className="text-zinc-500 hover:text-zinc-300"
+              className="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
             >
               <X className="h-5 w-5" />
             </button>
@@ -358,7 +358,7 @@ export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
 
           {/* Body */}
           <div className="p-5 space-y-4">
-            <p className="text-sm text-zinc-300">
+            <p className="text-sm text-zinc-700 dark:text-zinc-300">
               Found {mediaStatus.data.facts_pending_review} thing
               {mediaStatus.data.facts_pending_review !== 1 ? 's' : ''} that might be worth remembering:
             </p>
@@ -367,7 +367,7 @@ export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
               {mediaStatus.data.pending_facts.map((fact, idx) => (
                 <label
                   key={idx}
-                  className="flex items-start gap-3 p-3 rounded-lg bg-zinc-800 hover:bg-zinc-700 cursor-pointer transition-colors group"
+                  className="flex items-start gap-3 p-3 rounded-lg bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 cursor-pointer transition-colors group"
                 >
                   <input
                     type="checkbox"
@@ -384,11 +384,11 @@ export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
                     className="mt-0.5"
                   />
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-zinc-100 break-words">
+                    <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100 break-words">
                       {fact.content}
                     </p>
                     <div className="flex gap-2 mt-1 flex-wrap">
-                      <span className="text-xs bg-zinc-700 text-zinc-300 px-2 py-0.5 rounded">
+                      <span className="text-xs bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300 px-2 py-0.5 rounded">
                         {fact.category}
                       </span>
                       <span className="text-xs text-zinc-400">
@@ -402,7 +402,7 @@ export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
           </div>
 
           {/* Footer */}
-          <div className="border-t border-zinc-800 p-4 flex justify-end gap-3">
+          <div className="border-t border-zinc-200 dark:border-zinc-800 p-4 flex justify-end gap-3">
             <button
               onClick={() => {
                 setSelectedFactIndices(new Set());
@@ -439,9 +439,9 @@ export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
   if (step === 'success') {
     return (
       <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-md shadow-2xl p-8 text-center">
+        <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl w-full max-w-md shadow-2xl p-8 text-center">
           <CheckCircle2 className="h-12 w-12 text-emerald-400 mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-zinc-100 mb-2">Memories Saved!</h3>
+          <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 mb-2">Memories Saved!</h3>
           <p className="text-sm text-zinc-400 mb-6">
             Saved {savedCount} fact{savedCount !== 1 ? 's' : ''}
           </p>
@@ -460,9 +460,9 @@ export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
   if (step === 'nothing_found') {
     return (
       <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-md shadow-2xl p-8 text-center">
+        <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl w-full max-w-md shadow-2xl p-8 text-center">
           <AlertCircle className="h-12 w-12 text-amber-400 mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-zinc-100 mb-2">Nothing Found</h3>
+          <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 mb-2">Nothing Found</h3>
           <p className="text-sm text-zinc-400 mb-6">
             No extractable content was found in this file. Try adding a context note to help guide the analysis.
           </p>
@@ -481,9 +481,9 @@ export function UploadMediaForm({ onClose }: UploadMediaFormProps) {
   if (step === 'error' && mediaStatus.data?.message) {
     return (
       <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-md shadow-2xl p-8 text-center">
+        <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl w-full max-w-md shadow-2xl p-8 text-center">
           <AlertCircle className="h-12 w-12 text-rose-400 mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-zinc-100 mb-2">Processing Error</h3>
+          <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 mb-2">Processing Error</h3>
           <p className="text-sm text-zinc-400 mb-6">
             {mediaStatus.data.message}
           </p>

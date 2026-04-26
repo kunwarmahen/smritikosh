@@ -1132,6 +1132,7 @@ smritikosh/
 │       │                    #   GET /admin/embedding-health, POST /admin/re-embed
 │       │                    #   GET /admin/users, GET /admin/users/{username},
 │       │                    #   PATCH /admin/users/{username}
+│       ├── batch.py         # POST /batch (array of encode operations → ordered results)
 │       ├── ingest.py        # POST /ingest/{push,file,slack/events,email/sync,calendar}
 │       ├── session_ingest.py # POST /ingest/session, POST /ingest/transcript
 │       ├── facts.py         # GET /facts/{user_id}, PATCH /facts/.../status,
@@ -1211,7 +1212,7 @@ ui/                          # Next.js 16 dashboard (App Router)
 ├── auth.ts                  # NextAuth v5 config (CredentialsProvider → /auth/token)
 ├── middleware.ts             # Route protection: auth → /dashboard, admin → /admin
 ├── next.config.ts
-├── tailwind.config.ts
+├── tailwind.config.ts       # class-based dark mode; theme toggle reads/writes localStorage
 ├── src/
 │   ├── app/
 │   │   ├── (auth)/login/    # Sign-in page with error handling
@@ -1236,6 +1237,9 @@ ui/                          # Next.js 16 dashboard (App Router)
 │   │       ├── health/             # System health panel
 │   │       └── audit/              # Global audit log (all users)
 │   ├── components/
+│   │   ├── layout/
+│   │   │   ├── UserShell.tsx       # Dashboard shell: collapsible sidebar, theme toggle, mobile drawer
+│   │   │   └── AdminShell.tsx      # Admin shell: fixed sidebar, theme toggle
 │   │   ├── memory/
 │   │   │   ├── MemoryTimeline.tsx  # Event list with importance badges + Add Memory + Upload buttons
 │   │   │   ├── MemoryCard.tsx      # Memory card with source badge
@@ -1263,7 +1267,8 @@ ui/                          # Next.js 16 dashboard (App Router)
 │   │   ├── useMemoryGraph.ts       # useMemoryEvent, useMemoryLinks
 │   │   ├── useFactGraph.ts         # useFactGraph
 │   │   ├── useAdmin.ts             # useAdminUsers, useAdminUser, useAdminPatchUser
-│   │   └── useProcedures.ts        # CRUD hooks for procedural rules
+│   │   ├── useProcedures.ts        # CRUD hooks for procedural rules
+│   │   └── useTheme.ts             # Dark/light toggle; syncs document class + localStorage
 │   ├── lib/api-client.ts           # Typed API client (wraps fetch with auth token)
 │   └── types/index.ts              # Shared TypeScript types (MemoryEvent, FactGraph, …)
 └── package.json
@@ -1787,6 +1792,14 @@ The UI uses **NextAuth.js v5** with a Credentials provider that exchanges a user
 - Admin users also have access to `/admin/**`
 - Middleware redirects unauthenticated requests to `/login`
 
+### Dark / light theme
+
+A **theme toggle button** in the shell header switches between dark and light mode. The preference is persisted to `localStorage` and survives page reloads. Smritikosh uses Tailwind's `class` dark-mode strategy — every page respects the toggle immediately without a page refresh.
+
+### Mobile navigation
+
+On small screens the left sidebar is hidden by default. A **hamburger button** in the top navigation bar opens the sidebar as a modal drawer (Headless UI `Dialog`). On desktop the sidebar behaves as it always did — no layout changes.
+
 ### Fact graph (Identity page)
 
 The Identity page includes an interactive **3D force-directed graph** (powered by `react-force-graph-3d`) visualising the Neo4j fact graph, with a toggle to switch to a 2D layout:
@@ -2078,6 +2091,75 @@ curl -X POST http://localhost:8080/memory/fact \
 ```
 
 Facts are upserted — calling with the same `(user_id, app_id, category, key)` increments `frequency_count` rather than creating a duplicate.
+
+---
+
+### `POST /batch`
+
+Encode multiple memory events in a single request. Useful for high-frequency applications (e.g., agents that log every conversation turn) where the round-trip overhead of individual `POST /memory/event` calls is significant.
+
+Each operation runs the full Hippocampus pipeline (importance scoring → embedding → fact extraction → store). Operations are processed in order; a failure in one does not abort the others.
+
+```bash
+curl -X POST http://localhost:8080/batch \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operations": [
+      {
+        "op": "encode",
+        "user_id": "alice",
+        "app_id": "myapp",
+        "content": "I always start my day with a standup at 9am.",
+        "source_type": "api_explicit"
+      },
+      {
+        "op": "encode",
+        "user_id": "alice",
+        "app_id": "myapp",
+        "content": "My goal is to ship the new inference pipeline before Q2.",
+        "source_type": "api_explicit"
+      }
+    ]
+  }'
+```
+
+```json
+{
+  "results": [
+    {
+      "index": 0,
+      "op": "encode",
+      "status": "ok",
+      "event_id": "a3f1c2d4-...",
+      "importance_score": 0.71,
+      "facts_extracted": 2
+    },
+    {
+      "index": 1,
+      "op": "encode",
+      "status": "ok",
+      "event_id": "b4e2d3f5-...",
+      "importance_score": 0.76,
+      "facts_extracted": 1
+    }
+  ],
+  "total": 2,
+  "success_count": 2,
+  "error_count": 0
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `operations` | array | **Required.** 1–100 operation objects |
+| `op` | string | Operation type. Currently: `"encode"` |
+| `user_id` | string | **Required per operation.** Target user |
+| `app_id` | string | App namespace (default: `"default"`) |
+| `content` | string | **Required for `encode`.** Raw text to store |
+| `source_type` | string | Optional source type; defaults to `"api_explicit"` |
+
+If an individual operation fails (e.g. embedding error), its result has `"status": "error"` and an `"error"` message field. The overall response is always `200 OK`; check `error_count` to detect partial failures.
 
 ---
 

@@ -50,11 +50,11 @@ function NewUserModal({ onClose }: { onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-zinc-950/80 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl">
+      <div className="relative z-10 w-full max-w-md bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-2xl">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800">
-          <h2 className="text-sm font-semibold text-zinc-100">Register new user</h2>
-          <button onClick={onClose} className="text-zinc-600 hover:text-zinc-400 transition-colors">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-200 dark:border-zinc-800">
+          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">Register new user</h2>
+          <button onClick={onClose} className="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-400 transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -118,18 +118,18 @@ function UserRow({ user }: { user: AdminUser }) {
 
   return (
     <tr
-      className="border-b border-zinc-800/60 hover:bg-zinc-800/30 cursor-pointer transition-colors"
+      className="border-b border-zinc-200 dark:border-zinc-800/60 hover:bg-zinc-50 dark:hover:bg-zinc-800/30 cursor-pointer transition-colors"
       onClick={() => router.push(`/admin/users/${user.username}`)}
     >
       <td className="px-4 py-3">
-        <span className="mono text-zinc-200 text-xs">{user.username}</span>
+        <span className="mono text-zinc-800 dark:text-zinc-200 text-xs">{user.username}</span>
       </td>
       <td className="px-4 py-3">
         <span className={clsx(
           "badge text-xs",
           user.role === "admin"
             ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
-            : "bg-zinc-800 text-zinc-500 border border-zinc-700/50",
+            : "bg-zinc-100 dark:bg-zinc-800 text-zinc-500 border border-zinc-200 dark:border-zinc-700/50",
         )}>
           {user.role === "admin" ? <ShieldCheck className="w-3 h-3" /> : <Shield className="w-3 h-3" />}
           {user.role}
@@ -212,7 +212,7 @@ export function UserTable() {
         <div className="card p-0 overflow-hidden">
           <table className="w-full text-left">
             <thead>
-              <tr className="border-b border-zinc-800">
+              <tr className="border-b border-zinc-200 dark:border-zinc-800">
                 {["Username", "Role", "App", "Email", "Created", "Status"].map((h) => (
                   <th key={h} className="px-4 py-2.5 section-heading whitespace-nowrap">
                     {h}
@@ -226,7 +226,7 @@ export function UserTable() {
           </table>
 
           {totalPages > 1 && (
-            <div className="flex items-center justify-between px-4 py-3 border-t border-zinc-800">
+            <div className="flex items-center justify-between px-4 py-3 border-t border-zinc-200 dark:border-zinc-800">
               <span className="text-xs text-zinc-600">Page {currentPage} of {totalPages}</span>
               <div className="flex gap-2">
                 <button onClick={() => setOffset((o) => Math.max(0, o - PAGE_SIZE))}

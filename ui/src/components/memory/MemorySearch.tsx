@@ -58,7 +58,7 @@ export function MemorySearch({ onResults }: Props) {
           {search.isPending ? (
             <Loader2 className="w-4 h-4 text-zinc-500 animate-spin" />
           ) : query ? (
-            <button onClick={clear} className="text-zinc-500 hover:text-zinc-300">
+            <button onClick={clear} className="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300">
               <X className="w-4 h-4" />
             </button>
           ) : null}

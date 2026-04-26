@@ -52,7 +52,7 @@ export default function AdminUserDetailPage({
           <ArrowLeft className="w-4 h-4" />
         </button>
         <div>
-          <h1 className="text-base font-semibold text-zinc-100 tracking-tight">{username}</h1>
+          <h1 className="text-base font-semibold text-zinc-900 dark:text-zinc-100 tracking-tight">{username}</h1>
           <p className="text-xs text-zinc-600 mt-0.5">User detail</p>
         </div>
       </div>
@@ -76,7 +76,7 @@ export default function AdminUserDetailPage({
           <div className="card">
             <p className="section-heading mb-3">Account</p>
             <div className="space-y-0">
-              <InfoRow label="Username"><span className="mono text-zinc-300">{user.username}</span></InfoRow>
+              <InfoRow label="Username"><span className="mono text-zinc-700 dark:text-zinc-300">{user.username}</span></InfoRow>
               <InfoRow label="Email"><span className="text-zinc-400">{user.email ?? "—"}</span></InfoRow>
               <InfoRow label="App IDs"><span className="mono text-zinc-400">{(user.app_ids ?? []).join(", ")}</span></InfoRow>
               <InfoRow label="Created">
@@ -97,9 +97,9 @@ export default function AdminUserDetailPage({
             <p className="section-heading mb-3">Access control</p>
             <div className="space-y-0">
               {/* Active */}
-              <div className="flex items-center justify-between py-3 border-b border-zinc-800/60">
+              <div className="flex items-center justify-between py-3 border-b border-zinc-200 dark:border-zinc-800/60">
                 <div>
-                  <p className="text-sm text-zinc-300">Account active</p>
+                  <p className="text-sm text-zinc-700 dark:text-zinc-300">Account active</p>
                   <p className="text-xs text-zinc-600 mt-0.5">Inactive users cannot sign in.</p>
                 </div>
                 <button
@@ -122,7 +122,7 @@ export default function AdminUserDetailPage({
               {/* Role */}
               <div className="flex items-center justify-between py-3">
                 <div>
-                  <p className="text-sm text-zinc-300">Role</p>
+                  <p className="text-sm text-zinc-700 dark:text-zinc-300">Role</p>
                   <p className="text-xs text-zinc-600 mt-0.5">Admin users access the admin panel.</p>
                 </div>
                 <button
@@ -132,7 +132,7 @@ export default function AdminUserDetailPage({
                     "flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition-colors",
                     user.role === "admin"
                       ? "bg-amber-500/10 border-amber-500/20 text-amber-400"
-                      : "bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200",
+                      : "bg-zinc-100 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200",
                   )}
                 >
                   {user.role === "admin"
@@ -162,7 +162,7 @@ export default function AdminUserDetailPage({
             {!deleteConfirm ? (
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="text-sm text-zinc-300">Delete all memories</p>
+                  <p className="text-sm text-zinc-700 dark:text-zinc-300">Delete all memories</p>
                   <p className="text-xs text-zinc-600 mt-0.5">
                     Permanently removes every episodic event. Neo4j facts are not affected.
                   </p>
@@ -213,10 +213,10 @@ function InfoRow({
   return (
     <div className={clsx(
       "flex items-center justify-between py-2.5",
-      !last && "border-b border-zinc-800/60",
+      !last && "border-b border-zinc-200 dark:border-zinc-800/60",
     )}>
-      <span className="text-xs text-zinc-600 w-20 flex-shrink-0">{label}</span>
-      <span className="text-sm flex-1 text-right">{children}</span>
+      <span className="text-xs text-zinc-500 w-20 flex-shrink-0">{label}</span>
+      <span className="text-sm flex-1 text-right text-zinc-800 dark:text-zinc-200">{children}</span>
     </div>
   );
 }
