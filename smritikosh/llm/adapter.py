@@ -48,11 +48,13 @@ class LLMAdapter:
         self._cfg = cfg
         self._chat_model = self._resolve_chat_model(cfg)
         self._embed_model = self._resolve_embed_model(cfg)
+        self._fallback_model = self._resolve_fallback_model(cfg)
         logger.info(
             "LLMAdapter initialised",
             extra={
                 "chat_provider": cfg.llm_provider,
                 "chat_model": self._chat_model,
+                "fallback_model": self._fallback_model,
                 "embed_provider": cfg.embedding_provider,
                 "embed_model": self._embed_model,
                 "embed_dimensions": cfg.embedding_dimensions,
@@ -66,26 +68,29 @@ class LLMAdapter:
         wait=wait_exponential(multiplier=1, min=2, max=10),
         before_sleep=before_sleep_log(logger, logging.WARNING),
     )
-    async def complete(
+    async def _attempt_completion(
         self,
+        model: str,
+        api_key: str | None,
+        api_base: str | None,
         messages: list[dict[str, str]],
-        temperature: float = 0.2,
+        temperature: float,
         **kwargs: Any,
     ) -> str:
-        """Send a chat completion request and return the response text."""
+        """Single-provider chat completion with tenacity retry for transient failures."""
         if self._cfg.llm_max_tokens is not None:
             kwargs.setdefault("max_tokens", self._cfg.llm_max_tokens)
-        # Disable thinking tokens for all Ollama calls — thinking consumes the token
-        # budget and leaves content empty when max_tokens is low (e.g. intent classifier).
-        if self._cfg.llm_provider.lower() == "ollama":
+        # Disable thinking tokens for Ollama — thinking consumes the token budget and
+        # leaves content empty when max_tokens is low (e.g. intent classifier).
+        if model.startswith("ollama_chat/") or model.startswith("ollama/"):
             kwargs.setdefault("extra_body", {"think": False})
-        logger.debug("LLM complete: model=%s messages=%d", self._chat_model, len(messages))
+        logger.debug("LLM complete: model=%s messages=%d", model, len(messages))
         response = await litellm.acompletion(
-            model=self._chat_model,
+            model=model,
             messages=messages,
             temperature=temperature,
-            api_key=self._cfg.llm_api_key,
-            api_base=self._cfg.llm_base_url,
+            api_key=api_key,
+            api_base=api_base,
             **kwargs,
         )
         msg = response.choices[0].message
@@ -96,14 +101,46 @@ class LLMAdapter:
             reasoning = getattr(msg, "reasoning_content", None)
             logger.warning(
                 "LLM returned empty content (model=%s) reasoning_content_len=%d",
-                self._chat_model,
+                model,
                 len(reasoning) if reasoning else 0,
             )
-            raise RuntimeError(
-                f"LLM returned empty content (model={self._chat_model})"
-            )
-        logger.debug("LLM response: %d chars", len(content))
+            raise RuntimeError(f"LLM returned empty content (model={model})")
+        logger.debug("LLM response from model=%s: %d chars", model, len(content))
         return content
+
+    async def complete(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.2,
+        **kwargs: Any,
+    ) -> str:
+        """Send a chat completion request, falling back to secondary provider if configured."""
+        try:
+            return await self._attempt_completion(
+                self._chat_model,
+                self._cfg.llm_api_key,
+                self._cfg.llm_base_url,
+                messages,
+                temperature,
+                **kwargs,
+            )
+        except Exception as exc:
+            if self._fallback_model is None:
+                raise
+            logger.warning(
+                "Primary LLM exhausted retries (model=%s): %s — trying fallback=%s",
+                self._chat_model,
+                exc,
+                self._fallback_model,
+            )
+            return await self._attempt_completion(
+                self._fallback_model,
+                self._cfg.llm_fallback_api_key,
+                self._cfg.llm_fallback_base_url,
+                messages,
+                temperature,
+                **kwargs,
+            )
 
     # ValueError means the LLM returned bad JSON — deterministic failure, no point retrying.
     @retry(
@@ -142,7 +179,12 @@ class LLMAdapter:
         # OpenAI/Claude/Gemini. For Ollama it maps to format="json" which causes
         # some models to hang — Ollama relies on the system prompt instruction instead.
         extra: dict = {}
-        if self._cfg.llm_provider.lower() not in ("ollama", "llamacpp"):
+        is_local = (
+            self._chat_model.startswith("ollama_chat/")
+            or self._chat_model.startswith("ollama/")
+            or self._cfg.llm_provider.lower() == "llamacpp"
+        )
+        if not is_local:
             extra["response_format"] = {"type": "json_object"}
         raw = await self.complete(
             messages=[
@@ -481,6 +523,21 @@ class LLMAdapter:
         provider = cfg.vision_provider.lower()
         model = cfg.vision_model
 
+        if provider == "gemini" and not model.startswith("gemini/"):
+            return f"gemini/{model}"
+        if provider == "ollama" and not model.startswith("ollama_chat/"):
+            return f"ollama_chat/{model}"
+        if provider in ("vllm", "llamacpp") and not model.startswith("openai/"):
+            return f"openai/{model}"
+        return model
+
+    @staticmethod
+    def _resolve_fallback_model(cfg: Settings) -> str | None:
+        """Resolve the fallback chat model string, or None if not configured."""
+        if not cfg.llm_fallback_provider or not cfg.llm_fallback_model:
+            return None
+        provider = cfg.llm_fallback_provider.lower()
+        model = cfg.llm_fallback_model
         if provider == "gemini" and not model.startswith("gemini/"):
             return f"gemini/{model}"
         if provider == "ollama" and not model.startswith("ollama_chat/"):

@@ -388,6 +388,20 @@ class AdminJobResponse(BaseModel):
     results: list[AdminJobResult]
 
 
+class EmbeddingHealthResponse(BaseModel):
+    configured_dim: int
+    total_embedded: int       # events with a non-null embedding
+    stale_events: int         # embeddings whose dimension != configured_dim
+    null_embeddings: int      # events with no embedding at all
+    healthy: bool
+
+
+class ReEmbedResponse(BaseModel):
+    status: str               # "ok" | "started"
+    queued: int
+    message: str | None = None
+
+
 # ── GET /health ───────────────────────────────────────────────────────────────
 
 

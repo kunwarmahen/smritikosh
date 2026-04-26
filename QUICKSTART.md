@@ -129,6 +129,11 @@ RATE_LIMIT_SEARCH=120/minute
 # Semantic fact decay (background job, runs weekly)
 FACT_DECAY_HALF_LIFE_DAYS=60.0           # halve confidence every 60 days
 FACT_DECAY_FLOOR=0.1                     # delete facts below this confidence
+
+# LLM fallback — retry against a secondary provider when the primary fails
+# LLM_FALLBACK_PROVIDER=openai
+# LLM_FALLBACK_MODEL=gpt-4o-mini
+# LLM_FALLBACK_API_KEY=sk-...
 ```
 
 ### Optional: Google OAuth connectors (Gmail + Google Calendar)
@@ -351,10 +356,21 @@ python sample/chatbot.py
 
 ```
 INFO  LLMAdapter initialised  chat_provider=claude  chat_model=claude-haiku-4-5-20251001
+                              fallback_model=None
                               embed_provider=openai  embed_model=text-embedding-3-small  embed_dimensions=1536
 ```
 
 If you see the wrong provider or model, check that your `.env` has exactly one `LLM_MODEL` line.
+
+**Optional: configure a fallback LLM provider** — if your primary provider goes down or hits rate limits, Smritikosh will automatically retry against a secondary:
+
+```dotenv
+LLM_FALLBACK_PROVIDER=openai
+LLM_FALLBACK_MODEL=gpt-4o-mini
+LLM_FALLBACK_API_KEY=sk-...
+```
+
+Leave these unset (the default) to disable fallback.
 
 **Export a user's memories** at any time:
 

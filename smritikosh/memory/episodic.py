@@ -27,6 +27,7 @@ from typing import Optional
 from sqlalchemy import delete as sql_delete, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from smritikosh.config import settings as _settings
 from smritikosh.db.models import Event, SourceType
 
 
@@ -123,6 +124,15 @@ class EpisodicMemory:
         this method (via LLMAdapter.embed). Storing without an embedding is
         allowed — the event won't appear in vector searches until one is added.
         """
+        if embedding is not None:
+            expected = _settings.embedding_dimensions
+            if len(embedding) != expected:
+                raise ValueError(
+                    f"Embedding dimension mismatch: got {len(embedding)}, "
+                    f"expected {expected} (EMBEDDING_DIMENSIONS). "
+                    "Update EMBEDDING_DIMENSIONS to match your model, or run "
+                    "POST /admin/re-embed after changing EMBEDDING_MODEL."
+                )
         event = Event(
             user_id=user_id,
             app_id=app_id,

@@ -14,6 +14,14 @@ class Settings(BaseSettings):
     # Set to an integer to cap token output; leave as None for no limit
     llm_max_tokens: int | None = None
 
+    # ── LLM fallback provider ──────────────────────────────────────────────
+    # When the primary LLM is down or rate-limited, requests are retried against
+    # the fallback before raising an error.  Leave unset to disable fallback.
+    llm_fallback_provider: str | None = None   # e.g. "openai"
+    llm_fallback_model: str | None = None      # e.g. "gpt-4o-mini"
+    llm_fallback_api_key: str | None = None    # if the fallback uses a different key
+    llm_fallback_base_url: str | None = None   # for local fallback providers
+
     # ── Embeddings ─────────────────────────────────────────────────────────
     embedding_provider: str = "openai"
     embedding_model: str = "text-embedding-3-small"

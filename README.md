@@ -194,7 +194,7 @@ Your application
 | **SourceConnector** | Normalises external sources (file, webhook, Slack, email, calendar) into events | — |
 | **MemoryScheduler** | Runs all background jobs on configurable timers (APScheduler) | — |
 | **IntentClassifier** | Two-tier intent classification: keyword heuristic + LLM fallback for ambiguous queries | — |
-| **LLMAdapter** | Unified interface to Claude, OpenAI, Gemini, Ollama, vLLM, llama.cpp; logs resolved provider + model at startup | — |
+| **LLMAdapter** | Unified interface to Claude, OpenAI, Gemini, Ollama, vLLM, llama.cpp; optional fallback provider (tries secondary after primary exhausts retries); logs resolved provider + model + fallback at startup | — |
 | **SmritikoshClient (Python)** | Async Python SDK wrapping the REST API | — |
 | **SmritikoshClient (Node.js)** | TypeScript/ESM SDK with identical surface to the Python SDK | — |
 | **SmritikoshMiddleware** | Sync wrapper for OpenAI/Anthropic clients; auto-injects `remember()` tool, intercepts tool calls transparently, buffers turns, fires `POST /ingest/session` in background, optionally auto-injects context | — |
@@ -1129,6 +1129,7 @@ smritikosh/
 │       ├── feedback.py      # POST /feedback
 │       ├── procedures.py    # CRUD /procedures + DELETE /procedures/user/{id}
 │       ├── admin.py         # POST /admin/{consolidate,prune,cluster,mine-beliefs,reconsolidate,synthesize}
+│       │                    #   GET /admin/embedding-health, POST /admin/re-embed
 │       │                    #   GET /admin/users, GET /admin/users/{username},
 │       │                    #   PATCH /admin/users/{username}
 │       ├── ingest.py        # POST /ingest/{push,file,slack/events,email/sync,calendar}
@@ -1401,7 +1402,12 @@ Regardless of which option you chose, run Alembic migrations to create tables an
 alembic upgrade head
 ```
 
-> **Changing embedding dimensions?** If you switch to a model with different output dimensions (e.g. Gemini's 768), set `EMBEDDING_DIMENSIONS=768` in `.env`, then re-run migrations: `alembic downgrade base && alembic upgrade head`.
+> **Changing embedding dimensions?** If you switch to a model with different output dimensions (e.g. Gemini's 768), follow these steps:
+> 1. Update `.env`: set `EMBEDDING_DIMENSIONS=768` (or your model's dimension) and update `EMBEDDING_MODEL`.
+> 2. Re-run migrations to resize the vector column: `alembic downgrade base && alembic upgrade head`.
+> 3. Re-embed all existing events so they match the new dimension: `POST /admin/re-embed` (runs in the background; check progress with `GET /admin/embedding-health`).
+>
+> Smritikosh validates the embedding dimension on every insert — if a generated vector doesn't match `EMBEDDING_DIMENSIONS` it raises an error immediately rather than silently storing an incompatible vector.
 
 #### Verify
 
@@ -1667,6 +1673,10 @@ All backend settings are read from the environment (or `.env`). Every field has 
 | `LLM_API_KEY` | — | API key for the chat provider |
 | `LLM_BASE_URL` | — | Custom base URL (Ollama / vLLM / llama.cpp only) |
 | `LLM_MAX_TOKENS` | *(unset)* | Max tokens for LLM responses. Leave unset for no limit. |
+| `LLM_FALLBACK_PROVIDER` | *(unset)* | Secondary LLM provider used when the primary exhausts all retries. Leave unset to disable fallback. |
+| `LLM_FALLBACK_MODEL` | *(unset)* | Secondary LLM model name (required if `LLM_FALLBACK_PROVIDER` is set). |
+| `LLM_FALLBACK_API_KEY` | *(unset)* | API key for the fallback provider; defaults to `LLM_API_KEY` if unset. |
+| `LLM_FALLBACK_BASE_URL` | *(unset)* | Custom base URL for local fallback providers (Ollama / vLLM / llama.cpp). |
 | `EMBEDDING_PROVIDER` | `openai` | `openai` / `ollama` / `vllm` / `gemini` / `llamacpp` |
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model name |
 | `EMBEDDING_API_KEY` | — | API key for the embedding provider |
@@ -2143,6 +2153,42 @@ curl -X POST "http://localhost:8080/admin/synthesize?user_id=alice&app_id=myapp"
   "facts_skipped": 2
 }
 ```
+
+### `GET /admin/embedding-health`
+
+Report how many stored event embeddings match the currently configured dimension. Use this to detect stale embeddings after switching models.
+
+```bash
+curl http://localhost:8080/admin/embedding-health \
+  -H "Authorization: Bearer <admin-token>"
+```
+
+```json
+{
+  "configured_dim": 768,
+  "total_embedded": 1240,
+  "stale_events": 0,
+  "null_embeddings": 3,
+  "healthy": true
+}
+```
+
+`stale_events` counts vectors whose `vector_dims()` ≠ `EMBEDDING_DIMENSIONS`. Any non-zero value means hybrid search is comparing vectors of different sizes — results will be incorrect. Fix with `POST /admin/re-embed`.
+
+### `POST /admin/re-embed`
+
+Re-embed all events whose stored vector dimension doesn't match `EMBEDDING_DIMENSIONS`, plus any events with a missing embedding. Runs as a background task and returns immediately.
+
+```bash
+curl -X POST http://localhost:8080/admin/re-embed \
+  -H "Authorization: Bearer <admin-token>"
+```
+
+```json
+{"status": "started", "queued": 3}
+```
+
+When `queued` is 0, all embeddings are already healthy: `{"status": "ok", "queued": 0}`. Check `GET /admin/embedding-health` afterward to confirm.
 
 All admin job routes return `503 Service Unavailable` if the background scheduler has not been started (e.g. bare ASGI without `lifespan`).
 
@@ -3851,6 +3897,30 @@ EMBEDDING_PROVIDER=vllm
 EMBEDDING_MODEL=Qwen/Qwen2.5-7B-Instruct
 EMBEDDING_BASE_URL=http://localhost:8000/v1
 EMBEDDING_DIMENSIONS=3584          # match your model's output dimension
+```
+
+### Provider fallback chain
+
+Configure a secondary LLM so Smritikosh keeps working when the primary provider is down or rate-limited. After exhausting three retries on the primary, all chat/extraction calls are automatically retried against the fallback before raising an error.
+
+```dotenv
+# Primary
+LLM_PROVIDER=claude
+LLM_MODEL=claude-haiku-4-5-20251001
+LLM_API_KEY=sk-ant-...
+
+# Fallback — used when primary exhausts retries
+LLM_FALLBACK_PROVIDER=openai
+LLM_FALLBACK_MODEL=gpt-4o-mini
+LLM_FALLBACK_API_KEY=sk-...   # optional — omit if same as LLM_API_KEY
+```
+
+The fallback covers `complete()` and `extract_structured()` calls (fact extraction, importance scoring, consolidation, belief mining). Embedding calls are not covered — they have separate retry logic.
+
+When the fallback fires, a `WARNING` log line is emitted:
+
+```
+Primary LLM exhausted retries (model=claude-haiku-4-5-20251001): ... — trying fallback=gpt-4o-mini
 ```
 
 ### llama.cpp (local)

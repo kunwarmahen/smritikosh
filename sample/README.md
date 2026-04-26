@@ -247,3 +247,18 @@ curl -X POST "http://localhost:8080/admin/consolidate?user_id=priya"
 ```bash
 curl -X POST "http://localhost:8080/admin/synthesize?user_id=priya"
 ```
+
+- **Check embedding health** — verify all stored vectors match the configured dimension (run this after changing `EMBEDDING_MODEL` or `EMBEDDING_DIMENSIONS`):
+
+```bash
+curl http://localhost:8080/admin/embedding-health \
+  -H "Authorization: Bearer $TOKEN"
+# {"configured_dim": 768, "total_embedded": 25, "stale_events": 0, "healthy": true}
+```
+
+- **Re-embed stale events** — if `stale_events > 0` or `null_embeddings > 0`, re-embed everything in the background:
+
+```bash
+curl -X POST http://localhost:8080/admin/re-embed \
+  -H "Authorization: Bearer $TOKEN"
+```
