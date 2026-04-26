@@ -143,12 +143,15 @@ class EpisodicMemory:
         session: AsyncSession,
         event_id: uuid.UUID,
         embedding: list[float],
+        user_id: str | None = None,
+        app_id: str = "default",
     ) -> None:
-        """Attach an embedding to an already-stored event."""
+        """Attach an embedding to an already-stored event (multi-tenant safe)."""
+        query = update(Event).where(Event.id == event_id)
+        if user_id is not None:
+            query = query.where(Event.user_id == user_id, Event.app_id == app_id)
         await session.execute(
-            update(Event)
-            .where(Event.id == event_id)
-            .values(embedding=embedding, updated_at=datetime.now(timezone.utc))
+            query.values(embedding=embedding, updated_at=datetime.now(timezone.utc))
         )
 
     async def mark_consolidated(
@@ -156,17 +159,22 @@ class EpisodicMemory:
         session: AsyncSession,
         event_ids: list[uuid.UUID],
         summary: str | None = None,
+        user_id: str | None = None,
+        app_id: str = "default",
     ) -> None:
         """
         Flag events as consolidated after the Consolidator has processed them.
-        Optionally attach the generated summary.
+        Optionally attach the generated summary. Multi-tenant safe.
         """
         values: dict = {"consolidated": True, "updated_at": datetime.now(timezone.utc)}
         if summary is not None:
             values["summary"] = summary
 
+        query = update(Event).where(Event.id.in_(event_ids))
+        if user_id is not None:
+            query = query.where(Event.user_id == user_id, Event.app_id == app_id)
         await session.execute(
-            update(Event).where(Event.id.in_(event_ids)).values(**values)
+            query.values(**values)
         )
 
     async def update_summary(

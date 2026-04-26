@@ -81,8 +81,8 @@ class ReinforcementLoop:
             ValueError: if event_id does not exist in the events table.
         """
         event = await session.get(Event, event_id)
-        if event is None:
-            raise ValueError(f"Event {event_id!s} not found.")
+        if event is None or event.user_id != user_id or event.app_id != app_id:
+            raise ValueError(f"Event {event_id!s} not found or access denied.")
 
         feedback = MemoryFeedback(
             event_id=event_id,
@@ -97,7 +97,7 @@ class ReinforcementLoop:
         if new_score != event.importance_score:
             await session.execute(
                 update(Event)
-                .where(Event.id == event_id)
+                .where(Event.id == event_id, Event.user_id == user_id, Event.app_id == app_id)
                 .values(
                     importance_score=new_score,
                     updated_at=datetime.now(timezone.utc),
@@ -123,12 +123,15 @@ class ReinforcementLoop:
         self,
         session: AsyncSession,
         event_id: uuid.UUID,
+        user_id: str | None = None,
+        app_id: str = "default",
     ) -> list[MemoryFeedback]:
-        """Return all feedback records for an event, newest first."""
+        """Return all feedback records for an event, newest first (multi-tenant safe)."""
+        query = select(MemoryFeedback).where(MemoryFeedback.event_id == event_id)
+        if user_id is not None:
+            query = query.where(MemoryFeedback.user_id == user_id, MemoryFeedback.app_id == app_id)
         result = await session.execute(
-            select(MemoryFeedback)
-            .where(MemoryFeedback.event_id == event_id)
-            .order_by(MemoryFeedback.created_at.desc())
+            query.order_by(MemoryFeedback.created_at.desc())
         )
         return list(result.scalars().all())
 

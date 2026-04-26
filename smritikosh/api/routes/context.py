@@ -21,7 +21,7 @@ from smritikosh.api.ratelimit import limiter
 from smritikosh.auth.deps import assert_self_or_admin, get_current_user
 from smritikosh.api.deps import get_context_builder, get_reconsolidation_engine
 from smritikosh.config import settings
-from smritikosh.api.schemas import ContextRequest, ContextResponse
+from smritikosh.api.schemas import ContextRequest, ContextResponse, ProcedureItem
 from smritikosh.db.neo4j import get_neo4j_session
 from smritikosh.db.postgres import get_session
 from smritikosh.processing.reconsolidation import ReconsolidationEngine
@@ -82,11 +82,13 @@ async def get_context(
     # may already be closed by the time the background task runs.
     reconsolidation_scheduled = False
     if ctx.similar_events:
+        _app_id = resolved_app_ids[0] if resolved_app_ids else "default"
         background_tasks.add_task(
             reconsolidation.reconsolidate_after_recall,
             ctx.similar_events,
             body.query,
             body.user_id,
+            _app_id,
         )
         reconsolidation_scheduled = True
 
@@ -99,4 +101,16 @@ async def get_context(
         embedding_failed=ctx.embedding_failed,
         intent=ctx.intent,
         reconsolidation_scheduled=reconsolidation_scheduled,
+        procedures=[
+            ProcedureItem(
+                procedure_id=str(p.id),
+                trigger=p.trigger,
+                instruction=p.instruction,
+                category=p.category,
+                priority=p.priority,
+                is_active=p.is_active,
+                hit_count=p.hit_count or 0,
+            )
+            for p in ctx.procedures
+        ],
     )

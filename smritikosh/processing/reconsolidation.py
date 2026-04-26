@@ -124,6 +124,7 @@ class ReconsolidationEngine:
         search_results: list[SearchResult],
         query: str,
         user_id: str,
+        app_id: str = "default",
     ) -> BatchReconsolidationResult:
         """
         Reconsolidate the top recalled events in the background.
@@ -180,7 +181,7 @@ class ReconsolidationEngine:
             await self.audit.emit(AuditEvent(
                 event_type=EventType.MEMORY_RECONSOLIDATE_RUN,
                 user_id=user_id,
-                app_id="default",
+                app_id=app_id,
                 payload={
                     "events_evaluated": batch.events_evaluated,
                     "events_updated": batch.events_updated,

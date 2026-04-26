@@ -160,7 +160,17 @@ Smritikosh assembles these into a context block and returns it:
 • You work on a MacBook Pro M3 Max.
 ```
 
-This block is injected into the LLM system prompt. The model answers *as if it
+Additionally, if Alice has stored any **behavioral rules** (procedural memory), they are included in the context:
+
+```
+[Behavioral rules]
+• [priority 8] When discussing infra: Always mention test coverage and load-test results
+• [priority 5] For recruiting conversations: Highlight remote-first culture
+```
+
+The API response also returns a `procedures` array with structured details of each matched rule, so applications can react programmatically (e.g., logging rule firings, triggering alerts, etc.).
+
+This context block is injected into the LLM system prompt. The model answers *as if it
 knows Alice personally* — without Alice ever repeating herself.
 
 After the search, Smritikosh increments `recall_count` on each of the 5

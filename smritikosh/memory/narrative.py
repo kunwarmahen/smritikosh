@@ -171,11 +171,14 @@ class NarrativeMemory:
         self,
         session: AsyncSession,
         event_id: uuid.UUID,
+        user_id: str,
+        app_id: str = "default",
     ) -> list[Event]:
         """
         Return all events directly linked to this event in either direction.
 
         Useful for surfacing context without committing to a traversal direction.
+        Only returns events belonging to the same user+app (multi-tenant isolation).
         """
         result = await session.execute(
             select(Event)
@@ -186,7 +189,7 @@ class NarrativeMemory:
                     (MemoryLink.to_event_id == event_id) & (MemoryLink.from_event_id == Event.id),
                 ),
             )
-            .where(Event.id != event_id)
+            .where(Event.id != event_id, Event.user_id == user_id, Event.app_id == app_id)
             .distinct()
         )
         return list(result.scalars().all())

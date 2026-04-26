@@ -116,6 +116,7 @@ class ContextResponse(BaseModel):
     embedding_failed: bool
     intent: str                 # detected query intent (e.g. "career", "technical")
     reconsolidation_scheduled: bool = False   # True if background reconsolidation was triggered
+    procedures: list['ProcedureItem'] = []    # matched behavioral rules that fired for this query
 
 
 # ── GET /memory/{user_id} ─────────────────────────────────────────────────────

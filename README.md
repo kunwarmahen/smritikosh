@@ -3354,7 +3354,7 @@ async with SmritikoshClient(base_url="http://localhost:8080") as client:
 | Method | Description |
 |---|---|
 | `encode(user_id, content, *, app_id, metadata)` | Store a memory event → `EncodedEvent` |
-| `build_context(user_id, query, *, app_id)` | Retrieve LLM-ready context → `MemoryContext` |
+| `build_context(user_id, query, *, app_id)` | Retrieve LLM-ready context → `MemoryContext` with similar events, user profile, procedures, and narrative chains |
 | `search(user_id, query, *, app_id, limit, from_date, to_date)` | Hybrid search → `SearchResult` with scored `SearchResultItem` list |
 | `get_recent(user_id, *, app_id, limit)` | List recent events → `list[RecentEvent]` |
 | `submit_feedback(event_id, user_id, feedback_type, *, app_id, comment)` | Rate a recalled event → `FeedbackRecord` |
