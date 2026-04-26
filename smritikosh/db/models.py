@@ -759,3 +759,59 @@ class UserVoiceProfile(Base):
             f"<UserVoiceProfile user={self.user_id!r} "
             f"app={self.app_id!r} embedding={'yes' if has_emb else 'no'}>"
         )
+
+
+class ConnectorProvider(StrEnum):
+    """Supported OAuth2 connector providers."""
+    GMAIL = "gmail"
+    GCAL  = "gcal"
+
+
+class ConnectorStatus(StrEnum):
+    """Lifecycle state for OAuth connector credentials."""
+    ACTIVE  = "active"   # tokens valid, connector enabled
+    REVOKED = "revoked"  # user disconnected; tokens deleted
+    ERROR   = "error"    # last token refresh failed
+
+
+class UserConnector(Base):
+    """
+    OAuth2 credentials for external connectors (Gmail, Google Calendar, etc.).
+
+    Stores encrypted access/refresh tokens per user+provider. Tokens are
+    encrypted with Fernet using a key derived from JWT_SECRET. When an access
+    token expires, the refresh token is used to obtain new credentials without
+    user interaction.
+    """
+
+    __tablename__ = "user_connectors"
+    __table_args__ = (
+        UniqueConstraint("user_id", "app_id", "provider", name="uq_user_connector"),
+        Index("ix_user_connectors_user_app", "user_id", "app_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    app_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)  # ConnectorProvider value
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default=ConnectorStatus.ACTIVE)
+    # Encrypted token dict: {access_token, refresh_token, token_type, expires_in}
+    encrypted_tokens: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
+    # When the current access token expires (if known)
+    token_expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    # OAuth scopes granted by the user (e.g. ["https://www.googleapis.com/auth/gmail.readonly", ...])
+    scopes: Mapped[list[str]] = mapped_column(PG_ARRAY(Text), nullable=False, default=list)
+    connected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<UserConnector user={self.user_id!r} "
+            f"provider={self.provider!r} status={self.status}>"
+        )

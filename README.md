@@ -2312,6 +2312,92 @@ curl -X POST http://localhost:8080/ingest/calendar \
 {"source": "calendar:calendar.ics", "events_ingested": 12, "events_failed": 0, "event_ids": [...]}
 ```
 
+### Google OAuth Connectors (Gmail + Google Calendar)
+
+Smritikosh can connect to Gmail and Google Calendar via OAuth2. Once authorized, you can sync emails and events on demand, and they flow into the daily synthesis job.
+
+**Setup:**
+
+1. Create a new OAuth2 application at [console.cloud.google.com](https://console.cloud.google.com).
+2. Grant permissions: Gmail API (`gmail.readonly`) and Calendar API (`calendar.readonly`).
+3. Create an OAuth2 credential (type: Desktop app). Download the client ID and secret.
+4. Set environment variables:
+   ```dotenv
+   GOOGLE_CLIENT_ID=your_client_id_here
+   GOOGLE_CLIENT_SECRET=your_client_secret_here
+   GOOGLE_REDIRECT_URI=http://localhost:8080/connectors/google/callback
+   ```
+
+**Authorization:**
+
+Get an authorization URL with a 1-hour expiry state token:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  'http://localhost:8080/connectors/google/authorize?user_id=alice&app_id=default'
+```
+
+```json
+{"authorize_url": "https://accounts.google.com/o/oauth2/v2/auth?..."}
+```
+
+Visit that URL, grant Smritikosh access to your Gmail and Calendar, and Google redirects back to the callback. Tokens are encrypted and stored automatically.
+
+**Sync Gmail:**
+
+Fetch unread emails and ingest them as episodic memories:
+
+```bash
+curl -X POST http://localhost:8080/connectors/gmail/sync \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "alice",
+    "app_id": "default",
+    "limit": 20,
+    "query": "is:unread"
+  }'
+```
+
+```json
+{"source": "gmail", "events_ingested": 5, "events_failed": 0, "event_ids": [...]}
+```
+
+**Sync Google Calendar:**
+
+Fetch calendar events from the past N days:
+
+```bash
+curl -X POST http://localhost:8080/connectors/gcal/sync \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "alice",
+    "app_id": "default",
+    "days_back": 7,
+    "max_results": 50
+  }'
+```
+
+```json
+{"source": "gcal", "events_ingested": 12, "events_failed": 0, "event_ids": [...]}
+```
+
+**Auto-refresh:**
+
+Access tokens expire in ~1 hour. Smritikosh automatically refreshes them if they're about to expire — no action needed.
+
+**Disconnect:**
+
+Revoke access and delete stored tokens:
+
+```bash
+curl -X DELETE http://localhost:8080/connectors/alice/gmail \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Note:** If `GOOGLE_CLIENT_ID` is not set, all `/connectors/google/*` routes return `501 Not Configured`. This feature is entirely optional.
+
 ### `POST /ingest/session` — Passive extraction from conversation transcript
 
 Post a full or partial conversation transcript. Smritikosh automatically:

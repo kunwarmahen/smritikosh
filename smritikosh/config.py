@@ -39,6 +39,13 @@ class Settings(BaseSettings):
     # Set SLACK_SIGNING_SECRET in .env to enable Slack event verification
     slack_signing_secret: str | None = None
 
+    # Google OAuth2 connectors (Gmail + Google Calendar)
+    # Register a new OAuth2 application at https://console.cloud.google.com/
+    # Required scopes: gmail.readonly, calendar.readonly
+    google_client_id: str | None = None
+    google_client_secret: str | None = None
+    google_redirect_uri: str = "http://localhost:8080/connectors/google/callback"
+
     # ── Audit trail (MongoDB) ───────────────────────────────────────────────
     # Leave unset to disable audit trail (system works without it).
     mongodb_url: str | None = None

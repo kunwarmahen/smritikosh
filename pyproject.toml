@@ -40,6 +40,8 @@ dependencies = [
     "PyJWT>=2.9.0",             # JWT creation and verification
     "slowapi>=0.1.9",           # rate limiting for FastAPI
     "pypdf>=5.0.0",             # PDF text extraction
+    "httpx>=0.28.0",            # async HTTP client (Google OAuth2, REST APIs)
+    "cryptography>=44.0.0",     # Fernet encryption for OAuth tokens
 ]
 
 [project.optional-dependencies]

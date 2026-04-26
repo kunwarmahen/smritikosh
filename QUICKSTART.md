@@ -131,6 +131,31 @@ FACT_DECAY_HALF_LIFE_DAYS=60.0           # halve confidence every 60 days
 FACT_DECAY_FLOOR=0.1                     # delete facts below this confidence
 ```
 
+### Optional: Google OAuth connectors (Gmail + Google Calendar)
+
+Connect your Gmail and Google Calendar to Smritikosh so you can sync emails and events on demand.
+
+1. Go to [console.cloud.google.com](https://console.cloud.google.com) and create a new OAuth2 application (type: Desktop app).
+2. Grant the following scopes:
+   - Gmail API: `https://www.googleapis.com/auth/gmail.readonly`
+   - Google Calendar API: `https://www.googleapis.com/auth/calendar.readonly`
+3. Create an OAuth2 credential and download the JSON. Extract the `client_id` and `client_secret`.
+4. Add to your `.env`:
+
+```dotenv
+GOOGLE_CLIENT_ID=your_client_id_here
+GOOGLE_CLIENT_SECRET=your_client_secret_here
+GOOGLE_REDIRECT_URI=http://localhost:8080/connectors/google/callback
+# For production, change GOOGLE_REDIRECT_URI to your server's FQDN + /connectors/google/callback
+```
+
+Then:
+- Call `GET /connectors/google/authorize?user_id=alice` to get an authorization URL
+- Visit that URL to authorize Smritikosh
+- Use `POST /connectors/gmail/sync` to fetch emails or `POST /connectors/gcal/sync` to fetch calendar events
+
+**This feature is entirely optional.** If you skip it, Smritikosh still works normally.
+
 ### Optional: media ingestion providers
 
 These settings are **not required** to run Smritikosh. Document ingestion (`.txt`, `.md`, `.pdf`) works with just your core LLM above — no extra keys needed.

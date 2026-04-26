@@ -37,7 +37,7 @@ from smritikosh.api.deps import (
 )
 from smritikosh.api.ratelimit import limiter
 from smritikosh.api.routes import admin, audit, auth, context, facts, feedback, graph, health, identity, ingest, keys, memory, procedures
-from smritikosh.api.routes import session_ingest, media_ingest, voice_enrollment
+from smritikosh.api.routes import session_ingest, media_ingest, voice_enrollment, connectors
 from smritikosh.audit.mongodb import close_audit, init_audit_indexes
 from smritikosh.db.neo4j import close_neo4j, init_neo4j
 from smritikosh.db.postgres import close_db, init_db
@@ -127,3 +127,4 @@ app.include_router(facts.router)
 app.include_router(audit.router)
 app.include_router(graph.router)
 app.include_router(voice_enrollment.router)
+app.include_router(connectors.router)

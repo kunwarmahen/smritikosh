@@ -518,12 +518,14 @@ Alice sees a review modal: two facts are already saved; two are pending confirma
 
 ## Act 10 — Cross-system synthesis (patterns emerge from signals)
 
-A week later, Smritikosh's daily synthesis job (`CrossSystemSynthesizer`) runs at 01:00 UTC. It queries Alice's connector events across calendar, email, and Slack metadata:
+A week later, Smritikosh's daily synthesis job (`CrossSystemSynthesizer`) runs at 01:00 UTC. It queries Alice's connector events across calendar, email, Slack, Gmail, and Google Calendar metadata:
 
 ```
-Calendar:  3 meetings rescheduled this week, 0 meetings before 9:30am over 30 days
-Email:     No emails sent after 6:30pm for 28 days, avg reply time 4 hours
-Slack:     Message volume spikes Tuesday/Wednesday, drops Friday afternoon
+Calendar (iCal):       3 meetings rescheduled this week, 0 meetings before 9:30am over 30 days
+Email (IMAP):          No emails sent after 6:30pm for 28 days, avg reply time 4 hours
+Slack (webhook):       Message volume spikes Tuesday/Wednesday, drops Friday afternoon
+Gmail (OAuth2):        No replies to marketing emails, reads mailing lists only
+Google Calendar (OAuth2): Blocked Fridays 4-5pm every week
 Recent episodic events include: "mentioned wanting better work-life balance"
 ```
 

@@ -47,7 +47,7 @@ from smritikosh.memory.semantic import SemanticMemory
 logger = logging.getLogger(__name__)
 
 # Connector source identifiers used in event_metadata (ConnectorEvent.to_metadata)
-_CONNECTOR_SOURCES = frozenset({"calendar", "email", "slack", "webhook", "file"})
+_CONNECTOR_SOURCES = frozenset({"calendar", "email", "slack", "webhook", "file", "gmail", "gcal"})
 
 # Only infer these fact categories — behavioral patterns only
 _ALLOWED_CATEGORIES = frozenset({
