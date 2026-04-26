@@ -24,6 +24,7 @@ from httpx import ASGITransport, AsyncClient
 
 from smritikosh.api.main import app
 from smritikosh.api import deps
+from smritikosh.auth.deps import get_current_user
 from smritikosh.db.models import Event, MemoryFeedback, UserBelief
 from smritikosh.db.neo4j import get_neo4j_session
 from smritikosh.db.postgres import get_session
@@ -113,10 +114,20 @@ def mock_reinforcement():
     return AsyncMock(spec=ReinforcementLoop)
 
 
+@pytest.fixture
+def mock_current_user():
+    """Mock user with admin role and access to 'default' app."""
+    return {
+        "sub": "u1",
+        "role": "admin",
+        "app_ids": ["default"]
+    }
+
+
 @pytest.fixture(autouse=True)
 def override_deps(mock_pg_session, mock_neo_session, mock_hippocampus,
                   mock_context_builder, mock_episodic,
-                  mock_identity_builder, mock_reinforcement):
+                  mock_identity_builder, mock_reinforcement, mock_current_user):
     """Replace all I/O dependencies with mocks for every test in this module."""
     app.dependency_overrides[get_session] = lambda: mock_pg_session
     app.dependency_overrides[get_neo4j_session] = lambda: mock_neo_session
@@ -125,6 +136,7 @@ def override_deps(mock_pg_session, mock_neo_session, mock_hippocampus,
     app.dependency_overrides[deps.get_episodic] = lambda: mock_episodic
     app.dependency_overrides[deps.get_identity_builder] = lambda: mock_identity_builder
     app.dependency_overrides[deps.get_reinforcement] = lambda: mock_reinforcement
+    app.dependency_overrides[get_current_user] = lambda: mock_current_user
 
     yield
 
@@ -323,13 +335,13 @@ class TestGetContext:
         await client.post("/context", json={
             "user_id": "mahen",
             "query": "what is my goal?",
-            "app_id": "smritikosh",
+            "app_ids": ["smritikosh"],
         })
 
         call_kwargs = mock_context_builder.build.call_args.kwargs
         assert call_kwargs["user_id"] == "mahen"
         assert call_kwargs["query"] == "what is my goal?"
-        assert call_kwargs["app_id"] == "smritikosh"
+        assert call_kwargs["app_ids"] == ["smritikosh"]
 
     @pytest.mark.asyncio
     async def test_missing_user_id_returns_422(self, client):
@@ -394,13 +406,15 @@ class TestGetRecentEvents:
     async def test_app_id_query_param_forwarded(self, client, mock_episodic):
         mock_episodic.get_recent = AsyncMock(return_value=[])
 
-        await client.get("/memory/u1?app_id=my_app")
+        await client.get("/memory/u1?app_ids=my_app")
 
-        assert mock_episodic.get_recent.call_args.kwargs["app_id"] == "my_app"
+        # app_ids is passed as positional arg (3rd argument after pg and user_id)
+        args = mock_episodic.get_recent.call_args.args
+        assert args[2] == ["my_app"]  # third positional arg is app_ids
 
     @pytest.mark.asyncio
-    async def test_limit_over_50_returns_422(self, client):
-        response = await client.get("/memory/u1?limit=100")
+    async def test_limit_over_500_returns_422(self, client):
+        response = await client.get("/memory/u1?limit=501")
         assert response.status_code == 422
 
     @pytest.mark.asyncio
