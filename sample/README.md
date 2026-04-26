@@ -31,6 +31,7 @@ cp .env.example .env
 | `chatbot.py` | Interactive memory-aware chatbot loop |
 | `passive_extraction_demo.py` | End-to-end passive extraction demo — session ingest, idempotency, streaming windows, manual facts |
 | `middleware_demo.py` | SmritikoshMiddleware demo — transparent LLM wrapper with turn buffering and `remember()` tool; uses a fake client (no API key needed) |
+| `litellm_middleware_notebook.ipynb` | Jupyter notebook — LiteLLMMiddleware examples for Ollama, vLLM, Gemini, OpenAI, and Claude; includes multi-turn windowed-flush demo and memory verification cells |
 | `media_ingest_demo.py` | Media ingestion demo — upload a personal notes document, poll for extraction, review and confirm facts; no Whisper or Vision key needed |
 | `.env.example` | Template for local overrides (copy to `.env`) |
 
@@ -187,6 +188,26 @@ Demonstrates:
 
 Swap `FakeOpenAI()` for `openai.OpenAI()` or `anthropic.Anthropic()` in production.
 
+### `litellm_middleware_notebook.ipynb`
+
+A Jupyter notebook demonstrating `LiteLLMMiddleware` across every supported provider.
+
+```bash
+pip install jupyter litellm
+jupyter notebook sample/litellm_middleware_notebook.ipynb
+```
+
+Demonstrates:
+- **Ollama** (local) — `ollama_chat/llama3.2`; no API key, no data leaves your machine
+- **vLLM** — self-hosted OpenAI-compatible server; `openai/<model>` + `api_base`
+- **Google Gemini** — `gemini/gemini-1.5-flash`; requires `GEMINI_API_KEY`
+- **OpenAI via LiteLLM** — swap providers with one model-string change
+- **Anthropic Claude via LiteLLM** — same interface, different backend
+- **Multi-turn windowed flush** — `extract_every_n_turns=3` firing partial ingests in background threads across a 6-turn conversation
+- **Verification cells** — search, context retrieval, and memory listing to confirm what was extracted
+
+Swap `SMRITIKOSH_API_KEY` in the setup cell and run any provider section independently.
+
 ### `media_ingest_demo.py`
 
 Upload a personal notes document and watch Smritikosh extract facts from it.
@@ -217,10 +238,14 @@ python sample/passive_extraction_demo.py
 # 3. Middleware + remember() tool (no OpenAI key needed — uses fake client)
 python sample/middleware_demo.py
 
-# 4. Media ingestion from a document (no Whisper/Vision key needed)
+# 4. LiteLLM middleware — multi-provider (Ollama, vLLM, Gemini, OpenAI, Claude)
+pip install jupyter litellm
+jupyter notebook sample/litellm_middleware_notebook.ipynb
+
+# 5. Media ingestion from a document (no Whisper/Vision key needed)
 python sample/media_ingest_demo.py
 
-# 5. Chat with the enriched memory (requires LLM API key)
+# 6. Chat with the enriched memory (requires LLM API key)
 export ANTHROPIC_API_KEY=sk-ant-...
 python sample/chatbot.py
 ```

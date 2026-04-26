@@ -23,6 +23,7 @@ import logging.config
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from prometheus_fastapi_instrumentator import Instrumentator
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
@@ -110,6 +111,17 @@ app = FastAPI(
 # Rate limiter — attach state and register the 429 handler
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Prometheus metrics — exposes GET /metrics with per-route latency, throughput, error rates.
+# Disable by setting ENABLE_METRICS=false in your environment.
+Instrumentator(
+    should_group_status_codes=True,
+    should_ignore_untemplated=True,
+    should_respect_env_var=True,   # respects ENABLE_METRICS env var
+    should_instrument_requests_inprogress=True,
+    inprogress_name="smritikosh_requests_inprogress",
+    inprogress_labels=True,
+).instrument(app).expose(app, endpoint="/metrics", include_in_schema=True, tags=["system"])
 
 app.include_router(auth.router)
 app.include_router(health.router)

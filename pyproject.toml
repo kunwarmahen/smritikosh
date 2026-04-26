@@ -17,20 +17,16 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "pydantic>=2.9.0",
     "pydantic-settings>=2.6.0",
-
     # LLM (unified interface for Claude, Gemini, OpenAI, Ollama, vLLM)
     "litellm>=1.55.0",
-
     # Database
     "sqlalchemy[asyncio]>=2.0.36",
     "asyncpg>=0.30.0",          # async postgres driver
     "pgvector>=0.3.5",          # vector column support
     "alembic>=1.14.0",
     "neo4j>=5.27.0",            # Neo4j async driver
-
     # Background jobs
     "apscheduler>=3.10.4",
-
     # Utilities
     "tenacity>=9.0.0",          # retries for LLM calls
     "structlog>=24.4.0",        # structured logging
@@ -42,6 +38,7 @@ dependencies = [
     "pypdf>=5.0.0",             # PDF text extraction
     "httpx>=0.28.0",            # async HTTP client (Google OAuth2, REST APIs)
     "cryptography>=44.0.0",     # Fernet encryption for OAuth tokens
+    "prometheus-fastapi-instrumentator>=7.0.0",  # GET /metrics — latency, throughput, error rates
 ]
 
 [project.optional-dependencies]

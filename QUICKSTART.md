@@ -382,6 +382,8 @@ curl -o memories_alice.ndjson \
   -H "Authorization: Bearer $TOKEN"
 ```
 
+**Monitor with Prometheus + Grafana** — the server exposes `GET /metrics` in the Prometheus text format. Point Prometheus at `localhost:8080` and import `grafana/dashboards/smritikosh_api_observability.json` into Grafana to get latency percentiles, throughput, and error rate dashboards with no extra configuration. Set `ENABLE_METRICS=false` to disable the endpoint.
+
 ---
 
 ## Step 11 — Generate an API key (optional, for SDK / integrations)

@@ -1958,6 +1958,45 @@ curl http://localhost:8080/health
 | `"degraded"` | Server running, but one or more services are unavailable |
 | `"error"` | Server internal error |
 
+---
+
+### `GET /metrics`
+
+Prometheus-compatible metrics endpoint. Returns per-route request counts, latency histograms, error rates, and the in-flight request gauge in the Prometheus text format.
+
+```bash
+curl http://localhost:8080/metrics
+```
+
+Sample output (truncated):
+
+```
+# HELP http_requests_total Total number of HTTP requests
+# TYPE http_requests_total counter
+http_requests_total{handler="/memory/event",method="POST",status="2xx"} 142.0
+http_requests_total{handler="/context",method="POST",status="2xx"} 87.0
+http_requests_total{handler="/memory/event",method="POST",status="5xx"} 1.0
+
+# HELP http_request_duration_seconds Duration of HTTP requests
+# TYPE http_request_duration_seconds histogram
+http_request_duration_seconds_bucket{handler="/memory/event",method="POST",le="0.1"} 20.0
+http_request_duration_seconds_bucket{handler="/memory/event",method="POST",le="0.5"} 118.0
+...
+http_request_duration_seconds_sum{handler="/memory/event",method="POST"} 48.31
+
+# HELP smritikosh_requests_inprogress Requests currently being processed
+# TYPE smritikosh_requests_inprogress gauge
+smritikosh_requests_inprogress{handler="/context",method="POST"} 2.0
+```
+
+Set `ENABLE_METRICS=false` in your environment to disable the endpoint entirely.
+
+A Grafana dashboard template is provided at [`grafana/dashboards/smritikosh_api_observability.json`](grafana/dashboards/smritikosh_api_observability.json) — import it directly into Grafana. It includes:
+- Error rate, total throughput, p99 latency, and in-flight request summary cards
+- Request rate and 5xx error rate per route (time series)
+- p50/p95/p99 latency percentiles for `/memory/event` and `/context`
+- Sortable all-routes table with throughput, error rate, p50, and p99
+
 - `postgres` and `neo4j` are required — either `"ok"` or `"error"`.
 - `mongodb` is optional — `"ok"`, `"error"`, or `"not_configured"` (when `MONGODB_URL` is unset).
 - `llm_status` is `"ok"` when an API key is present (cloud providers) or a base URL is set (local providers). `llm_model` shows the resolved model name.
@@ -3685,6 +3724,13 @@ with LiteLLMMiddleware(
 
 All features (turn buffering, `remember()` tool, context injection, session ingest) work identically across providers because LiteLLM responses follow the OpenAI schema.
 
+**Interactive notebook:** `sample/litellm_middleware_notebook.ipynb` covers all five providers (Ollama, vLLM, Gemini, OpenAI, Claude) with runnable cells, a multi-turn windowed-flush demo, and inline verification against the Smritikosh API.
+
+```bash
+pip install jupyter litellm
+jupyter notebook sample/litellm_middleware_notebook.ipynb
+```
+
 ---
 
 ## Node.js SDK
@@ -4205,6 +4251,31 @@ uvicorn smritikosh.api.main:app --host 0.0.0.0 --port 8080 --workers 2
 ```
 
 Set all environment variables from `.env.example` in your platform's config panel.
+
+### Observability — Prometheus + Grafana
+
+Smritikosh exposes `GET /metrics` in the Prometheus text format. Point any Prometheus scraper at it and use the bundled Grafana dashboard for instant visibility into API latency, throughput, and error rates.
+
+**1. Configure Prometheus** — add a scrape target to `prometheus.yml`:
+
+```yaml
+scrape_configs:
+  - job_name: smritikosh
+    static_configs:
+      - targets: ["localhost:8080"]
+    metrics_path: /metrics
+    scrape_interval: 15s
+```
+
+**2. Import the Grafana dashboard** — in Grafana: **Dashboards → Import → Upload JSON file**, then select [`grafana/dashboards/smritikosh_api_observability.json`](grafana/dashboards/smritikosh_api_observability.json). Choose your Prometheus data source when prompted.
+
+The dashboard shows:
+- Error rate (5xx), total throughput (req/s), p99 latency, in-flight requests — summary cards
+- Request rate and error rate per route — time series
+- p50/p95/p99 latency percentiles for `/memory/event` and `/context`
+- All-routes table sortable by throughput, error rate, p50, and p99
+
+**Disable metrics:** set `ENABLE_METRICS=false` in your environment — the `/metrics` endpoint will return 404.
 
 ---
 
