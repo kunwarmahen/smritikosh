@@ -148,14 +148,14 @@ class TestReinforcementSubmit:
             session,
             event_id=event.id,
             user_id="u1",
-            app_id="myapp",
+            app_id="default",
             feedback_type=FeedbackType.NEGATIVE,
             comment="Not relevant at all",
         )
 
         assert feedback.event_id == event.id
         assert feedback.user_id == "u1"
-        assert feedback.app_id == "myapp"
+        assert feedback.app_id == "default"
         assert feedback.feedback_type == "negative"
         assert feedback.comment == "Not relevant at all"
 

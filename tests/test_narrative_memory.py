@@ -174,7 +174,7 @@ class TestGetRelatedEvents:
         mock_result.scalars.return_value.all.return_value = events
         session.execute = AsyncMock(return_value=mock_result)
 
-        result = await narrative.get_related_events(session, uuid.uuid4())
+        result = await narrative.get_related_events(session, uuid.uuid4(), "u1", "default")
 
         assert result == events
         session.execute.assert_called_once()
@@ -186,7 +186,7 @@ class TestGetRelatedEvents:
         mock_result.scalars.return_value.all.return_value = []
         session.execute = AsyncMock(return_value=mock_result)
 
-        result = await narrative.get_related_events(session, uuid.uuid4())
+        result = await narrative.get_related_events(session, uuid.uuid4(), "u1", "default")
 
         assert result == []
 
