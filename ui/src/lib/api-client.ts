@@ -243,6 +243,13 @@ export function createApiClient(token?: string) {
     adminMineBeliefs: (userId: string, appId = "default") =>
       request(`/admin/mine-beliefs`, opts({ method: "POST", body: JSON.stringify({ user_id: userId, app_id: appId }) })),
 
+    // ── Admin — embedding health ──────────────────────────────────────────
+    adminEmbeddingHealth: () =>
+      request(`/admin/embedding-health`, opts()),
+
+    adminReEmbed: () =>
+      request(`/admin/re-embed`, opts({ method: "POST" })),
+
     // ── API keys ──────────────────────────────────────────────────────────
     listApiKeys: () =>
       request(`/keys`, opts()),

@@ -1,4 +1,5 @@
 import { HealthPanel } from "@/components/admin/HealthPanel";
+import { EmbeddingHealthPanel } from "@/components/admin/EmbeddingHealthPanel";
 
 export default function AdminHealthPage() {
   return (
@@ -9,8 +10,9 @@ export default function AdminHealthPage() {
           Live status of all backend services.
         </p>
       </div>
-      <div className="max-w-md">
+      <div className="max-w-md space-y-4">
         <HealthPanel />
+        <EmbeddingHealthPanel />
       </div>
     </div>
   );

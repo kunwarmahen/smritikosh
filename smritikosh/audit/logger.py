@@ -14,6 +14,8 @@ Every meaningful transformation in the Smritikosh pipeline emits an AuditEvent:
   feedback.submitted         User feedback + importance score change
   context.built              Memory context assembled for an LLM call
   search.performed           Hybrid search executed
+  embedding.reembed_queued   Admin triggered a re-embed job (records queued count + triggered_by)
+  embedding.reembed_complete Background re-embed finished (success, errors, total)
 
 Design principles:
   - Fire-and-forget: emit() schedules writes via asyncio.create_task() so
@@ -49,6 +51,8 @@ class EventType:
     FEEDBACK_SUBMITTED     = "feedback.submitted"
     CONTEXT_BUILT          = "context.built"
     SEARCH_PERFORMED       = "search.performed"
+    EMBEDDING_REEMBED_QUEUED   = "embedding.reembed_queued"
+    EMBEDDING_REEMBED_COMPLETE = "embedding.reembed_complete"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

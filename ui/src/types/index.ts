@@ -133,6 +133,20 @@ export interface HealthStatus {
   llm_status: "ok" | "error";
 }
 
+export interface EmbeddingHealthStatus {
+  configured_dim: number;
+  total_embedded: number;
+  stale_events: number;
+  null_embeddings: number;
+  healthy: boolean;
+}
+
+export interface ReEmbedResult {
+  status: "ok" | "started";
+  queued: number;
+  message?: string | null;
+}
+
 export interface AdminUser {
   username: string;
   email?: string | null;

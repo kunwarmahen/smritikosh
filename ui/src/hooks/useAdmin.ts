@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSession } from "next-auth/react";
 import { createApiClient } from "@/lib/api-client";
-import type { AdminUser, AdminUsersResponse, HealthStatus } from "@/types";
+import type { AdminUser, AdminUsersResponse, EmbeddingHealthStatus, HealthStatus, ReEmbedResult } from "@/types";
 
 export function useAdminUsers(params?: { limit?: number; offset?: number; role?: string }) {
   const { data: session } = useSession();
@@ -86,5 +86,30 @@ export function useAdminMineBeliefs() {
   return useMutation({
     mutationFn: ({ userId, appId }: { userId: string; appId?: string }) =>
       createApiClient(token).adminMineBeliefs(userId, appId),
+  });
+}
+
+export function useEmbeddingHealth() {
+  const { data: session } = useSession();
+  const token = session?.accessToken;
+
+  return useQuery<EmbeddingHealthStatus>({
+    queryKey: ["embedding-health"],
+    queryFn: () => createApiClient(token).adminEmbeddingHealth() as Promise<EmbeddingHealthStatus>,
+    enabled: !!token,
+    refetchInterval: 30_000,
+  });
+}
+
+export function useAdminReEmbed() {
+  const { data: session } = useSession();
+  const qc = useQueryClient();
+  const token = session?.accessToken;
+
+  return useMutation<ReEmbedResult>({
+    mutationFn: () => createApiClient(token).adminReEmbed() as Promise<ReEmbedResult>,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["embedding-health"] });
+    },
   });
 }
