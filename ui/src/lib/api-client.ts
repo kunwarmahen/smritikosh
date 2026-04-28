@@ -250,11 +250,18 @@ export function createApiClient(token?: string) {
     adminReEmbed: () =>
       request(`/admin/re-embed`, opts({ method: "POST" })),
 
+    // ── Facts / contradictions ────────────────────────────────────────────
+    listContradictions: (userId: string, appId = "default") =>
+      request(`/facts/contradictions/${userId}?app_id=${appId}`, opts()),
+
+    resolveContradiction: (contradictionId: string, body: { keep: string; merged_value?: string }) =>
+      request(`/facts/contradictions/${contradictionId}`, opts({ method: "PATCH", body: JSON.stringify(body) })),
+
     // ── API keys ──────────────────────────────────────────────────────────
     listApiKeys: () =>
       request(`/keys`, opts()),
 
-    createApiKey: (body: { name: string; app_ids?: string[] }) =>
+    createApiKey: (body: { name: string; app_ids?: string[]; scopes?: string[] }) =>
       request(`/keys`, opts({ method: "POST", body: JSON.stringify(body) })),
 
     revokeApiKey: (keyId: string) =>

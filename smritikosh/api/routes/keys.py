@@ -27,9 +27,13 @@ router = APIRouter(prefix="/keys", tags=["api-keys"])
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
 
+VALID_SCOPES = {"read", "write", "admin"}
+
+
 class CreateKeyRequest(BaseModel):
     name: str
     app_ids: list[str] = Field(default_factory=lambda: ["default"])
+    scopes: list[str] = Field(default_factory=lambda: ["read", "write"])
 
 
 class CreateKeyResponse(BaseModel):
@@ -38,6 +42,7 @@ class CreateKeyResponse(BaseModel):
     key: str          # full key — shown ONCE
     key_prefix: str
     app_ids: list[str]
+    scopes: list[str]
     created_at: str
 
 
@@ -46,6 +51,7 @@ class KeyItem(BaseModel):
     name: str
     key_prefix: str
     app_ids: list[str]
+    scopes: list[str]
     last_used_at: str | None
     created_at: str
 
@@ -77,6 +83,15 @@ async def create_key(
     if not name:
         raise HTTPException(status_code=422, detail="Key name cannot be empty.")
 
+    # Validate scopes
+    requested_scopes = list(dict.fromkeys(request.scopes))  # deduplicate, preserve order
+    invalid = [s for s in requested_scopes if s not in VALID_SCOPES]
+    if invalid:
+        raise HTTPException(status_code=422, detail=f"Invalid scopes: {invalid}. Valid: {sorted(VALID_SCOPES)}")
+    # Non-admins cannot create admin-scoped keys
+    if "admin" in requested_scopes and current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Only admins can create admin-scoped keys.")
+
     # Validate all requested app_ids are within the caller's allowed app_ids
     caller_app_ids = current_user.get("app_ids", [])
     if current_user.get("role") != "admin":
@@ -92,6 +107,7 @@ async def create_key(
     api_key = ApiKey(
         user_id=current_user["sub"],
         app_ids=request.app_ids,
+        scopes=requested_scopes,
         name=name,
         key_prefix=key_prefix,
         key_hash=key_hash,
@@ -107,6 +123,7 @@ async def create_key(
         key=full_key,
         key_prefix=key_prefix,
         app_ids=api_key.app_ids,
+        scopes=api_key.scopes,
         created_at=api_key.created_at.isoformat(),
     )
 
@@ -132,6 +149,7 @@ async def list_keys(
                 name=k.name,
                 key_prefix=k.key_prefix,
                 app_ids=k.app_ids,
+                scopes=k.scopes or ["read", "write"],
                 last_used_at=k.last_used_at.isoformat() if k.last_used_at else None,
                 created_at=k.created_at.isoformat(),
             )

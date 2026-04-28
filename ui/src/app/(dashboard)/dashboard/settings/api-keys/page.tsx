@@ -7,14 +7,23 @@ import { formatDistanceToNow } from "date-fns";
 import { useSession } from "next-auth/react";
 import { useApiKeys, useCreateApiKey, useRevokeApiKey, type ApiKeyItem } from "@/hooks/useApiKeys";
 
+const BASE_SCOPES = [
+  { value: "read",  label: "Read",  description: "GET endpoints: search, context, identity, facts" },
+  { value: "write", label: "Write", description: "POST/PATCH/DELETE on memory and ingest endpoints" },
+];
+const ADMIN_SCOPE = { value: "admin", label: "Admin", description: "Admin endpoints: user management, jobs, health checks" };
+
 // ── New key modal ──────────────────────────────────────────────────────────────
 
 function NewKeyModal({ onClose }: { onClose: () => void }) {
   const { data: session } = useSession();
   const availableAppIds: string[] = session?.user?.appIds ?? ["default"];
+  const isAdmin = session?.user?.role === "admin";
+  const ALL_SCOPES = isAdmin ? [...BASE_SCOPES, ADMIN_SCOPE] : BASE_SCOPES;
 
   const [name, setName] = useState("");
   const [selectedAppIds, setSelectedAppIds] = useState<string[]>(availableAppIds);
+  const [selectedScopes, setSelectedScopes] = useState<string[]>(["read", "write"]);
   const [createdKey, setCreatedKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
@@ -27,13 +36,20 @@ function NewKeyModal({ onClose }: { onClose: () => void }) {
     );
   }
 
+  function toggleScope(scope: string) {
+    setSelectedScopes((prev) =>
+      prev.includes(scope) ? prev.filter((x) => x !== scope) : [...prev, scope]
+    );
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
     if (!name.trim()) { setError("Name is required."); return; }
     if (selectedAppIds.length === 0) { setError("Select at least one app."); return; }
+    if (selectedScopes.length === 0) { setError("Select at least one scope."); return; }
     create.mutate(
-      { name: name.trim(), app_ids: selectedAppIds },
+      { name: name.trim(), app_ids: selectedAppIds, scopes: selectedScopes },
       {
         onSuccess: (data) => setCreatedKey(data.key),
         onError: (err) => setError(err.message ?? "Failed to create key."),
@@ -116,6 +132,48 @@ function NewKeyModal({ onClose }: { onClose: () => void }) {
               </p>
             </div>
 
+            <div>
+              <label className="label">Permissions</label>
+              <div className="space-y-2 mt-1">
+                {ALL_SCOPES.map((s) => (
+                  <button
+                    key={s.value}
+                    type="button"
+                    onClick={() => toggleScope(s.value)}
+                    className={clsx(
+                      "w-full flex items-start gap-3 px-3 py-2.5 rounded-lg border text-left transition-colors",
+                      selectedScopes.includes(s.value)
+                        ? "bg-violet-500/10 border-violet-500/40"
+                        : "bg-zinc-50 dark:bg-zinc-800/60 border-zinc-200 dark:border-zinc-700 hover:border-zinc-300 dark:hover:border-zinc-600",
+                    )}
+                  >
+                    <div
+                      className={clsx(
+                        "w-4 h-4 mt-0.5 flex-shrink-0 rounded border transition-colors",
+                        selectedScopes.includes(s.value)
+                          ? "bg-violet-500 border-violet-500"
+                          : "border-zinc-300 dark:border-zinc-600",
+                      )}
+                    />
+                    <div>
+                      <p className={clsx(
+                        "text-xs font-medium",
+                        selectedScopes.includes(s.value)
+                          ? "text-violet-700 dark:text-violet-300"
+                          : "text-zinc-700 dark:text-zinc-300",
+                      )}>
+                        {s.label}
+                      </p>
+                      <p className="text-[11px] text-zinc-500 mt-0.5">{s.description}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-zinc-600 mt-1.5">
+                Read-only keys are safe for analytics and reporting integrations.
+              </p>
+            </div>
+
             {error && (
               <p className="text-xs text-rose-400 bg-rose-500/8 border border-rose-500/20 rounded-lg px-3 py-2">
                 {error}
@@ -149,7 +207,24 @@ function KeyRow({ apiKey }: { apiKey: ApiKeyItem }) {
           <Key className="w-3.5 h-3.5 text-zinc-500" />
         </div>
         <div className="min-w-0">
-          <p className="text-sm text-zinc-800 dark:text-zinc-200 truncate">{apiKey.name}</p>
+          <div className="flex items-center gap-2">
+            <p className="text-sm text-zinc-800 dark:text-zinc-200 truncate">{apiKey.name}</p>
+            {(apiKey.scopes ?? ["read", "write"]).map((s) => (
+              <span
+                key={s}
+                className={clsx(
+                  "text-[10px] px-1.5 py-0.5 rounded-full border font-medium flex-shrink-0",
+                  s === "write"
+                    ? "bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400"
+                    : s === "admin"
+                    ? "bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400"
+                    : "bg-zinc-100 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 text-zinc-500",
+                )}
+              >
+                {s}
+              </span>
+            ))}
+          </div>
           <div className="flex items-center gap-2 mt-0.5">
             <code className="text-xs text-zinc-600 font-mono">
               sk-smriti-{apiKey.key_prefix}…
@@ -254,7 +329,7 @@ export default function ApiKeysPage() {
 {`Authorization: Bearer sk-smriti-your-key-here`}
           </pre>
           <p className="text-xs text-zinc-600 mt-3">
-            The key is scoped to your user account and app ID. It can be used anywhere a session token is accepted.
+            Keys with <strong>Read</strong> scope can call any GET endpoint. Add <strong>Write</strong> to allow memory writes and session ingest. <strong>Admin</strong> scope grants access to user management and job endpoints — available to admin accounts only.
           </p>
         </div>
       </div>

@@ -27,7 +27,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from smritikosh.api.deps import get_hippocampus, get_llm, get_semantic
-from smritikosh.auth.deps import assert_self_or_admin, get_current_user
+from smritikosh.auth.deps import assert_self_or_admin, require_write_scope
 from smritikosh.db.models import ProcessedSession, SourceType
 from smritikosh.db.neo4j import get_neo4j_session
 from smritikosh.db.postgres import get_session
@@ -59,6 +59,7 @@ class SessionIngestRequest(BaseModel):
     partial: bool = Field(False, description="True for mid-session streaming windows; False (default) for final session close")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Optional: timestamp, device, channel, etc.")
     use_trigger_filter: bool = Field(True, description="Skip LLM extraction if no high-signal phrases are detected (cost saver)")
+    dry_run: bool = Field(False, description="Run extraction but do not persist anything — useful for debugging extraction quality")
 
 
 class SessionIngestResponse(BaseModel):
@@ -71,6 +72,8 @@ class SessionIngestResponse(BaseModel):
     extraction_skipped: bool    # True if trigger filter fired and no triggers found
     already_processed: bool     # True if this session_id was already complete
     partial: bool
+    dry_run: bool = False
+    extracted_facts: list[dict] = Field(default_factory=list, description="Populated in dry_run mode — shows what would be stored")
 
 
 # ── Endpoint ──────────────────────────────────────────────────────────────────
@@ -84,7 +87,7 @@ async def ingest_session(
     semantic: Annotated[SemanticMemory, Depends(get_semantic)],
     pg: Annotated[AsyncSession, Depends(get_session)],
     neo: Annotated[NeoSession, Depends(get_neo4j_session)],
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[dict, Depends(require_write_scope)],
 ) -> SessionIngestResponse:
     """
     Extract memories from a conversation session transcript.
@@ -104,10 +107,12 @@ async def ingest_session(
 
     turns_raw = [t.model_dump() for t in request.turns]
 
-    # ── 1. Idempotency check ──────────────────────────────────────────────────
-    existing_session = await _get_processed_session(
-        pg, request.user_id, request.app_id, request.session_id
-    )
+    # ── 1. Idempotency check (skip in dry_run) ────────────────────────────────
+    existing_session = None
+    if not request.dry_run:
+        existing_session = await _get_processed_session(
+            pg, request.user_id, request.app_id, request.session_id
+        )
 
     if existing_session and not existing_session.is_partial and not request.partial:
         # Complete session already processed — return cached result
@@ -152,14 +157,15 @@ async def ingest_session(
                 "No triggers found in session window — skipping LLM extraction",
                 extra={"session_id": request.session_id, "user_id": request.user_id},
             )
-            # Still update the turn index so we don't re-scan these turns
-            await _upsert_processed_session(
-                pg, request.user_id, request.app_id, request.session_id,
-                turns_count=len(turns_raw),
-                facts_extracted=existing_session.facts_extracted if existing_session else 0,
-                last_turn_index=len(transcript.user_turns) + last_turn_index,
-                is_partial=request.partial,
-            )
+            # Still update the turn index so we don't re-scan these turns (skip in dry_run)
+            if not request.dry_run:
+                await _upsert_processed_session(
+                    pg, request.user_id, request.app_id, request.session_id,
+                    turns_count=len(turns_raw),
+                    facts_extracted=existing_session.facts_extracted if existing_session else 0,
+                    last_turn_index=len(transcript.user_turns) + last_turn_index,
+                    is_partial=request.partial,
+                )
             return SessionIngestResponse(
                 session_id=request.session_id,
                 user_id=request.user_id,
@@ -170,6 +176,7 @@ async def ingest_session(
                 extraction_skipped=True,
                 already_processed=False,
                 partial=request.partial,
+                dry_run=request.dry_run,
             )
 
     # ── 4. Fetch existing facts for delta extraction ──────────────────────────
@@ -208,52 +215,50 @@ async def ingest_session(
         )
         # Don't abort — store the session event without facts
 
-    # ── 6. Store episodic event for this session ──────────────────────────────
-    session_summary = (
-        f"Session {request.session_id}: {transcript.turns_count} user turns. "
-        f"Extracted {len(extracted_facts)} facts."
-    )
-    try:
-        await hippocampus.encode(
-            pg,
-            neo,
-            user_id=request.user_id,
-            raw_text=transcript.combined_text[:2000],  # cap episodic text length
-            app_id=request.app_id,
-            metadata={**request.metadata, "session_id": request.session_id, "summary": session_summary},
-            source_type=source_type,
-            source_meta=source_meta,
+    # ── 6. Store episodic event (skip in dry_run) ─────────────────────────────
+    if not request.dry_run:
+        session_summary = (
+            f"Session {request.session_id}: {transcript.turns_count} user turns. "
+            f"Extracted {len(extracted_facts)} facts."
         )
-    except Exception:
-        logger.exception(
-            "Failed to store episodic event for session",
-            extra={"session_id": request.session_id},
+        try:
+            await hippocampus.encode(
+                pg,
+                neo,
+                user_id=request.user_id,
+                raw_text=transcript.combined_text[:2000],
+                app_id=request.app_id,
+                metadata={**request.metadata, "session_id": request.session_id, "summary": session_summary},
+                source_type=source_type,
+                source_meta=source_meta,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to store episodic event for session",
+                extra={"session_id": request.session_id},
+            )
+
+    # ── 7. Record processed session (skip in dry_run) ─────────────────────────
+    if not request.dry_run:
+        total_facts = (existing_session.facts_extracted if existing_session else 0) + len(extracted_facts)
+        await _upsert_processed_session(
+            pg, request.user_id, request.app_id, request.session_id,
+            turns_count=len(turns_raw),
+            facts_extracted=total_facts,
+            last_turn_index=last_turn_index + transcript.turns_count,
+            is_partial=request.partial,
         )
-
-    # ── 7. Upsert extracted facts separately (hippocampus encode already did) ─
-    # hippocampus.encode() above already extracted and upserted from the full text.
-    # The extracted_facts from step 5 are used here for the response count.
-    # (Avoids double extraction — encode() runs its own pipeline internally.)
-    # We only use the count for reporting; the actual upsert happened in encode().
-
-    # ── 8. Record processed session ──────────────────────────────────────────
-    total_facts = (existing_session.facts_extracted if existing_session else 0) + len(extracted_facts)
-    await _upsert_processed_session(
-        pg, request.user_id, request.app_id, request.session_id,
-        turns_count=len(turns_raw),
-        facts_extracted=total_facts,
-        last_turn_index=last_turn_index + transcript.turns_count,
-        is_partial=request.partial,
-    )
 
     logger.info(
-        "Session ingest complete",
+        "Session ingest %s",
+        "dry_run complete" if request.dry_run else "complete",
         extra={
             "session_id": request.session_id,
             "user_id": request.user_id,
             "turns": transcript.turns_count,
             "facts": len(extracted_facts),
             "source_type": source_type,
+            "dry_run": request.dry_run,
         },
     )
 
@@ -267,6 +272,8 @@ async def ingest_session(
         extraction_skipped=extraction_skipped,
         already_processed=False,
         partial=request.partial,
+        dry_run=request.dry_run,
+        extracted_facts=extracted_facts if request.dry_run else [],
     )
 
 
@@ -281,7 +288,7 @@ async def ingest_transcript(
     semantic: Annotated[SemanticMemory, Depends(get_semantic)],
     pg: Annotated[AsyncSession, Depends(get_session)],
     neo: Annotated[NeoSession, Depends(get_neo4j_session)],
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[dict, Depends(require_write_scope)],
 ) -> SessionIngestResponse:
     """Alias for POST /ingest/session — same behaviour, kept for backwards compat."""
     return await ingest_session(

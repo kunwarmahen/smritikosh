@@ -10,9 +10,14 @@ import {
   Network,
   SlidersHorizontal,
   ThumbsUp,
+  GitMerge,
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { clsx } from "clsx";
 import { useRecentEvents, useSubmitFeedback, useDeleteEvent } from "@/hooks/useMemory";
+import { useContradictions, useResolveContradiction } from "@/hooks/useFacts";
 import { SourceBadge, isAutoExtracted } from "@/components/memory/SourceBadge";
 import type { MemoryEvent } from "@/types";
 
@@ -130,11 +135,148 @@ function ReviewCard({ event, onApproved }: { event: MemoryEvent; onApproved: () 
   );
 }
 
+interface ContradictionCardProps {
+  contradiction: {
+    id: string;
+    category: string;
+    key: string;
+    existing_value: string;
+    existing_confidence: number;
+    candidate_value: string;
+    candidate_source: string;
+    candidate_confidence: number;
+    created_at: string;
+  };
+  onResolved: () => void;
+}
+
+function ContradictionCard({ contradiction, onResolved }: ContradictionCardProps) {
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [mergedValue, setMergedValue] = useState("");
+  const resolve = useResolveContradiction();
+
+  const timeAgo = (() => {
+    try {
+      const ts = contradiction.created_at.endsWith("Z")
+        ? contradiction.created_at
+        : contradiction.created_at + "Z";
+      return formatDistanceToNow(new Date(ts), { addSuffix: true });
+    } catch { return ""; }
+  })();
+
+  async function handleResolve(keep: "existing" | "candidate" | "merge") {
+    if (keep === "merge" && !mergedValue.trim()) return;
+    await resolve.mutateAsync({
+      id: contradiction.id,
+      keep,
+      merged_value: keep === "merge" ? mergedValue.trim() : undefined,
+    });
+    onResolved();
+  }
+
+  const isPending = resolve.isPending;
+
+  return (
+    <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl px-4 py-3.5 border-l-2 border-l-rose-500/50">
+      {/* Header */}
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <div className="flex items-center gap-2">
+          <AlertTriangle className="w-3.5 h-3.5 text-rose-400 flex-shrink-0" />
+          <span className="text-xs font-medium text-zinc-500 uppercase tracking-wide">
+            {contradiction.category} · {contradiction.key}
+          </span>
+        </div>
+        <span className="text-xs text-zinc-600 flex-shrink-0">{timeAgo}</span>
+      </div>
+
+      {/* Fact comparison */}
+      <div className="grid grid-cols-2 gap-3 mb-3">
+        <div className="rounded-lg bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700/50 p-3">
+          <p className="text-xs font-medium text-zinc-500 mb-1.5">Current</p>
+          <p className="text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed">{contradiction.existing_value}</p>
+          <p className="text-xs text-zinc-500 mt-1.5">
+            conf {(contradiction.existing_confidence * 100).toFixed(0)}%
+          </p>
+        </div>
+        <div className="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/40 p-3">
+          <p className="text-xs font-medium text-amber-600 dark:text-amber-400 mb-1.5">Candidate</p>
+          <p className="text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed">{contradiction.candidate_value}</p>
+          <p className="text-xs text-zinc-500 mt-1.5">
+            conf {(contradiction.candidate_confidence * 100).toFixed(0)}% · {contradiction.candidate_source}
+          </p>
+        </div>
+      </div>
+
+      {/* Merge text area */}
+      {mergeOpen && (
+        <div className="mb-3">
+          <label className="block text-xs text-zinc-500 mb-1.5">Write the canonical merged value</label>
+          <textarea
+            value={mergedValue}
+            onChange={(e) => setMergedValue(e.target.value)}
+            placeholder={`e.g. "${contradiction.existing_value} (updated: ${contradiction.candidate_value})"`}
+            rows={2}
+            className="w-full text-sm bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700
+                       rounded-lg px-3 py-2 text-zinc-700 dark:text-zinc-300 resize-none
+                       focus:outline-none focus:ring-1 focus:ring-violet-500/50"
+          />
+        </div>
+      )}
+
+      {/* Action buttons */}
+      <div className="flex items-center gap-2 flex-wrap pt-1">
+        <button
+          onClick={() => handleResolve("existing")}
+          disabled={isPending}
+          className="text-xs px-2.5 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700
+                     text-zinc-600 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200
+                     hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-50"
+        >
+          Keep current
+        </button>
+        <button
+          onClick={() => handleResolve("candidate")}
+          disabled={isPending}
+          className="text-xs px-2.5 py-1.5 rounded-lg border border-amber-300 dark:border-amber-700/50
+                     text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20
+                     transition-colors disabled:opacity-50"
+        >
+          Use candidate
+        </button>
+        <button
+          onClick={() => {
+            if (mergeOpen && mergedValue.trim()) {
+              handleResolve("merge");
+            } else {
+              setMergeOpen((v) => !v);
+            }
+          }}
+          disabled={isPending}
+          className={clsx(
+            "flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition-colors disabled:opacity-50",
+            mergeOpen && mergedValue.trim()
+              ? "border-violet-400 dark:border-violet-600 bg-violet-500/10 text-violet-700 dark:text-violet-300"
+              : "border-violet-200 dark:border-violet-800/60 text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/20",
+          )}
+        >
+          <GitMerge className="w-3.5 h-3.5" />
+          {mergeOpen && mergedValue.trim() ? "Save merged" : mergeOpen ? "Write merge…" : "Merge"}
+          {mergeOpen ? <ChevronUp className="w-3 h-3 ml-0.5" /> : <ChevronDown className="w-3 h-3 ml-0.5" />}
+        </button>
+        {isPending && <Loader2 className="w-3.5 h-3.5 animate-spin text-zinc-400" />}
+      </div>
+    </div>
+  );
+}
+
 export default function ReviewPage() {
   const [sourceFilter, setSourceFilter] = useState("all");
   const [approvedIds, setApprovedIds] = useState<Set<string>>(new Set());
+  const [resolvedIds, setResolvedIds] = useState<Set<string>>(new Set());
+  const [showContradictions, setShowContradictions] = useState(true);
 
   const { data, isLoading, isError, refetch } = useRecentEvents({ limit: 100 });
+  const { data: contradictionsData, isLoading: contradictionsLoading } = useContradictions();
 
   const autoExtracted = useMemo(() => {
     if (!data?.events) return [];
@@ -157,6 +299,11 @@ export default function ReviewPage() {
     return counts;
   }, [autoExtracted]);
 
+  const unresolved = useMemo(() => {
+    if (!contradictionsData?.contradictions) return [];
+    return contradictionsData.contradictions.filter((c) => !resolvedIds.has(c.id));
+  }, [contradictionsData, resolvedIds]);
+
   return (
     <div>
       <div className="mb-6">
@@ -165,6 +312,46 @@ export default function ReviewPage() {
           Auto-extracted memories waiting for your review. Approve or remove them.
         </p>
       </div>
+
+      {/* Contradictions section */}
+      {(unresolved.length > 0 || contradictionsLoading) && (
+        <div className="mb-8">
+          <button
+            onClick={() => setShowContradictions((v) => !v)}
+            className="flex items-center gap-2 mb-4 text-sm font-medium text-zinc-700 dark:text-zinc-300"
+          >
+            <AlertTriangle className="w-4 h-4 text-rose-400" />
+            Fact conflicts
+            {unresolved.length > 0 && (
+              <span className="ml-1 bg-rose-500/15 text-rose-600 dark:text-rose-400 text-xs px-1.5 py-0.5 rounded-full">
+                {unresolved.length}
+              </span>
+            )}
+            {showContradictions ? <ChevronUp className="w-4 h-4 ml-auto" /> : <ChevronDown className="w-4 h-4 ml-auto" />}
+          </button>
+
+          {showContradictions && (
+            <>
+              {contradictionsLoading ? (
+                <div className="flex items-center gap-2 text-zinc-500 py-4 justify-center">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span className="text-sm">Loading conflicts…</span>
+                </div>
+              ) : (
+                <div className="space-y-3 mb-2">
+                  {unresolved.map((c) => (
+                    <ContradictionCard
+                      key={c.id}
+                      contradiction={c}
+                      onResolved={() => setResolvedIds((prev) => new Set([...prev, c.id]))}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {/* Filter bar */}
       <div className="flex items-center gap-3 mb-5">
@@ -213,7 +400,7 @@ export default function ReviewPage() {
       )}
 
       {/* Empty state */}
-      {!isLoading && !isError && autoExtracted.length === 0 && (
+      {!isLoading && !isError && autoExtracted.length === 0 && unresolved.length === 0 && (
         <div className="card text-center py-16">
           <CheckCircle2 className="w-10 h-10 text-emerald-600/60 mx-auto mb-3" />
           <p className="text-zinc-400 text-sm font-medium">Nothing to review</p>

@@ -18,7 +18,7 @@ from neo4j import AsyncSession as NeoSession
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from smritikosh.api.ratelimit import limiter
-from smritikosh.auth.deps import assert_app_access, assert_self_or_admin, get_current_user
+from smritikosh.auth.deps import assert_app_access, assert_self_or_admin, get_current_user, require_write_scope
 from smritikosh.api.deps import get_audit_logger, get_hippocampus, get_episodic, get_llm
 from smritikosh.config import settings
 from smritikosh.api.schemas import (
@@ -59,7 +59,7 @@ async def capture_event(
     hippocampus: Annotated[Hippocampus, Depends(get_hippocampus)],
     pg: Annotated[AsyncSession, Depends(get_session)],
     neo: Annotated[NeoSession, Depends(get_neo4j_session)],
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[dict, Depends(require_write_scope)],
 ) -> EventResponse:
     """
     Encode a user interaction into persistent memory.
@@ -104,7 +104,7 @@ async def store_fact(
     semantic: Annotated[SemanticMemory, Depends(get_semantic)],
     neo: Annotated[NeoSession, Depends(get_neo4j_session)],
     pg: Annotated[AsyncSession, Depends(get_session)],
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[dict, Depends(require_write_scope)],
 ) -> FactResponse:
     """
     Directly store a structured fact about a user — bypasses LLM extraction.

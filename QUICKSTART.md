@@ -401,11 +401,18 @@ TOKEN=$(curl -s -X POST http://localhost:8080/auth/token \
   -d '{"username": "alice", "password": "alicepass"}' \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
 
-# Generate a key
+# Generate a full read+write key (default)
 curl -s -X POST http://localhost:8080/keys \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name": "local dev", "app_ids": ["default"]}' \
+  | python3 -m json.tool
+
+# Or generate a read-only key (safe for analytics integrations)
+curl -s -X POST http://localhost:8080/keys \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "read-only analytics", "app_ids": ["default"], "scopes": ["read"]}' \
   | python3 -m json.tool
 ```
 

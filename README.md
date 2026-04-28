@@ -1839,6 +1839,10 @@ The **+ button** in the memory timeline toolbar opens a modal for manually recor
 
 Auto-extracted memories (source types other than `api_explicit` and `ui_manual`) surface here for human review before they influence the knowledge graph. Features:
 
+- **Fact conflicts section** — at the top of the page, a collapsible panel lists unresolved fact contradictions. Each card shows the current vs. candidate value side-by-side. Three resolution options:
+  - **Keep current** — dismiss the candidate; existing fact unchanged.
+  - **Use candidate** — overwrite the fact with the new candidate value.
+  - **Merge** — opens an inline text area; type the canonical merged value and click "Save merged". The merged value is written with confidence = max(existing, candidate).
 - Filterable by source type; counts shown per filter chip
 - **Approve** (thumbs-up feedback) marks a memory as verified without deleting it
 - **Remove** (trash) deletes the event entirely
@@ -2199,6 +2203,80 @@ curl -X POST http://localhost:8080/batch \
 | `source_type` | string | Optional source type; defaults to `"api_explicit"` |
 
 If an individual operation fails (e.g. embedding error), its result has `"status": "error"` and an `"error"` message field. The overall response is always `200 OK`; check `error_count` to detect partial failures.
+
+---
+
+### `POST /context/stream` — Streaming context (SSE)
+
+Same request body as `POST /context`, but returns **Server-Sent Events** instead of a single JSON blob. Each memory layer emits an event as soon as it is ready, so clients can start rendering before the full assembly completes.
+
+**Event sequence:**
+
+| Event | When | Payload |
+|-------|------|---------|
+| `intent` | After classification | `{intent, via_llm}` |
+| `procedures` | After PG procedures query | `{data: [...rules], count}` |
+| `recent` | After PG recent-events query | `{data: [...events], count}` |
+| `similar` | After PG hybrid-search | `{data: [...events], count, embedding_failed}` |
+| `identity` | After Neo4j profile query | `{facts: [...], summary}` |
+| `done` | Assembly complete | `{context_text, messages, total_memories, reconsolidation_scheduled, ...}` |
+| `error` | On exception | `{detail}` — stream closes |
+
+```bash
+# Using curl (prints each SSE frame as it arrives)
+curl -N -X POST http://localhost:8080/context/stream \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "alice", "query": "what am I working on?"}'
+```
+
+```
+event: intent
+data: {"intent": "PROJECT_PLANNING", "via_llm": false}
+
+event: procedures
+data: {"data": [{"trigger": "When discussing infra", "instruction": "..."}], "count": 1}
+
+event: recent
+data: {"data": [{"event_id": "...", "raw_text": "...", "created_at": "..."}], "count": 5}
+
+event: similar
+data: {"data": [...], "count": 5, "embedding_failed": false}
+
+event: identity
+data: {"facts": [{"category": "role", "key": "occupation", "value": "ML engineer", "confidence": 0.95}], "summary": "..."}
+
+event: done
+data: {"context_text": "## User Memory Context\n...", "messages": [...], "total_memories": 11, "reconsolidation_scheduled": true}
+```
+
+**JavaScript (native EventSource doesn't support POST; use `fetch` + a streaming reader):**
+
+```javascript
+const resp = await fetch('/context/stream', {
+  method: 'POST',
+  headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ user_id: 'alice', query: 'what am I working on?' }),
+});
+
+const reader = resp.body.getReader();
+const decoder = new TextDecoder();
+let buffer = '';
+while (true) {
+  const { done, value } = await reader.read();
+  if (done) break;
+  buffer += decoder.decode(value);
+  for (const frame of buffer.split('\n\n')) {
+    if (!frame.trim()) continue;
+    const [evtLine, dataLine] = frame.split('\n');
+    const type = evtLine.replace('event: ', '');
+    const payload = JSON.parse(dataLine.replace('data: ', ''));
+    if (type === 'similar') renderMemories(payload.data);
+    if (type === 'done') injectContext(payload.context_text);
+  }
+  buffer = '';
+}
+```
 
 ---
 
@@ -2626,6 +2704,24 @@ curl -X POST http://localhost:8080/ingest/session \
 ```
 
 **Alias**: `POST /ingest/transcript` — identical behaviour, kept for backwards compatibility.
+
+**Dry-run mode** — add `"dry_run": true` to `POST /ingest/session` to run extraction without persisting anything. Useful for debugging what facts a transcript would produce:
+
+```bash
+curl -X POST http://localhost:8080/ingest/session \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "alice",
+    "session_id": "test-dry-run-001",
+    "dry_run": true,
+    "turns": [
+      {"role": "user", "content": "I always prefer dark mode and I use neovim."}
+    ]
+  }'
+# Returns: {"dry_run": true, "extracted_facts": [...], "facts_extracted": N, ...}
+# Nothing is written to the database.
+```
 
 ---
 
@@ -3440,15 +3536,34 @@ TOKEN=$(curl -s -X POST http://localhost:8080/auth/token \
   -d '{"username": "alice", "password": "alicepass"}' \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
 
-# 2. Generate a key
+# 2a. Generate a full read+write key (default)
 curl -s -X POST http://localhost:8080/keys \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name": "My integration", "app_ids": ["default"]}' \
   | python3 -m json.tool
-# Returns: { "id": "...", "key": "sk-smriti-abc123...", "key_prefix": "abc123ab", ... }
+# Returns: { "id": "...", "key": "sk-smriti-abc123...", "scopes": ["read","write"], ... }
 # The full key is returned ONCE — store it immediately.
+
+# 2b. Generate a read-only key for analytics / reporting integrations
+curl -s -X POST http://localhost:8080/keys \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "read-only analytics", "app_ids": ["default"], "scopes": ["read"]}' \
+  | python3 -m json.tool
 ```
+
+### API key scopes
+
+Keys support three scopes. The default is `["read", "write"]`.
+
+| Scope | What it grants |
+|-------|---------------|
+| `read` | GET endpoints: memory search, context, identity, facts, procedures, audit |
+| `write` | POST / PATCH / DELETE on memory endpoints (`/memory/event`, `/memory/fact`, `/ingest/session`, etc.) |
+| `admin` | Admin endpoints (`/admin/**`). Only an admin user can create admin-scoped keys. |
+
+JWT tokens (browser sessions) are always unrestricted — scope enforcement only applies to API keys. Read-only keys are useful for third-party analytics tools or dashboards that should never modify a user's memory.
 
 ### Using an API key
 

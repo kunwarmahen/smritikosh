@@ -73,7 +73,8 @@ class ContradictionListResponse(BaseModel):
 
 
 class ContradictionResolution(BaseModel):
-    keep: str = Field(..., description="'existing' or 'candidate'")
+    keep: str = Field(..., description="'existing', 'candidate', or 'merge'")
+    merged_value: str | None = Field(None, description="Required when keep='merge': the canonical merged fact value")
 
 
 class ContradictionResolved(BaseModel):
@@ -230,13 +231,17 @@ async def resolve_contradiction(
     current_user: Annotated[dict, Depends(get_current_user)],
 ) -> ContradictionResolved:
     """
-    Resolve a contradiction by keeping the existing value or taking the candidate.
+    Resolve a contradiction by keeping the existing value, taking the candidate,
+    or writing a custom merged value.
 
-    keep=existing → dismiss the candidate; mark contradiction resolved.
-    keep=candidate → overwrite the fact with the candidate value; mark resolved.
+    keep=existing  → dismiss the candidate; keep the existing fact unchanged.
+    keep=candidate → overwrite the existing fact with the candidate value.
+    keep=merge     → write merged_value as the canonical fact (must be provided).
     """
-    if body.keep not in ("existing", "candidate"):
-        raise HTTPException(status_code=422, detail="keep must be 'existing' or 'candidate'")
+    if body.keep not in ("existing", "candidate", "merge"):
+        raise HTTPException(status_code=422, detail="keep must be 'existing', 'candidate', or 'merge'")
+    if body.keep == "merge" and not (body.merged_value or "").strip():
+        raise HTTPException(status_code=422, detail="merged_value is required when keep='merge'")
 
     result = await pg.execute(
         select(FactContradiction).where(FactContradiction.id == contradiction_id)
@@ -247,29 +252,35 @@ async def resolve_contradiction(
 
     assert_self_or_admin(current_user, contradiction.user_id)
 
-    if body.keep == "candidate":
-        # Overwrite the fact in Neo4j with the candidate value
+    if body.keep in ("candidate", "merge"):
         from smritikosh.db.models import SOURCE_CONFIDENCE_DEFAULTS
+        new_value = body.merged_value if body.keep == "merge" else contradiction.candidate_value
+        new_confidence = (
+            max(contradiction.candidate_confidence, contradiction.existing_confidence)
+            if body.keep == "merge"
+            else contradiction.candidate_confidence
+        )
         await semantic.upsert_fact(
             neo,
             user_id=contradiction.user_id,
             app_id=contradiction.app_id,
             category=contradiction.category,
             key=contradiction.key,
-            value=contradiction.candidate_value,
-            confidence=contradiction.candidate_confidence,
+            value=new_value,
+            confidence=new_confidence,
             source_type=contradiction.candidate_source,
-            source_meta={"resolved_contradiction": str(contradiction.id)},
+            source_meta={"resolved_contradiction": str(contradiction.id), "resolution": body.keep},
             status=FactStatus.ACTIVE,
         )
 
     now = datetime.now(timezone.utc)
+    resolution_label = f"keep_{body.keep}" if body.keep != "merge" else "merged"
     await pg.execute(
         update(FactContradiction)
         .where(FactContradiction.id == contradiction_id)
         .values(
             resolved=True,
-            resolution=f"keep_{body.keep}",
+            resolution=resolution_label,
             resolved_at=now,
         )
     )
@@ -277,6 +288,6 @@ async def resolve_contradiction(
 
     return ContradictionResolved(
         id=contradiction_id,
-        resolution=f"keep_{body.keep}",
+        resolution=resolution_label,
         resolved_at=now.isoformat(),
     )

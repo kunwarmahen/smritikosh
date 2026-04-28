@@ -109,6 +109,22 @@ SMRITIKOSH_API_KEY=sk-smriti-your-key-here python chatbot.py
 
 Or set `SMRITIKOSH_API_KEY` in `sample/.env` to use it every time.
 
+**Read-only API keys** — for analytics tools that should never write, add `"scopes": ["read"]` when generating a key:
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8080/auth/token \
+  -H "Content-Type: application/json" \
+  -d '{"username": "alice", "password": "alicepass"}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+
+curl -s -X POST http://localhost:8080/keys \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "read-only reporting", "scopes": ["read"]}'
+```
+
+A read-only key can call any GET endpoint (search, context, identity) but will receive `403 Forbidden` on POST/DELETE memory endpoints.
+
 ## Commands inside the chatbot
 
 | Command | What it does |
@@ -168,6 +184,7 @@ Demonstrates:
 - `POST /ingest/session` — passive extraction from a 7-turn conversation
 - Idempotency — re-posting the same `session_id` is a safe no-op
 - Streaming windows — three partial `POST /ingest/session` calls with `partial=True`; each window sends only new turns via `last_turn_index` tracking
+- **Dry-run mode** — add `"dry_run": true` to any ingest call to see what facts *would* be extracted without writing anything. The response includes `extracted_facts` and `dry_run: true`
 - Manual facts — `store_fact()` four times with `source_type="ui_manual"`, confidence 1.0
 - Verification — `GET /context` confirms all extracted facts appear in retrieval
 

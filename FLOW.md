@@ -378,6 +378,19 @@ Events grouped by topic. Clicking a cluster expands it to show the individual
 memory cards. Useful for spotting what domains dominate a user's memory and
 whether clustering has produced meaningful groupings.
 
+### Review page (`/dashboard/review`)
+
+Auto-extracted memories appear here for human verification. When passive
+extraction produces a value that conflicts with an existing fact, a
+**Fact conflicts** section appears at the top. Each conflict card shows
+the current value vs. the candidate side-by-side with three resolution
+buttons:
+
+- **Keep current** — dismiss the candidate; existing fact unchanged.
+- **Use candidate** — overwrite the existing fact with the new value.
+- **Merge** — type a custom merged value; it is written with confidence
+  = max(existing, candidate).
+
 ### Audit trail page
 
 A chronological log of every pipeline operation that touched Alice's data:

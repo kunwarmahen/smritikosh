@@ -3,6 +3,7 @@ FastAPI auth dependencies.
 
 get_current_user      — Bearer JWT **or** API key → identity dict.
 require_admin         — raises 403 if not admin.
+require_write_scope   — raises 403 if the caller's API key lacks the 'write' scope.
 assert_self_or_admin  — raises 403 if caller is not the target user or an admin.
 
 Usage in routes:
@@ -17,6 +18,11 @@ Usage in routes:
     @router.get("/memory/{user_id}")
     async def get_memory(user_id: str, user = Depends(get_current_user)):
         assert_self_or_admin(user, user_id)
+        ...
+
+    # Restrict a write endpoint to keys that have the 'write' scope:
+    @router.post("/memory/event")
+    async def encode(user = Depends(require_write_scope)):
         ...
 """
 
@@ -89,7 +95,8 @@ async def get_current_user(
             .values(last_used_at=datetime.now(timezone.utc))
         )
 
-        return {"sub": app_user.username, "role": app_user.role, "app_ids": api_key.app_ids}
+        scopes = api_key.scopes if api_key.scopes else ["read", "write"]
+        return {"sub": app_user.username, "role": app_user.role, "app_ids": api_key.app_ids, "scopes": scopes}
 
     # ── JWT path ──────────────────────────────────────────────────────────────
     try:
@@ -165,3 +172,22 @@ def assert_app_access(current_user: dict, app_id: str) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Access to app '{app_id}' denied.",
         )
+
+
+async def require_write_scope(
+    current_user: Annotated[dict, Depends(get_current_user)],
+) -> dict:
+    """
+    Extend get_current_user — additionally enforce the 'write' scope.
+
+    JWT tokens always have full access (no scope restriction).
+    API keys with only 'read' scope are rejected with 403.
+    """
+    # JWTs have no scopes field — they always have full access
+    scopes = current_user.get("scopes")
+    if scopes is not None and "write" not in scopes:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This API key does not have write access. Re-generate with scopes=['read','write'].",
+        )
+    return current_user

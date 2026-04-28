@@ -638,6 +638,7 @@ class ApiKey(Base):
         String(255), ForeignKey("app_users.username", ondelete="CASCADE")
     )
     app_ids: Mapped[list[str]] = mapped_column(PG_ARRAY(String(255)), default=lambda: ["default"])
+    scopes: Mapped[list[str]] = mapped_column(PG_ARRAY(String(64)), default=lambda: ["read", "write"])
     name: Mapped[str] = mapped_column(String(255))
     key_prefix: Mapped[str] = mapped_column(String(16))   # first 8 hex chars of random part
     key_hash: Mapped[str] = mapped_column(String(64), unique=True)  # SHA-256 hex
