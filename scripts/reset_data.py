@@ -57,6 +57,7 @@ async def reset_postgres(user: str | None, include_users: bool, dry_run: bool) -
         "user_beliefs",
         "user_facts",
         "user_procedures",
+        "fact_contradictions",
     ]
     # memory_links has no user_id — linked via event UUIDs
     # events must be deleted last (FK target for memory_links/memory_feedback)
