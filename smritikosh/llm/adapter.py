@@ -91,6 +91,7 @@ class LLMAdapter:
             temperature=temperature,
             api_key=api_key,
             api_base=api_base,
+            timeout=self._cfg.llm_timeout,
             **kwargs,
         )
         msg = response.choices[0].message
@@ -211,6 +212,7 @@ class LLMAdapter:
             input=text,
             api_key=self._cfg.embedding_api_key,
             api_base=self._cfg.embedding_base_url,
+            timeout=self._cfg.llm_timeout,
         )
         return response.data[0]["embedding"]
 
@@ -291,6 +293,7 @@ class LLMAdapter:
             temperature=0.2,
             api_key=api_key,
             api_base=api_base,
+            timeout=self._cfg.llm_timeout,
         )
         content = response.choices[0].message.content or ""
         logger.debug("Image description complete: %d chars", len(content))
@@ -347,6 +350,7 @@ class LLMAdapter:
             model=self._cfg.whisper_model,
             file=file_obj,
             api_key=api_key,
+            timeout=self._cfg.llm_timeout,
         )
         text = response.text if hasattr(response, "text") else str(response)
         logger.debug("OpenAI transcription complete: length=%d chars", len(text))
@@ -379,6 +383,7 @@ class LLMAdapter:
             model=model_string,
             file=file_obj,
             api_base=base_url,
+            timeout=self._cfg.llm_timeout,
         )
         text = response.text if hasattr(response, "text") else str(response)
         logger.debug("Local transcription complete: length=%d chars", len(text))

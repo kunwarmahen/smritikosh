@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     llm_base_url: str | None = None
     # Set to an integer to cap token output; leave as None for no limit
     llm_max_tokens: int | None = None
+    # Seconds before a single LLM/embedding call is abandoned (prevents hung bg tasks)
+    llm_timeout: int = 120
 
     # ── LLM fallback provider ──────────────────────────────────────────────
     # When the primary LLM is down or rate-limited, requests are retried against
