@@ -80,9 +80,14 @@ class LLMAdapter:
         """Single-provider chat completion with tenacity retry for transient failures."""
         if self._cfg.llm_max_tokens is not None:
             kwargs.setdefault("max_tokens", self._cfg.llm_max_tokens)
-        # Disable thinking tokens for Ollama — thinking consumes the token budget and
-        # leaves content empty when max_tokens is low (e.g. intent classifier).
-        if model.startswith("ollama_chat/") or model.startswith("ollama/"):
+        # Disable thinking tokens for Qwen3-family models via ollama — thinking
+        # consumes the token budget and leaves content empty when max_tokens is low.
+        # Do NOT send this to other ollama models (e.g. gemma4) that don't support
+        # the flag: ollama may stall or produce no output.
+        _OLLAMA_THINKING_MODELS = ("qwen", "deepseek")
+        if (model.startswith("ollama_chat/") or model.startswith("ollama/")) and any(
+            m in model.lower() for m in _OLLAMA_THINKING_MODELS
+        ):
             kwargs.setdefault("extra_body", {"think": False})
         logger.debug("LLM complete: model=%s messages=%d", model, len(messages))
         response = await litellm.acompletion(
