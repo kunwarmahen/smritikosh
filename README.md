@@ -1182,8 +1182,14 @@ smritikosh/
 │   ├── transcript_utils.py  # sentinel-strip, user_turns_only, delta prompt builder
 │   ├── cross_system_synthesizer.py  # Daily job: correlates connector signals → cross_system facts
 │   ├── media_processor.py   # MediaProcessor: transcription, text extraction, vision, relevance routing
+│   ├── leader.py            # Postgres advisory-lock leader election for the scheduler
 │   └── scheduler.py         # APScheduler background jobs (consolidation, pruning, clustering,
 │                             #   belief mining, fact decay, cross-system synthesis)
+├── worker/
+│   └── main.py              # Standalone scheduler worker (python -m smritikosh.worker.main)
+├── tasks/
+│   ├── queue.py             # ARQ connection + enqueue helpers (durable task queue)
+│   └── jobs.py              # Task definitions + WorkerSettings (media processing, re-embed)
 ├── retrieval/
 │   └── context_builder.py   # Build memory context for LLM calls
 ├── audit/
@@ -1696,14 +1702,18 @@ All backend settings are read from the environment (or `.env`). Every field has 
 | `SLACK_SIGNING_SECRET` | — | Signing secret for Slack Events API signature verification (required only for `POST /ingest/slack/events`) |
 | `MONGODB_URL` | — | MongoDB connection string. If unset, audit trail is disabled (no-op) |
 | `MONGODB_DB_NAME` | `smritikosh_audit` | MongoDB database to store audit events in |
-| `JWT_SECRET` | `change-me-in-production` | Secret key for signing JWT tokens — **change this in production** |
+| `APP_ENV` | `development` | Runtime environment. Non-production values (`development`, `dev`, `local`, `test`, `testing`, `ci`) relax security checks to warnings. **Any other value is treated as production** — the app refuses to boot with a default or short (<32 char) `JWT_SECRET`. |
+| `JWT_SECRET` | `change-me-in-production` | Secret key for signing JWT tokens. **Required in production**: must be changed from the default and ≥32 chars or the app will not start. |
 | `JWT_ALGORITHM` | `HS256` | JWT signing algorithm |
 | `JWT_EXPIRE_DAYS` | `30` | Token lifetime in days |
+| `CONNECTOR_ENCRYPTION_KEY` | — | Key for encrypting connector OAuth tokens at rest. If unset, derived from `JWT_SECRET`. Set it to rotate the JWT secret and connector key independently. Changing it invalidates existing connector tokens (re-auth required). |
+| `REDIS_URL` | — | Shared Redis store for the rate limiter **and** the durable task queue (ARQ). If unset, the limiter uses per-process in-memory storage and queued work (media processing, re-embed) runs in-process. **Required when running more than one API replica.** Example: `redis://localhost:6379/0` |
 | `RATE_LIMIT_ENCODE` | `60/minute` | Per-user rate limit for `POST /memory/event`. Set to `""` to disable. |
 | `RATE_LIMIT_CONTEXT` | `60/minute` | Per-user rate limit for `POST /context`. Set to `""` to disable. |
 | `RATE_LIMIT_SEARCH` | `120/minute` | Per-user rate limit for `POST /memory/search`. Set to `""` to disable. |
 | `FACT_DECAY_HALF_LIFE_DAYS` | `60.0` | Days for Neo4j fact confidence to halve without reinforcement. |
 | `FACT_DECAY_FLOOR` | `0.1` | Facts whose confidence falls below this threshold are deleted. |
+| `RUN_SCHEDULER` | `true` | Whether this process runs the background scheduler. Set `false` on API replicas when a dedicated worker (`python -m smritikosh.worker.main`) runs the jobs. A Postgres advisory lock elects one leader regardless. |
 | **Whisper (audio transcription)** | | |
 | `WHISPER_PROVIDER` | `openai` | `openai` (cloud) or `local` (self-hosted via Ollama / vLLM / llama.cpp) |
 | `WHISPER_MODEL` | `whisper-1` | Whisper model name |
@@ -1747,7 +1757,8 @@ On startup the server will:
 1. Enable the `pgvector` extension and create tables (if not already present via Alembic)
 2. Apply Neo4j schema constraints and indexes
 3. Create MongoDB `audit_events` collection and indexes (if `MONGODB_URL` is configured)
-4. Start background scheduler (consolidation every hour, pruning every 24 hours, fact decay weekly)
+4. Start the background scheduler — consolidation hourly, pruning every 24 hours, fact decay
+   weekly — unless `RUN_SCHEDULER=false` (then a dedicated worker runs the jobs instead)
 
 Interactive API docs are available at `http://localhost:8080/docs`.
 
@@ -3967,7 +3978,7 @@ npm run test:watch
 pytest
 ```
 
-The default run executes **~830 tests** in about 10–15 seconds. All tests that require real API keys, a local Ollama server, or running databases are automatically skipped.
+The default run executes **~900 tests** in about 10–15 seconds. All tests that require real API keys, a local Ollama server, or running databases are automatically skipped.
 
 Run the Node.js SDK tests separately:
 
@@ -4029,7 +4040,11 @@ pytest tests/test_amygdala.py::TestAmygdala::test_scores_decision_text -v
 | `test_context_builder.py` | 42 | Deduplication, degraded-mode fallbacks, prompt rendering, narrative chain boost, chain_top_k |
 | `test_consolidator.py` | 26 | Batch splitting, LLM failures, fact upserts, narrative link creation |
 | `test_synaptic_pruner.py` | 22 | Score formula, pruning logic, threshold sensitivity |
-| `test_scheduler.py` | 14 | Job registration, manual triggers, error recovery |
+| `test_scheduler.py` | 15 | Job registration, manual triggers, error recovery, idempotent start/shutdown |
+| `test_leader.py` | 10 | Advisory-lock leader election, `elect_and_start_scheduler`, `build_scheduler` |
+| `test_config_security.py` | 25 | Production secret enforcement, `is_production`, connector encryption key |
+| `test_ratelimit.py` | 10 | Redis vs. in-memory limiter selection, rate-limit key extraction |
+| `test_tasks.py` | 12 | ARQ queue gating, `enqueue` fallback, media/re-embed task wrappers |
 | `test_identity.py` | 26 | Dimension grouping, dominant value, LLM summary, empty profile |
 | `test_memory_clusterer.py` | 29 | Cosine sim, greedy clustering, LLM labelling, skip guards |
 | `test_reinforcement.py` | 23 | apply_delta clamping, submit(), score update, neutral no-op |
@@ -4193,7 +4208,7 @@ EMBEDDING_DIMENSIONS=4096          # match your model's output dimension
 
 ## Background jobs
 
-The `MemoryScheduler` runs five jobs inside the FastAPI process using APScheduler:
+The `MemoryScheduler` runs six jobs using APScheduler:
 
 | Job | Default interval | What it does |
 |---|---|---|
@@ -4203,6 +4218,13 @@ The `MemoryScheduler` runs five jobs inside the FastAPI process using APSchedule
 | **Belief mining** | every 12 hours | Infers durable beliefs and values from event patterns |
 | **Semantic fact decay** | every 1 week | Decays Neo4j fact confidence over time; deletes facts below threshold |
 | **Cross-system synthesis** | daily at 01:00 UTC | Correlates calendar/email/Slack/webhook behavioral signals → `cross_system` facts |
+
+**Where the scheduler runs.** By default (`RUN_SCHEDULER=true`) the API process runs these jobs
+in-process — convenient for single-instance / development. For a multi-replica deployment, run a
+dedicated worker instead (`python -m smritikosh.worker.main`) and set `RUN_SCHEDULER=false` on the
+API replicas. Either way, a Postgres advisory lock elects a single leader, so the jobs never run
+twice even if several processes have the scheduler enabled — a standby takes over automatically if
+the leader process dies.
 
 ### Consolidation (every hour)
 
@@ -4334,10 +4356,14 @@ A `HEALTHCHECK` polls `GET /health` every 30 seconds. Container orchestrators (E
 
 ### Full stack with Docker Compose
 
-`docker-compose.prod.yml` wires up the API, PostgreSQL, Neo4j, and MongoDB with production-safe defaults:
+`docker-compose.prod.yml` wires up the API, the scheduler `worker`, the `taskworker`, PostgreSQL,
+Neo4j, MongoDB, and Redis with production-safe defaults:
 - Databases are not exposed to the host (internal network only)
 - `restart: unless-stopped` on all services
 - `depends_on` with `condition: service_healthy` so the API only starts after all databases pass their health checks
+- A separate `worker` service runs the background scheduler (`RUN_SCHEDULER=false` on the API)
+- A `taskworker` service runs the durable task queue (media processing, re-embed)
+- `redis` is the shared rate-limiter store + task-queue broker
 - All secrets come from environment variables (never hardcoded)
 
 ```bash
@@ -4366,6 +4392,33 @@ uvicorn smritikosh.api.main:app --host 0.0.0.0 --port 8080 --workers 2
 ```
 
 Set all environment variables from `.env.example` in your platform's config panel.
+
+**Scaling to multiple instances.** When you run more than one API process or replica:
+1. Set `REDIS_URL` so rate limits are shared (otherwise each replica grants a full quota) and
+   the durable task queue is available.
+2. Run the background jobs in a dedicated scheduler worker and set `RUN_SCHEDULER=false` on the API:
+   ```bash
+   # one scheduler worker, alongside the API replicas
+   python -m smritikosh.worker.main
+   ```
+   The worker elects a single leader via a Postgres advisory lock — running one is enough; a
+   second would simply stand by. (With `uvicorn --workers N`, the advisory lock likewise ensures
+   only one uvicorn worker runs the jobs even if `RUN_SCHEDULER` is left true.)
+3. Run one or more task-queue workers for durable on-demand work (media processing, bulk
+   re-embed):
+   ```bash
+   arq smritikosh.tasks.jobs.WorkerSettings
+   ```
+   Unlike the scheduler, task workers fan out safely — scale them freely.
+
+### Durable task queue
+
+On-demand background work — media processing (`POST /ingest/media`) and bulk re-embedding
+(`POST /admin/re-embed`) — runs on a Redis-backed [ARQ](https://arq-docs.helpmanual.io/) queue
+when `REDIS_URL` is set. Uploaded media bytes are persisted to `media_ingests.raw_file`, so a
+queued job survives an API/worker restart. Without `REDIS_URL` the same work runs in-process as
+a FastAPI background task (fine for single-instance development, but lost on restart). Cron-style
+maintenance jobs stay on APScheduler — the task queue is only for one-off, retryable tasks.
 
 ### Observability — Prometheus + Grafana
 

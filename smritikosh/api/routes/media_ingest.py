@@ -9,26 +9,26 @@ Handles file uploads with background processing:
 
 import logging
 import uuid
-from datetime import datetime, timezone
-from typing import Annotated, Optional
+from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from smritikosh.api.deps import get_media_processor, get_semantic
+from smritikosh.api.deps import get_semantic
 from smritikosh.api.schemas import (
     MediaFactConfirmRequest,
     MediaIngestResponse,
     MediaStatusResponse,
 )
 from smritikosh.auth.deps import assert_self_or_admin, get_current_user
-from smritikosh.db.models import MediaIngest, MediaIngestStatus, SourceType
+from smritikosh.db.models import MediaIngest, MediaIngestStatus
 from neo4j import AsyncSession as NeoSession
 
-from smritikosh.db.neo4j import get_neo4j_session, neo4j_session
-from smritikosh.db.postgres import _SessionFactory, get_session
+from smritikosh.db.neo4j import get_neo4j_session
+from smritikosh.db.postgres import get_session
 from smritikosh.memory.semantic import SemanticMemory
-from smritikosh.processing.media_processor import MediaProcessor
+from smritikosh.tasks import enqueue
+from smritikosh.tasks.jobs import _process_media_record
 
 logger = logging.getLogger(__name__)
 
@@ -45,63 +45,6 @@ _MAX_IMAGE_BYTES = 20 * 1024 * 1024
 _MAX_MEETING_BYTES = 500 * 1024 * 1024
 
 
-async def _get_async_sessionmaker(request):
-    """Retrieve the async sessionmaker from app state for background tasks."""
-    return getattr(request.app.state, "async_sessionmaker", None)
-
-
-async def _run_processing(
-    *,
-    media_id: str,
-    user_id: str,
-    app_id: str,
-    content_type: str,
-    file_bytes: bytes,
-    filename: str,
-    context_note: str,
-    media_processor: MediaProcessor,
-    semantic: SemanticMemory,
-    async_sessionmaker,
-):
-    """Background task: process media and update MediaIngest record."""
-    async_session_factory = async_sessionmaker
-    async with async_session_factory() as pg:
-        async with neo4j_session() as neo:
-            # Process the file
-            result = await media_processor.process(
-                pg,
-                neo,
-                media_id=media_id,
-                user_id=user_id,
-                app_id=app_id,
-                content_type=content_type,
-                file_bytes=file_bytes,
-                filename=filename,
-                context_note=context_note,
-            )
-
-            # Update MediaIngest record
-            ingest = await pg.get(MediaIngest, uuid.UUID(media_id))
-            if ingest:
-                ingest.status = result.status
-                ingest.facts_extracted = result.facts_extracted
-                ingest.facts_pending_review = result.facts_pending_review
-                ingest.pending_facts = result.pending_facts
-                ingest.event_id = uuid.UUID(result.event_id) if result.event_id else None
-                ingest.source_type = content_type  # voice_note or document
-                ingest.error_message = result.error_message
-                ingest.processed_at = datetime.now(timezone.utc)
-                await pg.flush()
-
-            await pg.commit()
-            logger.info(
-                "Media processing completed: media_id=%s status=%s facts=%d",
-                media_id,
-                result.status,
-                result.facts_extracted,
-            )
-
-
 @router.post("/media", response_model=MediaIngestResponse, status_code=202)
 async def ingest_media(
     user_id: str = Form(...),
@@ -111,11 +54,8 @@ async def ingest_media(
     idempotency_key: Optional[str] = Form(None),
     file: UploadFile = File(...),
     background_tasks: BackgroundTasks = BackgroundTasks(),
-    media_processor: MediaProcessor = Depends(get_media_processor),
-    semantic: SemanticMemory = Depends(get_semantic),
     pg: AsyncSession = Depends(get_session),
     current_user: dict = Depends(get_current_user),
-    request=None,
 ) -> MediaIngestResponse:
     """
     Upload a media file (voice note or document) for memory extraction.
@@ -179,20 +119,8 @@ async def ingest_media(
                 message="(cached — idempotency key)",
             )
 
-    # Create MediaIngest record (status=processing)
-    media_id = uuid.uuid4()
-    ingest = MediaIngest(
-        id=media_id,
-        user_id=user_id,
-        app_id=app_id,
-        content_type=content_type,
-        idempotency_key=idempotency_key,
-        status=MediaIngestStatus.PROCESSING,
-    )
-    pg.add(ingest)
-    await pg.flush()  # ensures ID is generated
-
     # Read file bytes
+    media_id = uuid.uuid4()
     file_bytes = await file.read()
     file_size_mb = len(file_bytes) / 1024 / 1024
 
@@ -218,27 +146,28 @@ async def ingest_media(
             detail=f"Document too large: {file_size_mb:.1f} MB (max 10 MB)",
         )
 
-    # Enqueue background task
-    async_sessionmaker = (await _get_async_sessionmaker(request)) if request else None
-    if not async_sessionmaker:
-        async_sessionmaker = _SessionFactory
-
-    background_tasks.add_task(
-        _run_processing,
-        media_id=str(media_id),
+    # Persist the upload (status=processing) with its raw bytes, so the
+    # processing task is durable — it survives an API/worker restart.
+    ingest = MediaIngest(
+        id=media_id,
         user_id=user_id,
         app_id=app_id,
         content_type=content_type,
-        file_bytes=file_bytes,
+        idempotency_key=idempotency_key,
+        status=MediaIngestStatus.PROCESSING,
+        raw_file=file_bytes,
         filename=file.filename or "unknown",
         context_note=context_note,
-        media_processor=media_processor,
-        semantic=semantic,
-        async_sessionmaker=async_sessionmaker,
     )
-
-    # Commit the MediaIngest record
+    pg.add(ingest)
+    # Commit BEFORE enqueueing — the worker must be able to read the record.
     await pg.commit()
+
+    # Enqueue onto the durable task queue; fall back to an in-process
+    # background task when no queue (REDIS_URL) is configured.
+    job = await enqueue("process_media", str(media_id))
+    if job is None:
+        background_tasks.add_task(_process_media_record, str(media_id))
 
     return MediaIngestResponse(
         media_id=str(media_id),

@@ -25,6 +25,8 @@ import logging
 from slowapi import Limiter
 from starlette.requests import Request
 
+from smritikosh.config import settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -76,6 +78,24 @@ def _client_ip(request: Request) -> str:
     return "unknown"
 
 
+def _build_limiter() -> Limiter:
+    """
+    Build the shared limiter.
+
+    When REDIS_URL is configured the limiter uses Redis as its storage backend,
+    so rate limits are enforced consistently across every API replica. Without
+    it, slowapi falls back to a per-process in-memory store — correct for a
+    single instance, but each replica would otherwise grant a full quota.
+    """
+    if settings.redis_url:
+        return Limiter(key_func=_user_key, storage_uri=settings.redis_url)
+    return Limiter(key_func=_user_key)
+
+
+def using_persistent_storage() -> bool:
+    """True when the limiter is backed by Redis (shared across replicas)."""
+    return bool(settings.redis_url)
+
+
 # Single shared limiter instance — imported by routes and wired into main.py.
-# Uses an in-memory store (default); swap to Redis via storage_uri for multi-process.
-limiter = Limiter(key_func=_user_key)
+limiter = _build_limiter()

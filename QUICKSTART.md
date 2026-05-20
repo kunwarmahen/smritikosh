@@ -118,6 +118,12 @@ EMBEDDING_API_KEY=sk-...
 JWT_SECRET=replace-this-with-something-random-and-long
 ```
 
+> **Production note:** if `APP_ENV` is set to anything other than a development
+> value (`development`, `dev`, `local`, `test`, `testing`, `ci`), the server
+> **refuses to start** unless `JWT_SECRET` is changed from the default and is at
+> least 32 characters. Generate one with:
+> `python -c "import secrets; print(secrets.token_hex(32))"`
+
 Optional settings (defaults shown):
 
 ```dotenv

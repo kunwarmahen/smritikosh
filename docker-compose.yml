@@ -45,7 +45,21 @@ services:
       timeout: 5s
       retries: 5
 
+  # Shared store for the rate limiter (set REDIS_URL=redis://localhost:6379/0).
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   postgres_data:
   neo4j_data:
   mongodb_data:
+  redis_data:

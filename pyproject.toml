@@ -26,7 +26,8 @@ dependencies = [
     "alembic>=1.14.0",
     "neo4j>=5.27.0",            # Neo4j async driver
     # Background jobs
-    "apscheduler>=3.10.4",
+    "apscheduler>=3.10.4",       # cron scheduler (consolidation, pruning, …)
+    "arq>=0.26.0",               # Redis-backed durable task queue (media, re-embed)
     # Utilities
     "tenacity>=9.0.0",          # retries for LLM calls
     "structlog>=24.4.0",        # structured logging
@@ -35,6 +36,7 @@ dependencies = [
     "passlib[bcrypt]>=1.7.4",   # password hashing
     "PyJWT>=2.9.0",             # JWT creation and verification
     "slowapi>=0.1.9",           # rate limiting for FastAPI
+    "redis>=5.0.0",             # shared store for rate limiting across replicas
     "pypdf>=5.0.0",             # PDF text extraction
     "httpx>=0.28.0",            # async HTTP client (Google OAuth2, REST APIs)
     "cryptography>=44.0.0",     # Fernet encryption for OAuth tokens

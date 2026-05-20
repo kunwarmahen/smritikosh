@@ -98,10 +98,12 @@ def override_deps(mock_pg, mock_neo, mock_semantic, mock_media_processor, monkey
     app.dependency_overrides[get_neo4j_session] = lambda: mock_neo
     app.dependency_overrides[deps.get_semantic] = lambda: mock_semantic
     app.dependency_overrides[deps.get_media_processor] = lambda: mock_media_processor
-    # Prevent background tasks from touching real DB / asyncpg pool
+    # Prevent the in-process fallback task from touching the real DB / asyncpg
+    # pool. (With no REDIS_URL the route falls back to a BackgroundTask that
+    # calls _process_media_record.)
     monkeypatch.setattr(
-        "smritikosh.api.routes.media_ingest._run_processing",
-        AsyncMock(return_value=None),
+        "smritikosh.api.routes.media_ingest._process_media_record",
+        AsyncMock(return_value="complete"),
     )
     yield
     app.dependency_overrides.clear()

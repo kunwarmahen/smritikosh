@@ -10,7 +10,6 @@ These endpoints expose the same logic that the MemoryScheduler runs automaticall
 useful for debugging, testing, or forcing an immediate maintenance cycle.
 """
 
-import asyncio
 import logging
 from typing import Annotated, Optional
 
@@ -18,7 +17,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from smritikosh.api.deps import get_audit_logger, get_llm, get_reconsolidation_engine
+from smritikosh.api.deps import get_audit_logger, get_reconsolidation_engine
 from smritikosh.api.schemas import (
     AdminJobRequest,
     AdminJobResponse,
@@ -33,9 +32,8 @@ from smritikosh.api.schemas import (
 )
 from smritikosh.auth.deps import require_admin
 from smritikosh.config import settings
-from smritikosh.db.models import AppUser, Event
-from smritikosh.db.postgres import db_session, get_session
-from smritikosh.llm.adapter import LLMAdapter
+from smritikosh.db.models import AppUser
+from smritikosh.db.postgres import get_session
 from smritikosh.processing.reconsolidation import ReconsolidationEngine
 from smritikosh.processing.scheduler import MemoryScheduler
 from smritikosh.processing.synaptic_pruner import PruningThresholds
@@ -460,7 +458,6 @@ async def embedding_health(
 async def trigger_re_embed(
     background_tasks: BackgroundTasks,
     pg: AsyncSession = Depends(get_session),
-    llm: LLMAdapter = Depends(get_llm),
     _admin: dict = Depends(require_admin),
     audit=Depends(get_audit_logger),
 ) -> ReEmbedResponse:
@@ -468,26 +465,27 @@ async def trigger_re_embed(
     Re-embed all events whose embedding dimension doesn't match EMBEDDING_DIMENSIONS,
     plus any events that were stored without an embedding.
 
-    The job runs as a FastAPI background task — the response returns immediately
-    with the number of events queued.  Check GET /admin/embedding-health afterward
-    to confirm all stale embeddings are resolved.
+    The work runs on the durable task queue (or, when no REDIS_URL is configured,
+    an in-process background task). The response returns immediately with the
+    number of events queued. Check GET /admin/embedding-health afterward to
+    confirm all stale embeddings are resolved.
     """
     from smritikosh.audit.logger import AuditEvent, EventType
+    from smritikosh.tasks import enqueue
+    from smritikosh.tasks.jobs import _re_embed_stale_events
 
     configured_dim = settings.embedding_dimensions
 
-    rows = await pg.execute(
+    row = await pg.execute(
         text(
-            "SELECT id, raw_text FROM events "
-            "WHERE embedding IS NULL "
-            "   OR vector_dims(embedding) != :dim "
-            "ORDER BY created_at ASC"
+            "SELECT count(*) AS n FROM events "
+            "WHERE embedding IS NULL OR vector_dims(embedding) != :dim"
         ),
         {"dim": configured_dim},
     )
-    stale = rows.fetchall()
+    queued = int(row.scalar() or 0)
 
-    if not stale:
+    if queued == 0:
         if audit:
             await audit.emit(AuditEvent(
                 event_type=EventType.EMBEDDING_REEMBED_QUEUED,
@@ -497,56 +495,18 @@ async def trigger_re_embed(
             ))
         return ReEmbedResponse(status="ok", queued=0, message="No stale embeddings found.")
 
-    stale_snapshot = [(str(row.id), row.raw_text) for row in stale]
-    background_tasks.add_task(_re_embed_events, stale_snapshot, llm, audit)
+    # Durable queue when available; in-process fallback otherwise.
+    job = await enqueue("re_embed_events")
+    if job is None:
+        background_tasks.add_task(_re_embed_stale_events)
 
     if audit:
         await audit.emit(AuditEvent(
             event_type=EventType.EMBEDDING_REEMBED_QUEUED,
             user_id=_admin["sub"],
             app_id="__system__",
-            payload={"queued": len(stale_snapshot), "configured_dim": configured_dim, "triggered_by": _admin["sub"]},
+            payload={"queued": queued, "configured_dim": configured_dim, "triggered_by": _admin["sub"]},
         ))
 
-    logger.info("Re-embed queued: %d events", len(stale_snapshot))
-    return ReEmbedResponse(status="started", queued=len(stale_snapshot))
-
-
-async def _re_embed_events(events: list[tuple[str, str]], llm: LLMAdapter, audit=None) -> None:
-    """Background task: re-embed each stale event and update the DB."""
-    import uuid as _uuid
-    from datetime import datetime, timezone
-    from sqlalchemy import update as _update
-
-    from smritikosh.audit.logger import AuditEvent, EventType
-
-    success = 0
-    errors = 0
-    async with db_session() as session:
-        for event_id_str, raw_text in events:
-            try:
-                embedding = await llm.embed(raw_text)
-                await session.execute(
-                    _update(Event)
-                    .where(Event.id == _uuid.UUID(event_id_str))
-                    .values(embedding=embedding, updated_at=datetime.now(timezone.utc))
-                )
-                success += 1
-            except Exception as exc:
-                logger.warning("Re-embed failed for event %s: %s", event_id_str, exc)
-                errors += 1
-
-    logger.info(
-        "Re-embed complete: success=%d errors=%d total=%d",
-        success,
-        errors,
-        len(events),
-    )
-
-    if audit:
-        await audit.emit_sync(AuditEvent(
-            event_type=EventType.EMBEDDING_REEMBED_COMPLETE,
-            user_id="__system__",
-            app_id="__system__",
-            payload={"success": success, "errors": errors, "total": len(events)},
-        ))
+    logger.info("Re-embed queued: %d events", queued)
+    return ReEmbedResponse(status="started", queued=queued)

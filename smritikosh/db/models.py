@@ -25,6 +25,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -688,6 +689,19 @@ class MediaIngest(Base):
     )  # voice_note | document
     idempotency_key: Mapped[Optional[str]] = mapped_column(
         String(255), nullable=True, default=None
+    )
+    # Raw uploaded bytes, persisted so a queued processing task survives a
+    # restart/crash. Cleared (set to NULL) once processing completes.
+    raw_file: Mapped[Optional[bytes]] = mapped_column(
+        LargeBinary, nullable=True, default=None
+    )
+    # Original filename + optional user context note — needed by the processing
+    # task (which runs in a separate worker and cannot see the request).
+    filename: Mapped[Optional[str]] = mapped_column(
+        String(512), nullable=True, default=None
+    )
+    context_note: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True, default=None
     )
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default=MediaIngestStatus.PROCESSING

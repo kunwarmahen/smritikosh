@@ -37,12 +37,22 @@ DEFAULT_SCOPES = [
 
 
 def _get_fernet_key() -> bytes:
-    """Derive a Fernet key from settings.jwt_secret.
+    """Derive the Fernet key used to encrypt connector OAuth tokens at rest.
+
+    Uses settings.connector_encryption_key when set, so the connector-token key
+    can be rotated independently of the JWT secret. Falls back to jwt_secret for
+    backward compatibility with deployments that predate the separate key —
+    their already-stored tokens stay decryptable.
 
     SHA-256 produces 32 raw bytes; Fernet requires those bytes as URL-safe base64,
     which is what base64.urlsafe_b64encode produces (44 chars from 32 bytes).
+
+    NOTE: switching a deployment from the jwt_secret-derived key to a dedicated
+    connector_encryption_key makes previously stored tokens undecryptable until
+    the user re-authorises. Hot key rotation is tracked as item C3 (MultiFernet).
     """
-    key_bytes = hashlib.sha256(settings.jwt_secret.encode("utf-8")).digest()
+    secret = settings.connector_encryption_key or settings.jwt_secret
+    key_bytes = hashlib.sha256(secret.encode("utf-8")).digest()
     return base64.urlsafe_b64encode(key_bytes)
 
 

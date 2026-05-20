@@ -48,6 +48,9 @@ def scheduler(mock_consolidator, mock_pruner, mock_episodic):
             MagicMock(id="consolidation_job"),
             MagicMock(id="pruning_job"),
         ]
+        # Model a fresh, not-yet-started scheduler (start()/shutdown() are
+        # idempotent and gate on this flag).
+        mock_sched.running = False
         mock_sched_cls.return_value = mock_sched
 
         s = MemoryScheduler(
@@ -124,8 +127,14 @@ class TestStartShutdown:
         scheduler._scheduler.start.assert_called_once()
 
     def test_shutdown_calls_scheduler_shutdown(self, scheduler):
+        scheduler._scheduler.running = True   # shutdown() is a no-op unless running
         scheduler.shutdown()
         scheduler._scheduler.shutdown.assert_called_once_with(wait=False)
+
+    def test_shutdown_is_noop_when_not_running(self, scheduler):
+        # _scheduler.running is False from the fixture — shutdown must not call through.
+        scheduler.shutdown()
+        scheduler._scheduler.shutdown.assert_not_called()
 
 
 # ── run_consolidation_now ─────────────────────────────────────────────────────

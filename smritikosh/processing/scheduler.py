@@ -20,8 +20,8 @@ Usage (standalone / testing):
     await scheduler.run_consolidation_now(user_id="u1")
 """
 
+import asyncio
 import logging
-from datetime import timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -140,7 +140,14 @@ class MemoryScheduler:
                 max_instances=1,
             )
 
+    @property
+    def running(self) -> bool:
+        """True once start() has been called and the scheduler is active."""
+        return self._scheduler.running
+
     def start(self) -> None:
+        if self._scheduler.running:
+            return
         self._scheduler.start()
         logger.info(
             "MemoryScheduler started",
@@ -150,6 +157,9 @@ class MemoryScheduler:
         )
 
     def shutdown(self) -> None:
+        # Idempotent: a standby process may never have started the scheduler.
+        if not self._scheduler.running:
+            return
         self._scheduler.shutdown(wait=False)
         logger.info("MemoryScheduler stopped.")
 
@@ -430,3 +440,69 @@ class MemoryScheduler:
                 select(Event.user_id, Event.app_id).distinct()
             )
             return [(row.user_id, row.app_id) for row in result]
+
+
+# ── Scheduler bootstrap helpers ─────────────────────────────────────────────────
+
+
+def build_scheduler() -> "MemoryScheduler":
+    """Construct a MemoryScheduler wired with every processing job.
+
+    Shared by the API process (in-process scheduler) and the standalone worker,
+    so both build an identically-configured scheduler. Dependency getters are
+    imported lazily to avoid a circular import at module load time.
+    """
+    from smritikosh.api.deps import (
+        get_belief_miner,
+        get_clusterer,
+        get_consolidator,
+        get_episodic,
+        get_fact_decayer,
+        get_pruner,
+        get_synthesizer,
+    )
+    from smritikosh.config import settings
+
+    return MemoryScheduler(
+        consolidator=get_consolidator(),
+        pruner=get_pruner(),
+        episodic=get_episodic(),
+        clusterer=get_clusterer(),
+        belief_miner=get_belief_miner(),
+        fact_decayer=get_fact_decayer(),
+        synthesizer=get_synthesizer(),
+        consolidation_cron=settings.scheduler_consolidation_cron,
+        pruning_cron=settings.scheduler_pruning_cron,
+        clustering_cron=settings.scheduler_clustering_cron,
+        belief_mining_cron=settings.scheduler_belief_mining_cron,
+        fact_decay_cron=settings.scheduler_fact_decay_cron,
+    )
+
+
+async def elect_and_start_scheduler(
+    scheduler: "MemoryScheduler",
+    leader_lock,  # processing.leader.LeaderLock
+    *,
+    poll_interval: float = 30.0,
+) -> bool:
+    """Block until this process wins leader election, then start the scheduler.
+
+    Polls every `poll_interval` seconds while another process holds the lock, so
+    a standby starts the scheduler automatically if the current leader dies.
+    Returns True once this process has started the scheduler. Cancel the awaiting
+    task to stop waiting (e.g. on shutdown).
+    """
+    announced = False
+    while True:
+        if await leader_lock.try_acquire():
+            scheduler.start()
+            logger.info("Won scheduler leader election — background jobs run in this process.")
+            return True
+        if not announced:
+            logger.info(
+                "Another process holds the scheduler lock — standing by "
+                "(re-checking every %.0fs).",
+                poll_interval,
+            )
+            announced = True
+        await asyncio.sleep(poll_interval)

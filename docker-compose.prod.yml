@@ -19,8 +19,42 @@
 #   EMBEDDING_API_KEY      — provider API key (may be same as LLM_API_KEY)
 #
 # Optional:
-#   MONGODB_URL            — if omitted, audit trail is disabled
-#   PORT                   — backend port (default: 8080)
+#   APP_ENV                  — defaults to "production" (enforces strong-secret checks)
+#   CONNECTOR_ENCRYPTION_KEY — separate key for connector OAuth tokens (else uses JWT_SECRET)
+#   REDIS_URL                — defaults to the bundled redis service
+#   MONGODB_URL              — if omitted, audit trail is disabled
+#   PORT                     — backend port (default: 8080)
+
+# Environment shared by the API and the background worker (they run the same
+# image and need identical configuration). Referenced via a YAML merge below.
+x-backend-env: &backend-env
+  # Database URLs constructed from service names inside the compose network
+  DATABASE_URL: postgresql+asyncpg://smritikosh:${POSTGRES_PASSWORD}@postgres:5432/smritikosh
+  NEO4J_URL: bolt://neo4j:7687
+  NEO4J_USER: neo4j
+  NEO4J_PASSWORD: ${NEO4J_PASSWORD}
+  MONGODB_URL: ${MONGODB_URL:-mongodb://mongodb:27017}
+  # Runtime environment — "production" enforces strong-secret checks at boot.
+  APP_ENV: ${APP_ENV:-production}
+  # Shared Redis — required so rate limits hold across multiple replicas.
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+  # Auth
+  JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+  CONNECTOR_ENCRYPTION_KEY: ${CONNECTOR_ENCRYPTION_KEY:-}
+  # LLM
+  LLM_PROVIDER: ${LLM_PROVIDER:?LLM_PROVIDER is required}
+  LLM_MODEL: ${LLM_MODEL:?LLM_MODEL is required}
+  LLM_API_KEY: ${LLM_API_KEY:-}
+  # Embeddings
+  EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:?EMBEDDING_PROVIDER is required}
+  EMBEDDING_MODEL: ${EMBEDDING_MODEL:?EMBEDDING_MODEL is required}
+  EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+  # Optional tuning — defaults are used if not set
+  RATE_LIMIT_ENCODE: ${RATE_LIMIT_ENCODE:-60/minute}
+  RATE_LIMIT_CONTEXT: ${RATE_LIMIT_CONTEXT:-60/minute}
+  RATE_LIMIT_SEARCH: ${RATE_LIMIT_SEARCH:-120/minute}
+  FACT_DECAY_HALF_LIFE_DAYS: ${FACT_DECAY_HALF_LIFE_DAYS:-60.0}
+  FACT_DECAY_FLOOR: ${FACT_DECAY_FLOOR:-0.1}
 
 services:
 
@@ -76,6 +110,20 @@ services:
     expose:
       - "27017"
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    expose:
+      - "6379"
+
   # ── Backend ─────────────────────────────────────────────────────────────────
 
   api:
@@ -92,36 +140,15 @@ services:
         condition: service_healthy
       mongodb:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     ports:
       - "${PORT:-8080}:8080"
     environment:
-      # Database URLs constructed from service names inside the compose network
-      DATABASE_URL: postgresql+asyncpg://smritikosh:${POSTGRES_PASSWORD}@postgres:5432/smritikosh
-      NEO4J_URL: bolt://neo4j:7687
-      NEO4J_USER: neo4j
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
-      MONGODB_URL: ${MONGODB_URL:-mongodb://mongodb:27017}
-
-      # Auth
-      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
-
-      # LLM
-      LLM_PROVIDER: ${LLM_PROVIDER:?LLM_PROVIDER is required}
-      LLM_MODEL: ${LLM_MODEL:?LLM_MODEL is required}
-      LLM_API_KEY: ${LLM_API_KEY:-}
-
-      # Embeddings
-      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:?EMBEDDING_PROVIDER is required}
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:?EMBEDDING_MODEL is required}
-      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
-
-      # Optional tuning — defaults are used if not set
-      RATE_LIMIT_ENCODE: ${RATE_LIMIT_ENCODE:-60/minute}
-      RATE_LIMIT_CONTEXT: ${RATE_LIMIT_CONTEXT:-60/minute}
-      RATE_LIMIT_SEARCH: ${RATE_LIMIT_SEARCH:-120/minute}
-      FACT_DECAY_HALF_LIFE_DAYS: ${FACT_DECAY_HALF_LIFE_DAYS:-60.0}
-      FACT_DECAY_FLOOR: ${FACT_DECAY_FLOOR:-0.1}
-
+      <<: *backend-env
+      # Background jobs run in the dedicated `worker` service, not here.
+      # (Leaving this true is still safe — the advisory lock elects one leader.)
+      RUN_SCHEDULER: "false"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
@@ -129,7 +156,53 @@ services:
       start_period: 30s
       retries: 3
 
+  # ── Background worker ───────────────────────────────────────────────────────
+  # Runs the memory-maintenance scheduler (consolidation, pruning, clustering,
+  # belief mining, fact decay, synthesis). Run exactly one replica — a Postgres
+  # advisory lock guards against accidental double-runs.
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: smritikosh-api:latest
+    restart: unless-stopped
+    command: ["python", "-m", "smritikosh.worker.main"]
+    depends_on:
+      # Wait for the API — it runs the Alembic migrations on startup.
+      api:
+        condition: service_healthy
+    environment:
+      <<: *backend-env
+    # The worker has no HTTP server — disable the image's /health probe.
+    healthcheck:
+      disable: true
+
+  # ── Durable task queue worker ───────────────────────────────────────────────
+  # Consumes the ARQ queue (media processing, bulk re-embed). Scale freely with
+  # `--scale taskworker=N` — unlike the scheduler worker, tasks fan out safely.
+
+  taskworker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: smritikosh-api:latest
+    restart: unless-stopped
+    command: ["arq", "smritikosh.tasks.jobs.WorkerSettings"]
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *backend-env
+    healthcheck:
+      disable: true
+
 volumes:
   postgres_data:
   neo4j_data:
   mongodb_data:
+  redis_data:

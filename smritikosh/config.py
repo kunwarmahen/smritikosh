@@ -1,4 +1,8 @@
+import logging
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -67,9 +71,25 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expire_days: int = 30
 
+    # ── Connector token encryption ──────────────────────────────────────────
+    # Key used to encrypt OAuth tokens stored in `user_connectors` at rest.
+    # If unset, the key is derived from jwt_secret (keeps existing deployments
+    # working). Set this so the JWT secret and the connector-token key can be
+    # rotated independently. Generate:
+    #   python -c "import secrets; print(secrets.token_hex(32))"
+    connector_encryption_key: str | None = None
+
     # Set BOOTSTRAP_ADMIN=1 temporarily to allow the first admin registration
     # without a token. Remove it immediately after creating the first account.
     bootstrap_admin: bool = False
+
+    # ── Redis ───────────────────────────────────────────────────────────────
+    # Shared store for the rate limiter (and, later, the task queue + caches).
+    # If unset, the rate limiter falls back to per-process in-memory storage —
+    # fine for a single instance, but limits are NOT enforced correctly across
+    # multiple API replicas. Set this whenever you run more than one instance.
+    #   Example: redis://localhost:6379/0
+    redis_url: str | None = None
 
     # ── Rate limiting ───────────────────────────────────────────────────────
     # Limits applied per authenticated user (user_id extracted from JWT/API key).
@@ -85,6 +105,16 @@ class Settings(BaseSettings):
     # are cleaned up automatically on the same run.
     fact_decay_half_life_days: float = 60.0  # days until confidence halves
     fact_decay_floor: float = 0.1            # delete relationships below this confidence
+
+    # ── Background scheduler ────────────────────────────────────────────────
+    # Whether THIS process runs the in-process memory-maintenance scheduler
+    # (consolidation, pruning, clustering, belief mining, fact decay, synthesis).
+    #   true  — single-process / development: the API process runs the jobs.
+    #   false — multi-replica: run a dedicated worker (python -m smritikosh.worker.main)
+    #           and set this to false on the API replicas.
+    # A Postgres advisory lock elects a single leader regardless of this flag, so
+    # leaving it true on several replicas is safe — only one actually runs jobs.
+    run_scheduler: bool = True
 
     # ── Scheduler (cron expressions, UTC) ──────────────────────────────────
     # Standard 5-field cron: minute hour day-of-month month day-of-week
@@ -131,6 +161,85 @@ class Settings(BaseSettings):
     speaker_similarity_threshold: float = 0.75
     # Max meeting recording file size (MB)
     media_max_meeting_mb: int = 500
+
+
+# ── Runtime security validation ────────────────────────────────────────────────
+
+# Values of APP_ENV treated as non-production — security checks are relaxed to
+# warnings so local development is never blocked.
+_NON_PROD_ENVS = {"development", "dev", "local", "test", "testing", "ci"}
+
+# The secret shipped in config defaults and .env.example. Must never reach prod.
+_DEFAULT_JWT_SECRET = "change-me-in-production"
+
+# Minimum acceptable length for any at-rest secret.
+_MIN_SECRET_LEN = 32
+
+
+def is_production(s: "Settings | None" = None) -> bool:
+    """True when APP_ENV is a production-like environment.
+
+    Anything not explicitly listed in _NON_PROD_ENVS is treated as production —
+    fail closed, so a typo in APP_ENV does not silently relax security checks.
+    """
+    s = s or settings
+    return s.app_env.strip().lower() not in _NON_PROD_ENVS
+
+
+def security_warnings(s: "Settings | None" = None) -> list[str]:
+    """Return fatal security misconfigurations for the given settings.
+
+    An empty list means the configuration is safe to boot. The caller decides
+    severity: in production a non-empty list should refuse startup; in a
+    non-production env the same items are surfaced as warnings only.
+    """
+    s = s or settings
+    problems: list[str] = []
+
+    if s.jwt_secret == _DEFAULT_JWT_SECRET:
+        problems.append(
+            "JWT_SECRET is still the shipped default 'change-me-in-production'. "
+            'Generate one: python -c "import secrets; print(secrets.token_hex(32))"'
+        )
+    elif len(s.jwt_secret) < _MIN_SECRET_LEN:
+        problems.append(
+            f"JWT_SECRET is too short ({len(s.jwt_secret)} chars); "
+            f"use at least {_MIN_SECRET_LEN} characters."
+        )
+
+    if s.connector_encryption_key is not None and len(s.connector_encryption_key) < _MIN_SECRET_LEN:
+        problems.append(
+            f"CONNECTOR_ENCRYPTION_KEY is too short ({len(s.connector_encryption_key)} chars); "
+            f"use at least {_MIN_SECRET_LEN} characters."
+        )
+
+    return problems
+
+
+def enforce_runtime_security(s: "Settings | None" = None) -> None:
+    """Refuse to boot a production deployment with insecure secrets.
+
+    In a production-like APP_ENV any fatal misconfiguration raises RuntimeError;
+    in a non-production env the same problems are logged as a warning so local
+    development is never blocked. Shared by the API process and the worker.
+    """
+    s = s or settings
+    problems = security_warnings(s)
+    if not problems:
+        return
+    formatted = "\n".join(f"  - {p}" for p in problems)
+    if is_production(s):
+        raise RuntimeError(
+            f"Refusing to start: insecure configuration for APP_ENV={s.app_env!r}.\n"
+            f"{formatted}\n"
+            "Fix these before deploying. (Setting APP_ENV to a development value bypasses "
+            "this check — never do that in production.)"
+        )
+    _logger.warning(
+        "Insecure configuration detected — allowed because APP_ENV=%r is non-production:\n%s",
+        s.app_env,
+        formatted,
+    )
 
 
 # Single shared instance — import this everywhere
