@@ -23,12 +23,16 @@ logger = logging.getLogger(__name__)
 
 # ── Engine ────────────────────────────────────────────────────────────────────
 
+# Pool sizing is a deployment-wide budget, not a per-process knob — see the
+# "Connection pools" section in config.py (item A4).
 engine = create_async_engine(
     settings.postgres_url,
     echo=False,
     pool_pre_ping=True,   # detect stale connections
-    pool_size=10,
-    max_overflow=20,
+    pool_size=settings.pg_pool_size,
+    max_overflow=settings.pg_max_overflow,
+    pool_timeout=settings.pg_pool_timeout,
+    pool_recycle=settings.pg_pool_recycle,
 )
 
 # ── Session factory ───────────────────────────────────────────────────────────

@@ -78,4 +78,26 @@ async def health() -> HealthResponse:
         mongodb=mongo_status,
         llm_model=llm_model,
         llm_status=llm_status,
+        pg_pool=_pg_pool_status(),
     )
+
+
+def _pg_pool_status() -> dict:
+    """Live utilisation of this process's Postgres pool (item A4).
+
+    checked_out near max means new requests will block for PG_POOL_TIMEOUT
+    seconds and then error — the earliest warning that the connection budget
+    (replicas × (pool_size + max_overflow)) is undersized.
+    """
+    try:
+        pool = engine.pool
+        return {
+            "size": pool.size(),
+            "checked_in": pool.checkedin(),
+            "checked_out": pool.checkedout(),
+            "overflow": pool.overflow(),
+            "max": settings.pg_pool_size + settings.pg_max_overflow,
+        }
+    except Exception as exc:  # pragma: no cover - depends on pool implementation
+        logger.debug("Pool status unavailable: %s", exc)
+        return {}

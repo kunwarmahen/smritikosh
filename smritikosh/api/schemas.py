@@ -413,6 +413,11 @@ class HealthResponse(BaseModel):
     mongodb: str = "unknown"     # "ok" | "error" | "not_configured"
     llm_model: str = "unknown"
     llm_status: str = "unknown"  # "ok" | "error"
+    # Live Postgres pool utilisation for THIS process (item A4):
+    # {size, checked_in, checked_out, overflow, max}. checked_out
+    # approaching max means requests will start waiting PG_POOL_TIMEOUT
+    # seconds and then fail — raise the pool budget or add replicas.
+    pg_pool: dict = {}
 
 
 # ── POST /memory/search ───────────────────────────────────────────────────────

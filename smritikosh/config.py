@@ -39,10 +39,25 @@ class Settings(BaseSettings):
     # ── PostgreSQL ─────────────────────────────────────────────────────────
     postgres_url: str = "postgresql+asyncpg://smritikosh:smritikosh@localhost:5432/smritikosh"
 
+    # ── Connection pools (item A4) ─────────────────────────────────────────
+    # Budget: every process holds its own pool — each API replica, the
+    # scheduler worker, and each ARQ taskworker. Total Postgres connections:
+    #   processes × (PG_POOL_SIZE + PG_MAX_OVERFLOW)
+    # Keep that under Postgres max_connections (default 100) with headroom
+    # for migrations and ad-hoc psql. The defaults (5 + 10) budget ~6
+    # processes against a stock Postgres; for larger fleets raise
+    # max_connections or put PgBouncer in front of the API tier.
+    pg_pool_size: int = 5         # persistent connections per process
+    pg_max_overflow: int = 10     # extra burst connections (closed when idle)
+    pg_pool_timeout: int = 30     # seconds to wait for a free connection before erroring
+    pg_pool_recycle: int = 1800   # recycle connections older than this (seconds)
+
     # ── Neo4j ──────────────────────────────────────────────────────────────
     neo4j_uri: str = "bolt://localhost:7687"
     neo4j_user: str = "neo4j"
     neo4j_password: str = "smritikosh"
+    # Per-process cap on Neo4j driver connections (driver default is 100).
+    neo4j_max_pool_size: int = 50
 
     # ── App ────────────────────────────────────────────────────────────────
     app_env: str = "development"
