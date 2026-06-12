@@ -156,6 +156,11 @@ class Settings(BaseSettings):
     #   "0 2 * * *"   — daily at 02:00 UTC
     #   "0 */6 * * *" — every 6 hours
     #   "0 3 * * 0"   — every Sunday at 03:00 UTC
+    # How many tenants a background job processes concurrently (item A5).
+    # Each concurrent slot holds its own Postgres + Neo4j session and may make
+    # LLM calls, so size against pool limits and provider rate limits.
+    scheduler_job_concurrency: int = 4
+
     scheduler_consolidation_cron: str = "0 * * * *"    # hourly
     scheduler_pruning_cron: str = "0 2 * * *"          # daily at 02:00 UTC
     scheduler_clustering_cron: str = "0 */6 * * *"     # every 6 hours

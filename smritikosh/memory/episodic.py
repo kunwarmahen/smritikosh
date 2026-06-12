@@ -146,6 +146,13 @@ class EpisodicMemory:
         )
         session.add(event)
         await session.flush()   # get the auto-generated id without committing
+
+        # Keep the tenant discoverable by background jobs without scanning
+        # `events` (item A5). store() is the single chokepoint every event
+        # write goes through, so this stays in the same transaction.
+        from smritikosh.db.activity import touch_user_activity
+
+        await touch_user_activity(session, user_id, app_id)
         return event
 
     async def update_embedding(

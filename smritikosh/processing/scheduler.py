@@ -25,8 +25,11 @@ import logging
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 
+from smritikosh.config import settings
+from smritikosh.db.activity import mark_job_done
+from smritikosh.db.models import UserActivity
 from smritikosh.db.neo4j import neo4j_session
 from smritikosh.db.postgres import db_session
 from smritikosh.llm.usage import llm_context
@@ -178,13 +181,9 @@ class MemoryScheduler:
                 "Consolidation job triggered — %d active user(s) found",
                 len(user_app_pairs),
             )
-            results: list[ConsolidationResult] = []
-
-            for user_id, app_id in user_app_pairs:
-                logger.debug("Consolidating user=%s app=%s", user_id, app_id)
-                result = await self.run_consolidation_now(user_id=user_id, app_id=app_id)
-                results.append(result)
-
+            results: list[ConsolidationResult] = await self._run_for_users(
+                user_app_pairs, self.run_consolidation_now
+            )
             skipped = sum(1 for r in results if r.skipped)
             logger.info(
                 "Consolidation job complete — processed=%d skipped=%d",
@@ -196,20 +195,20 @@ class MemoryScheduler:
     async def run_pruning_for_all_users(self, override_thresholds=None) -> list[PruningResult]:
         """Run pruning for all users that have consolidated events."""
         with track_job("pruning"):
-            user_app_pairs = await self._get_all_users()
+            user_app_pairs = await self._get_all_users("last_pruned_at")
             logger.info(
                 "Pruning job triggered — %d user(s) found",
                 len(user_app_pairs),
             )
-            results: list[PruningResult] = []
 
-            for user_id, app_id in user_app_pairs:
-                logger.debug("Pruning user=%s app=%s", user_id, app_id)
-                result = await self.run_pruning_now(
+            async def _prune_one(*, user_id: str, app_id: str) -> PruningResult:
+                return await self.run_pruning_now(
                     user_id=user_id, app_id=app_id, override_thresholds=override_thresholds
                 )
-                results.append(result)
 
+            results: list[PruningResult] = await self._run_for_users(
+                user_app_pairs, _prune_one
+            )
             skipped = sum(1 for r in results if r.skipped)
             logger.info(
                 "Pruning job complete — processed=%d skipped=%d",
@@ -225,9 +224,11 @@ class MemoryScheduler:
         try:
             with llm_context(user_id=user_id, app_id=app_id, source="consolidation"):
                 async with db_session() as pg, neo4j_session() as neo:
-                    return await self.consolidator.run(
+                    result = await self.consolidator.run(
                         pg, neo, user_id=user_id, app_id=app_id
                     )
+                    await mark_job_done(pg, user_id, app_id, "consolidated")
+                    return result
         except Exception as exc:
             JOB_USER_ERRORS.labels(job="consolidation").inc()
             logger.error(
@@ -249,10 +250,12 @@ class MemoryScheduler:
         try:
             with llm_context(user_id=user_id, app_id=app_id, source="pruning"):
                 async with db_session() as pg, neo4j_session() as neo:
-                    return await self.pruner.prune(
+                    result = await self.pruner.prune(
                         pg, user_id=user_id, app_id=app_id, neo_session=neo,
                         override_thresholds=override_thresholds,
                     )
+                    await mark_job_done(pg, user_id, app_id, "pruned")
+                    return result
         except Exception as exc:
             JOB_USER_ERRORS.labels(job="pruning").inc()
             logger.error(
@@ -267,18 +270,14 @@ class MemoryScheduler:
         if self.belief_miner is None:
             return []
         with track_job("belief_mining"):
-            user_app_pairs = await self._get_all_users()
+            user_app_pairs = await self._get_all_users("last_belief_mined_at")
             logger.info(
                 "Belief mining job triggered — %d user(s) found",
                 len(user_app_pairs),
             )
-            results: list[MiningResult] = []
-
-            for user_id, app_id in user_app_pairs:
-                logger.debug("Belief mining user=%s app=%s", user_id, app_id)
-                result = await self.run_belief_mining_now(user_id=user_id, app_id=app_id)
-                results.append(result)
-
+            results: list[MiningResult] = await self._run_for_users(
+                user_app_pairs, self.run_belief_mining_now
+            )
             skipped = sum(1 for r in results if r.skipped)
             logger.info(
                 "Belief mining job complete — processed=%d skipped=%d",
@@ -298,9 +297,11 @@ class MemoryScheduler:
         try:
             with llm_context(user_id=user_id, app_id=app_id, source="belief_mining"):
                 async with db_session() as pg, neo4j_session() as neo:
-                    return await self.belief_miner.mine(
+                    result = await self.belief_miner.mine(
                         pg, neo, user_id=user_id, app_id=app_id
                     )
+                    await mark_job_done(pg, user_id, app_id, "belief_mined")
+                    return result
         except Exception as exc:
             JOB_USER_ERRORS.labels(job="belief_mining").inc()
             logger.error(
@@ -316,18 +317,14 @@ class MemoryScheduler:
         if self.clusterer is None:
             return []
         with track_job("clustering"):
-            user_app_pairs = await self._get_all_users()
+            user_app_pairs = await self._get_all_users("last_clustered_at")
             logger.info(
                 "Clustering job triggered — %d user(s) found",
                 len(user_app_pairs),
             )
-            results: list[ClusterResult] = []
-
-            for user_id, app_id in user_app_pairs:
-                logger.debug("Clustering user=%s app=%s", user_id, app_id)
-                result = await self.run_clustering_now(user_id=user_id, app_id=app_id)
-                results.append(result)
-
+            results: list[ClusterResult] = await self._run_for_users(
+                user_app_pairs, self.run_clustering_now
+            )
             skipped = sum(1 for r in results if r.skipped)
             logger.info(
                 "Clustering job complete — processed=%d skipped=%d",
@@ -347,7 +344,9 @@ class MemoryScheduler:
         try:
             with llm_context(user_id=user_id, app_id=app_id, source="clustering"):
                 async with db_session() as pg:
-                    return await self.clusterer.run(pg, user_id=user_id, app_id=app_id)
+                    result = await self.clusterer.run(pg, user_id=user_id, app_id=app_id)
+                    await mark_job_done(pg, user_id, app_id, "clustered")
+                    return result
         except Exception as exc:
             JOB_USER_ERRORS.labels(job="clustering").inc()
             logger.error(
@@ -385,18 +384,14 @@ class MemoryScheduler:
         if self.synthesizer is None:
             return []
         with track_job("synthesis"):
-            user_app_pairs = await self._get_all_users()
+            user_app_pairs = await self._get_all_users("last_synthesized_at")
             logger.info(
                 "Cross-system synthesis job triggered — %d user(s) found",
                 len(user_app_pairs),
             )
-            results: list[SynthesisResult] = []
-
-            for user_id, app_id in user_app_pairs:
-                logger.debug("Synthesizing user=%s app=%s", user_id, app_id)
-                result = await self.run_synthesis_now(user_id=user_id, app_id=app_id)
-                results.append(result)
-
+            results: list[SynthesisResult] = await self._run_for_users(
+                user_app_pairs, self.run_synthesis_now
+            )
             skipped = sum(1 for r in results if r.skipped)
             logger.info(
                 "Cross-system synthesis job complete — processed=%d skipped=%d",
@@ -416,9 +411,11 @@ class MemoryScheduler:
         try:
             with llm_context(user_id=user_id, app_id=app_id, source="synthesis"):
                 async with db_session() as pg, neo4j_session() as neo:
-                    return await self.synthesizer.run(
+                    result = await self.synthesizer.run(
                         pg, neo, user_id=user_id, app_id=app_id
                     )
+                    await mark_job_done(pg, user_id, app_id, "synthesized")
+                    return result
         except Exception as exc:
             JOB_USER_ERRORS.labels(job="synthesis").inc()
             logger.error(
@@ -433,29 +430,102 @@ class MemoryScheduler:
 
     async def _get_active_users(self) -> list[tuple[str, str]]:
         """
-        Return (user_id, app_id) pairs that have unconsolidated events.
-        'Active' = had at least one event in the last 24 hours.
-        """
-        from smritikosh.db.models import Event
-        async with db_session() as session:
-            result = await session.execute(
-                select(Event.user_id, Event.app_id)
-                .where(
-                    Event.consolidated.is_(False),
-                    Event.created_at >= text("NOW() - INTERVAL '24 hours'"),
-                )
-                .distinct()
-            )
-            return [(row.user_id, row.app_id) for row in result]
+        Return (user_id, app_id) pairs worth consolidating: active in the last
+        24 hours AND with events newer than their last consolidation.
 
-    async def _get_all_users(self) -> list[tuple[str, str]]:
-        """Return all distinct (user_id, app_id) pairs in the events table."""
-        from smritikosh.db.models import Event
+        Indexed lookup on user_activity (item A5) — no events-table scan. The
+        consolidation watermark means tenants with nothing new are skipped
+        entirely, which the old DISTINCT query could not do.
+        """
         async with db_session() as session:
             result = await session.execute(
-                select(Event.user_id, Event.app_id).distinct()
+                select(UserActivity.user_id, UserActivity.app_id).where(
+                    UserActivity.last_event_at >= text("NOW() - INTERVAL '24 hours'"),
+                    or_(
+                        UserActivity.last_consolidated_at.is_(None),
+                        UserActivity.last_consolidated_at < UserActivity.last_event_at,
+                    ),
+                )
             )
-            return [(row.user_id, row.app_id) for row in result]
+            pairs = [(row.user_id, row.app_id) for row in result]
+            if pairs:
+                return pairs
+            # Nothing matched. If the activity table has rows, that's a real
+            # "no one needs work" — but an empty table means a deployment that
+            # predates it (created via create_all, no backfill): fall back to
+            # the legacy scan so existing tenants are not silently dropped.
+            if await self._activity_table_populated(session):
+                return []
+            return await self._legacy_active_users(session)
+
+    async def _get_all_users(
+        self, stale_watermark: str | None = None
+    ) -> list[tuple[str, str]]:
+        """All known (user_id, app_id) pairs from user_activity, stalest first.
+
+        `stale_watermark` names a UserActivity column (e.g. "last_pruned_at");
+        tenants never processed sort first, so a job that is killed mid-cycle
+        makes progress across restarts instead of restarting from the same end.
+        """
+        async with db_session() as session:
+            query = select(UserActivity.user_id, UserActivity.app_id)
+            if stale_watermark is not None:
+                column = getattr(UserActivity, stale_watermark)
+                query = query.order_by(column.asc().nulls_first())
+            result = await session.execute(query)
+            pairs = [(row.user_id, row.app_id) for row in result]
+            if pairs:
+                return pairs
+            return await self._legacy_all_users(session)
+
+    @staticmethod
+    async def _activity_table_populated(session) -> bool:
+        result = await session.execute(select(UserActivity.id).limit(1))
+        return result.first() is not None
+
+    @staticmethod
+    async def _legacy_active_users(session) -> list[tuple[str, str]]:
+        """Pre-A5 discovery: DISTINCT scan over events. Fallback only."""
+        from smritikosh.db.models import Event
+
+        result = await session.execute(
+            select(Event.user_id, Event.app_id)
+            .where(
+                Event.consolidated.is_(False),
+                Event.created_at >= text("NOW() - INTERVAL '24 hours'"),
+            )
+            .distinct()
+        )
+        return [(row.user_id, row.app_id) for row in result]
+
+    @staticmethod
+    async def _legacy_all_users(session) -> list[tuple[str, str]]:
+        """Pre-A5 discovery: DISTINCT scan over events. Fallback only."""
+        from smritikosh.db.models import Event
+
+        result = await session.execute(
+            select(Event.user_id, Event.app_id).distinct()
+        )
+        return [(row.user_id, row.app_id) for row in result]
+
+    # ── Bounded-concurrency fan-out ─────────────────────────────────────────
+
+    async def _run_for_users(self, pairs, runner) -> list:
+        """Run `runner(user_id=…, app_id=…)` for every pair, at most
+        SCHEDULER_JOB_CONCURRENCY at a time. Results keep the order of `pairs`.
+
+        Replaces the sequential per-user loop: one slow tenant no longer
+        blocks every tenant behind it. Each runner swallows its own errors
+        (returning a skipped result), so gather never aborts the batch.
+        """
+        limit = max(1, settings.scheduler_job_concurrency)
+        semaphore = asyncio.Semaphore(limit)
+
+        async def _one(user_id: str, app_id: str):
+            async with semaphore:
+                return await runner(user_id=user_id, app_id=app_id)
+
+        return list(await asyncio.gather(*(_one(u, a) for u, a in pairs)))
 
 
 # ── Scheduler bootstrap helpers ─────────────────────────────────────────────────

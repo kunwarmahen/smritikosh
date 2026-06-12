@@ -913,3 +913,51 @@ class UserQuota(Base):
             f"events={self.daily_event_limit}/{self.monthly_event_limit} "
             f"tokens={self.daily_token_limit}/{self.monthly_token_limit}>"
         )
+
+
+class UserActivity(Base):
+    """
+    One row per (user_id, app_id) — indexed user discovery for background
+    jobs (item A5), replacing the full-table SELECT DISTINCT over `events`
+    on every scheduler tick.
+
+    last_event_at is touched on every event store (EpisodicMemory.store →
+    db/activity.touch_user_activity). The last_*_at watermarks record when
+    each maintenance job last completed for the tenant, so jobs can order
+    work by staleness and consolidation can skip tenants with nothing new
+    (last_consolidated_at >= last_event_at).
+    """
+
+    __tablename__ = "user_activity"
+    __table_args__ = (
+        UniqueConstraint("user_id", "app_id", name="uq_user_activity"),
+        Index("ix_user_activity_last_event", "last_event_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    app_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    last_event_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    last_consolidated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    last_pruned_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    last_clustered_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    last_belief_mined_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    last_synthesized_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<UserActivity user={self.user_id} app={self.app_id} "
+            f"last_event={self.last_event_at}>"
+        )
