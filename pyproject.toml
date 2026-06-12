@@ -43,7 +43,16 @@ dependencies = [
     "prometheus-fastapi-instrumentator>=7.0.0",  # GET /metrics — latency, throughput, error rates
 ]
 
+[project.scripts]
+smritikosh-mcp = "smritikosh.mcp.server:main"
+
 [project.optional-dependencies]
+# Model Context Protocol server (smritikosh-mcp) — exposes store_memory /
+# recall / get_context tools to MCP clients (Claude Code, Claude Desktop, …).
+# Install: pip install smritikosh[mcp]
+mcp = [
+    "mcp>=1.10.0",
+]
 dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",

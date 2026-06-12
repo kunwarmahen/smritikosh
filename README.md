@@ -15,6 +15,7 @@ Smritikosh gives any LLM application persistent, user-specific memory modelled o
 | [QUICKSTART.md](QUICKSTART.md) | Step-by-step setup from zero to a running server |
 | [FLOW.md](FLOW.md) | End-to-end walkthrough — how memory flows through the system with real examples |
 | [sample/README.md](sample/README.md) | Running the demo chatbot against a live server |
+| [local_docs/MCP_SERVER.md](local_docs/MCP_SERVER.md) | MCP server — use Smritikosh from Claude Code / Claude Desktop with zero integration |
 
 ---
 
@@ -157,7 +158,9 @@ Your application
       │         │  covers Gemini, Ollama, vLLM, llama.cpp via LiteLLM
       │         ▼
       ├── SmritikoshClient (Python)   smritikosh.sdk   ← async API client
-      └── SmritikoshClient (Node.js)  sdk-node/
+      ├── SmritikoshClient (Node.js)  sdk-node/
+      └── smritikosh-mcp (MCP server) smritikosh.mcp   ← store_memory / recall /
+                │                                        get_context for any MCP client
                 │
                 ▼  REST API (FastAPI)
         ┌───────────────────────────────────────┐
