@@ -81,7 +81,7 @@ class TestModelResolution:
 
     def test_ollama_prefixed(self):
         adapter = make_adapter(llm_provider="ollama", llm_model="qwen2.5:7b")
-        assert adapter._chat_model == "ollama/qwen2.5:7b"
+        assert adapter._chat_model == "ollama_chat/qwen2.5:7b"
 
     def test_vllm_prefixed(self):
         adapter = make_adapter(llm_provider="vllm", llm_model="qwen2.5-72b")
@@ -128,7 +128,7 @@ class TestComplete:
 
         call_kwargs = mock_llm.call_args.kwargs
         assert call_kwargs["api_base"] == "http://localhost:11434"
-        assert call_kwargs["model"] == "ollama/qwen2.5:7b"
+        assert call_kwargs["model"] == "ollama_chat/qwen2.5:7b"
 
 
 # ── extract_structured() ──────────────────────────────────────────────────────

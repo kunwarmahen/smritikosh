@@ -319,7 +319,6 @@ class LLMAdapter:
 
         Set WHISPER_PROVIDER env var to "openai" or "local".
         """
-        import io
 
         provider = self._cfg.whisper_provider.lower()
 

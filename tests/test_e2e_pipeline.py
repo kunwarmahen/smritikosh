@@ -25,7 +25,6 @@ from smritikosh.memory.episodic import EpisodicMemory, SearchResult
 from smritikosh.memory.hippocampus import Hippocampus
 from smritikosh.memory.narrative import NarrativeMemory
 from smritikosh.memory.semantic import FactRecord, SemanticMemory, UserProfile
-from smritikosh.processing.amygdala import Amygdala
 from smritikosh.processing.consolidator import Consolidator, MIN_EVENTS_TO_CONSOLIDATE
 from smritikosh.retrieval.context_builder import ContextBuilder, MemoryContext
 
@@ -137,7 +136,7 @@ class TestEncodeStage:
     @pytest.mark.asyncio
     async def test_encode_stores_event_in_episodic(self):
         hippo, episodic, _, pg, neo, _ = self._make_deps()
-        result = await hippo.encode(pg, neo, user_id=USER_ID, raw_text=ENCODED_TEXT)
+        await hippo.encode(pg, neo, user_id=USER_ID, raw_text=ENCODED_TEXT)
         episodic.store.assert_called_once()
         call_kwargs = episodic.store.call_args.kwargs
         assert call_kwargs["user_id"] == USER_ID
@@ -146,7 +145,7 @@ class TestEncodeStage:
     @pytest.mark.asyncio
     async def test_encode_returns_event_with_embedding(self):
         hippo, _, _, pg, neo, stored_event = self._make_deps()
-        result = await hippo.encode(pg, neo, user_id=USER_ID, raw_text=ENCODED_TEXT)
+        await hippo.encode(pg, neo, user_id=USER_ID, raw_text=ENCODED_TEXT)
         # Embedding should have been passed to store()
         call_kwargs = hippo.episodic.store.call_args.kwargs
         assert call_kwargs["embedding"] == EMBEDDING
@@ -431,7 +430,7 @@ class TestFullPipeline:
         semantic.upsert_fact = AsyncMock(return_value=_make_fact_record())
 
         hippo = Hippocampus(llm=llm, episodic=episodic, semantic=semantic)
-        encoded = await hippo.encode(pg, neo, user_id=USER_ID, raw_text=ENCODED_TEXT)
+        await hippo.encode(pg, neo, user_id=USER_ID, raw_text=ENCODED_TEXT)
 
         # Embedding failed but event still stored
         store_kwargs = episodic.store.call_args.kwargs

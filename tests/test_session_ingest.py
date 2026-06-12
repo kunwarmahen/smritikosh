@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -21,7 +21,6 @@ from smritikosh.api import deps
 from smritikosh.db.models import Event, FactStatus, ProcessedSession, SourceType
 from smritikosh.db.neo4j import get_neo4j_session
 from smritikosh.db.postgres import get_session
-from smritikosh.memory.episodic import EpisodicMemory
 from smritikosh.memory.hippocampus import EncodedMemory, Hippocampus
 from smritikosh.memory.semantic import FactRecord, SemanticMemory, UserProfile
 

@@ -22,7 +22,6 @@ Run: periodically via the Scheduler (e.g. every 6 hours).
 """
 
 import logging
-import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 

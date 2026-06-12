@@ -16,7 +16,7 @@ Job cadence: weekly (run by MemoryScheduler).
 """
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from smritikosh.config import settings
 from smritikosh.memory.semantic import SemanticMemory

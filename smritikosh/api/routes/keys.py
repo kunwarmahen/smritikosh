@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from smritikosh.auth.deps import assert_app_access, get_current_user
+from smritikosh.auth.deps import get_current_user
 from smritikosh.auth.utils import generate_api_key
 from smritikosh.db.models import ApiKey
 from smritikosh.db.postgres import get_session

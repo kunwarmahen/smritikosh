@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from smritikosh.db.models import Event, MemoryLink, RelationType
+from smritikosh.db.models import Event, MemoryLink
 from smritikosh.memory.episodic import EpisodicMemory, SearchResult
 from smritikosh.memory.narrative import NarrativeMemory
 from smritikosh.memory.semantic import FactRecord, SemanticMemory, UserProfile

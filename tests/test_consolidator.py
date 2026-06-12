@@ -7,17 +7,15 @@ DB integration tests are gated behind @pytest.mark.db.
 
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from smritikosh.db.models import RelationType
 from smritikosh.memory.narrative import NarrativeMemory
 from smritikosh.processing.consolidator import (
     Consolidator,
     ConsolidationResult,
     MIN_EVENTS_TO_CONSOLIDATE,
-    BATCH_SIZE,
     _split_batches,
     _build_consolidation_prompt,
     _format_date,
@@ -222,7 +220,7 @@ class TestConsolidatorSuccess:
         mock_episodic.get_unconsolidated.return_value = events
         pg, neo = AsyncMock(), AsyncMock()
 
-        result = await consolidator.run(pg, neo, user_id="u1", app_id="default")
+        await consolidator.run(pg, neo, user_id="u1", app_id="default")
 
         mock_episodic.mark_consolidated.assert_called_once()
         call_args = mock_episodic.mark_consolidated.call_args
@@ -307,7 +305,7 @@ class TestConsolidatorLLMFailure:
         mock_llm.extract_structured.return_value = {"facts": []}  # no "summary"
         pg, neo = AsyncMock(), AsyncMock()
 
-        result = await consolidator.run(pg, neo, user_id="u1", app_id="default")
+        await consolidator.run(pg, neo, user_id="u1", app_id="default")
 
         # mark_consolidated called with summary=None (empty string → None)
         mock_episodic.mark_consolidated.assert_called_once()

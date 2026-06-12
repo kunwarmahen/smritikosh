@@ -10,9 +10,8 @@ import threading
 import time
 import uuid
 from typing import Any
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock
 
-import pytest
 
 from smritikosh.sdk.middleware import (
     LiteLLMMiddleware,
@@ -385,7 +384,6 @@ def test_second_partial_flush_sends_only_new_turns():
     mw.chat.completions.create(model="m", messages=[{"role": "user", "content": "turn-1"}])
     mw.chat.completions.create(model="m", messages=[{"role": "user", "content": "turn-2"}])
     time.sleep(0.1)
-    first_call_count = mw._http.post.call_count
 
     # Second window
     mw.chat.completions.create(model="m", messages=[{"role": "user", "content": "turn-3"}])

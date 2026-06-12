@@ -17,7 +17,7 @@ Test strategy:
 
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -31,7 +31,7 @@ from smritikosh.db.postgres import get_session
 from smritikosh.memory.episodic import EpisodicMemory
 from smritikosh.memory.hippocampus import EncodedMemory, Hippocampus
 from smritikosh.memory.identity import IdentityBuilder, IdentityDimension, UserIdentity
-from smritikosh.memory.semantic import FactRecord, SemanticMemory, UserProfile
+from smritikosh.memory.semantic import FactRecord, UserProfile
 from smritikosh.processing.reinforcement import ReinforcementLoop
 from smritikosh.retrieval.context_builder import ContextBuilder, MemoryContext
 

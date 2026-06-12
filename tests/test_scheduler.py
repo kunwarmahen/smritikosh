@@ -5,7 +5,6 @@ Unit tests verify job registration, manual triggers, and user discovery logic.
 No real DB or LLM connections are used.
 """
 
-import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -97,7 +96,9 @@ class TestSchedulerConstruction:
             job_ids = [c.kwargs.get("id") or c[1].get("id") for c in calls]
             assert "pruning_job" in job_ids
 
-    def test_custom_intervals(self, mock_consolidator, mock_pruner, mock_episodic):
+    def test_custom_crons(self, mock_consolidator, mock_pruner, mock_episodic):
+        from apscheduler.triggers.cron import CronTrigger
+
         with patch("smritikosh.processing.scheduler.AsyncIOScheduler") as MockSched:
             instance = MagicMock()
             instance.get_jobs.return_value = []
@@ -107,16 +108,16 @@ class TestSchedulerConstruction:
                 consolidator=mock_consolidator,
                 pruner=mock_pruner,
                 episodic=mock_episodic,
-                consolidation_hours=2,
-                pruning_hours=48,
+                consolidation_cron="0 */2 * * *",
+                pruning_cron="30 4 * * *",
             )
 
             calls = instance.add_job.call_args_list
             # First call is consolidation, second is pruning
             consol_kwargs = calls[0][1]
             prune_kwargs = calls[1][1]
-            assert consol_kwargs["hours"] == 2
-            assert prune_kwargs["hours"] == 48
+            assert str(consol_kwargs["trigger"]) == str(CronTrigger.from_crontab("0 */2 * * *"))
+            assert str(prune_kwargs["trigger"]) == str(CronTrigger.from_crontab("30 4 * * *"))
 
 
 # ── start / shutdown ──────────────────────────────────────────────────────────

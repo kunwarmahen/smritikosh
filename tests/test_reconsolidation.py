@@ -18,7 +18,6 @@ from smritikosh.db.models import Event
 from smritikosh.memory.episodic import EpisodicMemory, SearchResult
 from smritikosh.processing.reconsolidation import (
     ReconsolidationEngine,
-    ReconsolidationResult,
     DEFAULT_MIN_RECALL_COUNT,
     DEFAULT_MIN_IMPORTANCE,
     DEFAULT_COOLDOWN_HOURS,

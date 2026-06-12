@@ -17,10 +17,8 @@ Test strategy:
 """
 
 import uuid
-from datetime import datetime, timezone
 
 import pytest
-from sqlalchemy import select
 
 from smritikosh.db.models import (
     Base,

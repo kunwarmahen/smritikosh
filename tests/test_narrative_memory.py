@@ -63,7 +63,7 @@ class TestCreateLink:
         session = make_mock_session()
         from_id, to_id = uuid.uuid4(), uuid.uuid4()
 
-        link = await narrative.create_link(
+        await narrative.create_link(
             session,
             from_event_id=from_id,
             to_event_id=to_id,

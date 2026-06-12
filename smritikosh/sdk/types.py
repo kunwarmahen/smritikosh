@@ -5,7 +5,7 @@ These mirror the API response schemas but live in the SDK layer so callers
 don't need to depend on the server-side `smritikosh.api.schemas` module.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass

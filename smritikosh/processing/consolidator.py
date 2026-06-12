@@ -16,7 +16,7 @@ Run: periodically via the Scheduler (e.g. every hour).
 
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from neo4j import AsyncSession as NeoSession

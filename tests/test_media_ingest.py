@@ -9,12 +9,11 @@ import uuid
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from httpx import ASGITransport, AsyncClient
 
 from smritikosh.api.main import app
 from smritikosh.api import deps
 from smritikosh.auth.deps import get_current_user
-from smritikosh.db.models import MediaIngest, MediaIngestStatus
+from smritikosh.db.models import MediaIngest
 from smritikosh.db.neo4j import get_neo4j_session
 from smritikosh.db.postgres import get_session
 from smritikosh.memory.semantic import SemanticMemory

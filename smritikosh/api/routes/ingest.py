@@ -27,7 +27,6 @@ from typing import Annotated, Any
 
 from fastapi import (
     APIRouter,
-    Body,
     Depends,
     File,
     Form,

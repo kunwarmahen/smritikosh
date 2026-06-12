@@ -6,10 +6,9 @@ LLM labelling, and write-back behaviour.
 DB integration tests are gated behind @pytest.mark.db.
 """
 
-import math
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, call
+from unittest.mock import AsyncMock, MagicMock
 
 import numpy as np
 import pytest
@@ -20,7 +19,6 @@ from smritikosh.processing.memory_clusterer import (
     ClusterResult,
     MemoryClusterer,
     MIN_EVENTS_TO_CLUSTER,
-    DEFAULT_SIMILARITY_THRESHOLD,
     _cosine_sim,
     _build_label_prompt,
     cluster_embeddings,

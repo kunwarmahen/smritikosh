@@ -16,9 +16,8 @@ Test strategy:
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
-from smritikosh.db.models import FactCategory
 from smritikosh.memory.semantic import (
     FactRecord,
     SemanticMemory,

@@ -16,12 +16,17 @@ Test strategy:
 
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from smritikosh.config import settings
 from smritikosh.db.models import Base, Event
 from smritikosh.memory.episodic import EpisodicMemory, HybridWeights, SearchResult, _embedding_literal
+
+# Embeddings must match the configured dimension or EpisodicMemory.store rejects
+# them — derive from settings so tests pass regardless of the local .env.
+DIM = settings.embedding_dimensions
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -47,7 +52,7 @@ def make_event(user_id="u1", raw_text="test event", **kwargs) -> Event:
         user_id=user_id,
         app_id="default",
         raw_text=raw_text,
-        embedding=[0.1] * 1536,
+        embedding=[0.1] * DIM,
         importance_score=kwargs.get("importance_score", 1.0),
         consolidated=kwargs.get("consolidated", False),
         event_metadata={},
@@ -132,7 +137,7 @@ class TestStore:
     async def test_store_with_embedding(self):
         episodic = make_episodic()
         session = make_mock_session()
-        vec = [0.1] * 1536
+        vec = [0.1] * DIM
 
         event = await episodic.store(
             session, user_id="u1", raw_text="hello", embedding=vec
@@ -187,7 +192,7 @@ class TestUpdateEmbedding:
         episodic = make_episodic()
         session = make_mock_session()
         event_id = uuid.uuid4()
-        vec = [0.5] * 1536
+        vec = [0.5] * DIM
 
         await episodic.update_embedding(session, event_id, vec)
 
@@ -439,23 +444,23 @@ class TestEpisodicMemoryDB:
 
     async def test_hybrid_search_returns_ranked_results(self):
         """Events with similar embeddings should score higher."""
-        query_vec = [1.0] * 1536
+        query_vec = [1.0] * DIM
 
         async with self.SessionFactory() as session:
             # High similarity — same direction vector
-            e_similar = await self.episodic.store(
+            await self.episodic.store(
                 session,
                 user_id="u1",
                 raw_text="very similar to query",
-                embedding=[1.0] * 1536,
+                embedding=[1.0] * DIM,
                 importance_score=0.5,
             )
             # Low similarity — opposite direction
-            e_distant = await self.episodic.store(
+            await self.episodic.store(
                 session,
                 user_id="u1",
                 raw_text="very different from query",
-                embedding=[-1.0] * 1536,
+                embedding=[-1.0] * DIM,
                 importance_score=0.5,
             )
             await session.commit()
@@ -472,7 +477,7 @@ class TestEpisodicMemoryDB:
 
     async def test_hybrid_search_isolates_by_user(self):
         """Results for u1 should not include events from u2."""
-        vec = [0.5] * 1536
+        vec = [0.5] * DIM
 
         async with self.SessionFactory() as session:
             await self.episodic.store(session, user_id="u1", raw_text="u1 event", embedding=vec)
@@ -486,7 +491,7 @@ class TestEpisodicMemoryDB:
         assert user_ids == {"u1"}
 
     async def test_events_without_embedding_excluded_from_search(self):
-        vec = [0.5] * 1536
+        vec = [0.5] * DIM
 
         async with self.SessionFactory() as session:
             # No embedding — should not appear in search
@@ -504,7 +509,7 @@ class TestEpisodicMemoryDB:
 
     async def test_get_unconsolidated_excludes_done(self):
         async with self.SessionFactory() as session:
-            e1 = await self.episodic.store(session, user_id="u1", raw_text="not done")
+            await self.episodic.store(session, user_id="u1", raw_text="not done")
             e2 = await self.episodic.store(session, user_id="u1", raw_text="done")
             await session.flush()
             await self.episodic.mark_consolidated(session, [e2.id])

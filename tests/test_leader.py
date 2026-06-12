@@ -8,7 +8,6 @@ Covers:
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 
 from smritikosh.processing import leader as leader_mod
 from smritikosh.processing.leader import LeaderLock

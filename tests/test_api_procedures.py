@@ -12,13 +12,14 @@ DELETE /memory/user/{user_id}
 
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from smritikosh.api.main import app
 from smritikosh.api import deps
+from smritikosh.auth.deps import get_current_user, require_admin
 from smritikosh.db.models import UserProcedure
 from smritikosh.db.neo4j import get_neo4j_session
 from smritikosh.db.postgres import get_session
@@ -59,7 +60,13 @@ def make_procedure(
 
 @pytest.fixture
 def mock_pg():
-    return AsyncMock()
+    pg = AsyncMock()
+    # pg.execute is async but returns a *sync* Result object; "no row found"
+    # by default so ownership checks fall through to the memory-layer mocks.
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = None
+    pg.execute = AsyncMock(return_value=result)
+    return pg
 
 
 @pytest.fixture
@@ -77,12 +84,17 @@ def mock_episodic():
     return AsyncMock(spec=EpisodicMemory)
 
 
+_ADMIN_PAYLOAD = {"sub": "admin", "role": "admin", "app_ids": ["default"]}
+
+
 @pytest.fixture(autouse=True)
 def override_deps(mock_pg, mock_neo, mock_procedural, mock_episodic):
     app.dependency_overrides[get_session] = lambda: mock_pg
     app.dependency_overrides[get_neo4j_session] = lambda: mock_neo
     app.dependency_overrides[deps.get_procedural] = lambda: mock_procedural
     app.dependency_overrides[deps.get_episodic] = lambda: mock_episodic
+    app.dependency_overrides[get_current_user] = lambda: _ADMIN_PAYLOAD
+    app.dependency_overrides[require_admin] = lambda: _ADMIN_PAYLOAD
     yield
     app.dependency_overrides.clear()
 

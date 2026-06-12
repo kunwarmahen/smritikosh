@@ -319,7 +319,7 @@ class TestSearchByQuery:
     @pytest.mark.asyncio
     async def test_inactive_procedures_excluded(self):
         active = make_procedure(trigger="AI tools", is_active=True)
-        inactive = make_procedure(trigger="AI tools", is_active=False)
+        make_procedure(trigger="AI tools", is_active=False)
         # get_all with active_only=True only returns active
         session = mock_session_with_procedures([active])
         pm = ProceduralMemory()

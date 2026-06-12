@@ -19,13 +19,13 @@ Test strategy:
 import asyncio
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from smritikosh.db.models import Event
 from smritikosh.memory.episodic import EpisodicMemory
-from smritikosh.memory.hippocampus import EncodedMemory, Hippocampus, _EXTRACTION_EXAMPLE
+from smritikosh.memory.hippocampus import EncodedMemory, Hippocampus
 from smritikosh.memory.semantic import FactRecord, SemanticMemory
 from smritikosh.processing.amygdala import Amygdala
 
@@ -252,7 +252,7 @@ class TestGracefulDegradation:
         llm.extract_structured = AsyncMock(return_value={"facts": []})
         episodic.store = AsyncMock(return_value=make_event())
 
-        result = await hippo.encode(pg, neo, user_id="u1", raw_text="test")
+        await hippo.encode(pg, neo, user_id="u1", raw_text="test")
 
         # Event was still stored
         episodic.store.assert_called_once()

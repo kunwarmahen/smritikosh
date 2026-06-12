@@ -6,16 +6,13 @@ are the unit under test.  IMAP is the only connector that uses I/O; its
 network layer is patched out via the sync _sync_fetch helper.
 """
 
-import asyncio
 import json
 from datetime import timezone
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from smritikosh.connectors.base import ConnectorEvent
-from smritikosh.connectors.calendar import CalendarConnector, _parse_ics
-from smritikosh.connectors.email import EmailConnector, IMAPConfig
+from smritikosh.connectors.calendar import CalendarConnector
 from smritikosh.connectors.file import FileConnector
 from smritikosh.connectors.slack import SlackConnector
 from smritikosh.connectors.webhook import WebhookConnector, _parse_ts
@@ -403,7 +400,7 @@ class TestConnectorEventToMetadata:
         assert meta["source_id"] == "C1:123"
 
     def test_includes_occurred_at_as_iso(self):
-        from datetime import datetime, timezone
+        from datetime import datetime
         dt = datetime(2024, 3, 15, 10, 0, 0, tzinfo=timezone.utc)
         ev = ConnectorEvent(content="x", source="s", occurred_at=dt)
         meta = ev.to_metadata()

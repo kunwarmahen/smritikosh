@@ -3,12 +3,11 @@ Unit tests for MediaProcessor — transcription, parsing, filtering, relevance s
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from smritikosh.processing.media_processor import (
     MediaProcessor,
     MediaProcessResult,
-    _FIRST_PERSON_RE,
     _VISION_PROMPTS,
     _IMAGE_CONTENT_TYPES,
 )
@@ -283,7 +282,7 @@ async def test_document_first_person_filter_applied(processor, mock_llm):
         b"I went to the store. He bought milk. We discussed pricing. I prefer oat milk."
     )
 
-    result = await processor.process(
+    await processor.process(
         pg=MagicMock(),
         neo=MagicMock(),
         media_id="media-1",

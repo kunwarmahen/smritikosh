@@ -27,7 +27,6 @@ from smritikosh.auth.deps import get_current_user, require_admin
 from smritikosh.db.neo4j import get_neo4j_session
 from smritikosh.db.postgres import get_session
 from smritikosh.memory.hippocampus import EncodedMemory, Hippocampus
-from smritikosh.memory.semantic import FactRecord
 from smritikosh.db.models import Event
 from smritikosh.processing.reconsolidation import ReconsolidationEngine, ReconsolidationResult
 from smritikosh.processing.scheduler import MemoryScheduler

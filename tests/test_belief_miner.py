@@ -48,11 +48,20 @@ def make_fact(category="role", key="current", value="entrepreneur", confidence=0
     )
 
 
-def make_mock_session(events: list[Event] | None = None) -> AsyncMock:
+def make_mock_session(
+    events: list[Event] | None = None,
+    existing_beliefs: list[UserBelief] | None = None,
+) -> AsyncMock:
+    """Mock AsyncSession for BeliefMiner.mine's query sequence:
+    1st execute → consolidated-events SELECT, 2nd → existing-beliefs SELECT,
+    any later calls → upsert statements (opaque results)."""
     session = AsyncMock()
-    mock_result = MagicMock()
-    mock_result.scalars.return_value.all.return_value = events or []
-    session.execute = AsyncMock(return_value=mock_result)
+    events_result = MagicMock()
+    events_result.scalars.return_value.all.return_value = events or []
+    beliefs_result = MagicMock()
+    beliefs_result.scalars.return_value.all.return_value = existing_beliefs or []
+    selects = iter([events_result, beliefs_result])
+    session.execute = AsyncMock(side_effect=lambda *a, **kw: next(selects, MagicMock()))
     return session
 
 
@@ -207,8 +216,8 @@ class TestBeliefMinerSuccess:
 
         await miner.mine(session, AsyncMock(), user_id="u1")
 
-        # 1 SELECT + 2 upserts (one per belief)
-        assert session.execute.call_count == 3
+        # 2 SELECTs (events + existing beliefs) + 2 upserts (one per belief)
+        assert session.execute.call_count == 4
 
     @pytest.mark.asyncio
     async def test_invalid_category_uses_fallback(self):
@@ -449,7 +458,6 @@ class TestBeliefEvidenceTracking:
     @pytest.mark.asyncio
     async def test_upsert_belief_stores_event_ids_on_insert(self):
         """_upsert_belief sets evidence_event_ids on a fresh INSERT."""
-        from smritikosh.processing.belief_miner import _upsert_belief
 
         session = AsyncMock()
         event_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
@@ -470,7 +478,6 @@ class TestBeliefEvidenceTracking:
     @pytest.mark.asyncio
     async def test_upsert_belief_empty_ids_still_works(self):
         """_upsert_belief handles an empty event_ids list gracefully."""
-        from smritikosh.processing.belief_miner import _upsert_belief
 
         session = AsyncMock()
         bd = {"statement": "believes in iteration", "category": "value", "confidence": 0.9}
@@ -500,7 +507,7 @@ class TestBeliefEvidenceTracking:
         await miner.mine(session, AsyncMock(), user_id="u1")
 
         # All 3 event IDs should appear in each upsert call's evidence_event_ids
-        upsert_execute_calls = session.execute.call_args_list[1:]  # skip the SELECT
+        upsert_execute_calls = session.execute.call_args_list[2:]  # skip the 2 SELECTs
         for call in upsert_execute_calls:
             insert_stmt = call.args[0]
             compiled_params = insert_stmt.compile().params

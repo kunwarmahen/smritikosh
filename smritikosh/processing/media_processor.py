@@ -7,7 +7,6 @@ Handles voice notes and documents, extracting structured facts with two-tier con
 - Low confidence (< 0.60): discarded
 """
 
-import json
 import logging
 import re
 from dataclasses import dataclass, field

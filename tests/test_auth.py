@@ -7,7 +7,7 @@ Tests for the auth layer:
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from datetime import datetime, timezone
 
 import jwt
@@ -48,29 +48,29 @@ class TestPasswordUtils:
 
 class TestJWTUtils:
     def test_create_and_verify_roundtrip(self):
-        token = create_access_token("alice", "user", "default")
+        token = create_access_token("alice", "user", ["default"])
         payload = verify_token(token)
         assert payload["sub"] == "alice"
         assert payload["role"] == "user"
-        assert payload["app_id"] == "default"
+        assert payload["app_ids"] == ["default"]
 
     def test_admin_role_preserved(self):
-        token = create_access_token("admin", "admin", "default")
+        token = create_access_token("admin", "admin", ["default"])
         payload = verify_token(token)
         assert payload["role"] == "admin"
 
-    def test_custom_app_id_preserved(self):
-        token = create_access_token("bob", "user", "my-app")
+    def test_custom_app_ids_preserved(self):
+        token = create_access_token("bob", "user", ["my-app", "other-app"])
         payload = verify_token(token)
-        assert payload["app_id"] == "my-app"
+        assert payload["app_ids"] == ["my-app", "other-app"]
 
     def test_expired_token_raises(self):
-        token = create_access_token("alice", "user", "default", expire_days=-1)
+        token = create_access_token("alice", "user", ["default"], expire_days=-1)
         with pytest.raises(jwt.ExpiredSignatureError):
             verify_token(token)
 
     def test_tampered_token_raises(self):
-        token = create_access_token("alice", "user", "default")
+        token = create_access_token("alice", "user", ["default"])
         bad_token = token[:-4] + "XXXX"
         with pytest.raises(jwt.InvalidTokenError):
             verify_token(bad_token)
@@ -89,9 +89,9 @@ class TestAuthDeps:
         from smritikosh.auth.deps import get_current_user
         from fastapi.security import HTTPAuthorizationCredentials
 
-        token = create_access_token("alice", "user", "default")
+        token = create_access_token("alice", "user", ["default"])
         creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
-        payload = await get_current_user(creds)
+        payload = await get_current_user(creds, AsyncMock())
         assert payload["sub"] == "alice"
 
     @pytest.mark.asyncio
@@ -100,10 +100,10 @@ class TestAuthDeps:
         from fastapi import HTTPException
         from fastapi.security import HTTPAuthorizationCredentials
 
-        token = create_access_token("alice", "user", "default", expire_days=-1)
+        token = create_access_token("alice", "user", ["default"], expire_days=-1)
         creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
         with pytest.raises(HTTPException) as exc_info:
-            await get_current_user(creds)
+            await get_current_user(creds, AsyncMock())
         assert exc_info.value.status_code == 401
 
     @pytest.mark.asyncio
@@ -114,25 +114,30 @@ class TestAuthDeps:
 
         creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="garbage")
         with pytest.raises(HTTPException) as exc_info:
-            await get_current_user(creds)
+            await get_current_user(creds, AsyncMock())
         assert exc_info.value.status_code == 401
 
     @pytest.mark.asyncio
     async def test_require_admin_passes_for_admin(self):
         from smritikosh.auth.deps import require_admin
+        from fastapi.security import HTTPAuthorizationCredentials
 
-        payload = {"sub": "admin", "role": "admin", "app_id": "default"}
-        result = await require_admin(payload)
-        assert result == payload
+        token = create_access_token("admin", "admin", ["default"])
+        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+        result = await require_admin(creds, AsyncMock())
+        assert result["sub"] == "admin"
+        assert result["role"] == "admin"
 
     @pytest.mark.asyncio
     async def test_require_admin_raises_403_for_user(self):
         from smritikosh.auth.deps import require_admin
         from fastapi import HTTPException
+        from fastapi.security import HTTPAuthorizationCredentials
 
-        payload = {"sub": "alice", "role": "user", "app_id": "default"}
+        token = create_access_token("alice", "user", ["default"])
+        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
         with pytest.raises(HTTPException) as exc_info:
-            await require_admin(payload)
+            await require_admin(creds, AsyncMock())
         assert exc_info.value.status_code == 403
 
 
@@ -142,14 +147,14 @@ class TestAuthDeps:
 def _make_app_user(
     username="alice",
     role=UserRole.USER,
-    app_id="default",
+    app_ids=None,
     is_active=True,
 ) -> AppUser:
     user = AppUser(
         username=username,
         password_hash=hash_password("password123"),
         role=role,
-        app_id=app_id,
+        app_ids=app_ids or ["default"],
         is_active=is_active,
     )
     user.created_at = datetime.now(timezone.utc)
@@ -249,7 +254,7 @@ class TestRegisterRoute:
         mock_session.add = MagicMock()
         mock_session.flush = AsyncMock()
 
-        admin_payload = {"sub": "admin", "role": "admin", "app_id": "default"}
+        admin_payload = {"sub": "admin", "role": "admin", "app_ids": ["default"]}
         app.dependency_overrides[get_session] = lambda: mock_session
         app.dependency_overrides[require_admin] = lambda: admin_payload
         return TestClient(app), mock_session
@@ -315,7 +320,7 @@ class TestGetMeRoute:
         app.include_router(router)
 
         mock_session = AsyncMock()
-        alice_payload = {"sub": "alice", "role": "user", "app_id": "default"}
+        alice_payload = {"sub": "alice", "role": "user", "app_ids": ["default"]}
         app.dependency_overrides[get_session] = lambda: mock_session
         app.dependency_overrides[get_current_user] = lambda: alice_payload
         return TestClient(app), mock_session

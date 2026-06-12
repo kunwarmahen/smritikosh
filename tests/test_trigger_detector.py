@@ -7,7 +7,6 @@ Run:
     pytest tests/test_trigger_detector.py -v
 """
 
-import pytest
 
 from smritikosh.processing.trigger_detector import TriggerDetector, TriggerResult
 from smritikosh.processing.transcript_utils import (
@@ -230,7 +229,7 @@ class TestBuildDeltaPrompt:
         assert "Python" in prompt
 
     def test_with_existing_facts(self):
-        from dataclasses import dataclass, field
+        from dataclasses import dataclass
 
         @dataclass
         class FakeFact:

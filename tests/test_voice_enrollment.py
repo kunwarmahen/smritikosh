@@ -17,7 +17,7 @@ from smritikosh.api import deps
 from smritikosh.auth.deps import get_current_user
 from smritikosh.db.models import UserVoiceProfile
 from smritikosh.db.postgres import get_session
-from smritikosh.processing.media_processor import MediaProcessor, MediaProcessResult
+from smritikosh.processing.media_processor import MediaProcessor
 
 
 def _auth(user_id: str = "alice"):

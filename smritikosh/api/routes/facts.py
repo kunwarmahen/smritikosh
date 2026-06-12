@@ -253,7 +253,6 @@ async def resolve_contradiction(
     assert_self_or_admin(current_user, contradiction.user_id)
 
     if body.keep in ("candidate", "merge"):
-        from smritikosh.db.models import SOURCE_CONFIDENCE_DEFAULTS
         new_value = body.merged_value if body.keep == "merge" else contradiction.candidate_value
         new_confidence = (
             max(contradiction.candidate_confidence, contradiction.existing_confidence)

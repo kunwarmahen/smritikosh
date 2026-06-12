@@ -6,7 +6,6 @@ POST /memory/search     Hybrid search — returns raw scored events
 GET  /memory/{user_id}  Return recent events for a user
 """
 
-import json
 import logging
 import uuid
 from typing import Annotated, AsyncIterator
@@ -441,9 +440,6 @@ async def get_event_links(
 
     items = []
     for link in links:
-        from_event = event_map.get(link.from_event_id) if link.from_event_id != eid else None
-        to_event   = event_map.get(link.to_event_id)   if link.to_event_id   != eid else None
-
         # Reconstruct full preview pair: anchor event has an empty preview slot
         if link.from_event_id == eid:
             from_preview = ""          # this is the anchor itself

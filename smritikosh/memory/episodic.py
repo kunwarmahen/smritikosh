@@ -20,7 +20,7 @@ contextual_match is reserved for Phase 2 intent-aware retrieval (defaults to 0.0
 """
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 

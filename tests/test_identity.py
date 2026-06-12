@@ -6,9 +6,8 @@ DB integration tests (gated behind @pytest.mark.db) verify the full pipeline
 against a live Neo4j database.
 """
 
-import uuid
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 

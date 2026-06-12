@@ -11,8 +11,8 @@ request gets its own session with its own transaction.
 
 from functools import lru_cache
 
-from smritikosh.db.neo4j import get_neo4j_session  # re-exported for routes
-from smritikosh.db.postgres import get_session       # re-exported for routes
+from smritikosh.db.neo4j import get_neo4j_session as get_neo4j_session  # re-exported for routes
+from smritikosh.db.postgres import get_session as get_session           # re-exported for routes
 from smritikosh.llm.adapter import LLMAdapter
 from smritikosh.memory.episodic import EpisodicMemory
 from smritikosh.memory.hippocampus import Hippocampus

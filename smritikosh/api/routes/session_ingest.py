@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from neo4j import AsyncSession as NeoSession
 from pydantic import BaseModel, Field
 from sqlalchemy import select

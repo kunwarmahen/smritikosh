@@ -3,5 +3,17 @@
 .venv/**/*
 .pytest_cache
 .pytest_cache/**/*
-Chat
-ChatGPT-Human Memory Process.md
+**/*/package-lock.json
+sdk-node/dist
+sdk-node/dist/**/*
+**/*/__pycache__/**/*
+**/*/node_modules
+**/*/node_modules/**/*
+**/*/.next
+**/*/.next/**/*
+.env
+ui/.env.local
+uv.lock
+**/__pycache__/**/*
+**/node_modules/**/*
+local_docs/**/*
