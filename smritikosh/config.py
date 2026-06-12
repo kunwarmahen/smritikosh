@@ -132,6 +132,12 @@ class Settings(BaseSettings):
     # leaving it true on several replicas is safe — only one actually runs jobs.
     run_scheduler: bool = True
 
+    # ── Worker metrics ──────────────────────────────────────────────────────
+    # Port for the standalone worker's Prometheus /metrics endpoint (job runs,
+    # durations, LLM tokens/cost from background jobs). 0 (default) = disabled.
+    # The API process always exposes /metrics regardless of this setting.
+    worker_metrics_port: int = 0
+
     # ── Scheduler (cron expressions, UTC) ──────────────────────────────────
     # Standard 5-field cron: minute hour day-of-month month day-of-week
     # Examples:

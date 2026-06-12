@@ -16,13 +16,16 @@ the codebase never needs to know which provider is active.
 import asyncio
 import json
 import logging
+import time
 from functools import partial
 from typing import Any
 
 import litellm
 from tenacity import before_sleep_log, retry, retry_if_not_exception_type, stop_after_attempt, wait_exponential
 
+from smritikosh import metrics
 from smritikosh.config import Settings, settings as default_settings
+from smritikosh.llm.usage import record_llm_usage
 
 logger = logging.getLogger(__name__)
 
@@ -90,15 +93,26 @@ class LLMAdapter:
         ):
             kwargs.setdefault("extra_body", {"think": False})
         logger.debug("LLM complete: model=%s messages=%d", model, len(messages))
-        response = await litellm.acompletion(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            api_key=api_key,
-            api_base=api_base,
-            timeout=self._cfg.llm_timeout,
-            **kwargs,
-        )
+        start = time.monotonic()
+        try:
+            response = await litellm.acompletion(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                api_key=api_key,
+                api_base=api_base,
+                timeout=self._cfg.llm_timeout,
+                **kwargs,
+            )
+        except Exception:
+            metrics.LLM_CALLS.labels(model=model, kind="chat", outcome="error").inc()
+            raise
+        finally:
+            metrics.LLM_LATENCY.labels(model=model, kind="chat").observe(time.monotonic() - start)
+        metrics.LLM_CALLS.labels(model=model, kind="chat", outcome="success").inc()
+        # Record usage before the empty-content check below — the provider
+        # billed these tokens whether or not the content is usable.
+        record_llm_usage(model=model, kind="chat", response=response)
         msg = response.choices[0].message
         content = msg.content
         if not content:
@@ -212,13 +226,24 @@ class LLMAdapter:
         logger.debug("Embedding: model=%s text_len=%d", self._embed_model, len(text))
         if self._cfg.embedding_provider.lower() == "llamacpp":
             return await self._embed_llamacpp(text)
-        response = await litellm.aembedding(
-            model=self._embed_model,
-            input=text,
-            api_key=self._cfg.embedding_api_key,
-            api_base=self._cfg.embedding_base_url,
-            timeout=self._cfg.llm_timeout,
-        )
+        start = time.monotonic()
+        try:
+            response = await litellm.aembedding(
+                model=self._embed_model,
+                input=text,
+                api_key=self._cfg.embedding_api_key,
+                api_base=self._cfg.embedding_base_url,
+                timeout=self._cfg.llm_timeout,
+            )
+        except Exception:
+            metrics.LLM_CALLS.labels(model=self._embed_model, kind="embedding", outcome="error").inc()
+            raise
+        finally:
+            metrics.LLM_LATENCY.labels(model=self._embed_model, kind="embedding").observe(
+                time.monotonic() - start
+            )
+        metrics.LLM_CALLS.labels(model=self._embed_model, kind="embedding", outcome="success").inc()
+        record_llm_usage(model=self._embed_model, kind="embedding", response=response)
         return response.data[0]["embedding"]
 
     async def _embed_llamacpp(self, text: str) -> list[float]:
@@ -284,22 +309,33 @@ class LLMAdapter:
             len(image_bytes),
         )
 
-        response = await litellm.acompletion(
-            model=vision_model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image_url", "image_url": {"url": data_url}},
-                        {"type": "text", "text": prompt},
-                    ],
-                }
-            ],
-            temperature=0.2,
-            api_key=api_key,
-            api_base=api_base,
-            timeout=self._cfg.llm_timeout,
-        )
+        start = time.monotonic()
+        try:
+            response = await litellm.acompletion(
+                model=vision_model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "image_url", "image_url": {"url": data_url}},
+                            {"type": "text", "text": prompt},
+                        ],
+                    }
+                ],
+                temperature=0.2,
+                api_key=api_key,
+                api_base=api_base,
+                timeout=self._cfg.llm_timeout,
+            )
+        except Exception:
+            metrics.LLM_CALLS.labels(model=vision_model, kind="vision", outcome="error").inc()
+            raise
+        finally:
+            metrics.LLM_LATENCY.labels(model=vision_model, kind="vision").observe(
+                time.monotonic() - start
+            )
+        metrics.LLM_CALLS.labels(model=vision_model, kind="vision", outcome="success").inc()
+        record_llm_usage(model=vision_model, kind="vision", response=response)
         content = response.choices[0].message.content or ""
         logger.debug("Image description complete: %d chars", len(content))
         return content

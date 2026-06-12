@@ -5,6 +5,7 @@ import logging
 from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
 
+from smritikosh import metrics
 from smritikosh.config import settings
 
 logger = logging.getLogger(__name__)
@@ -55,14 +56,18 @@ async def enqueue(func_name: str, *args, **kwargs):
     in-process so nothing is silently dropped.
     """
     if not queue_enabled():
+        metrics.TASKS.labels(task=func_name, path="inline").inc()
         return None
     try:
         pool = await get_pool()
-        return await pool.enqueue_job(func_name, *args, **kwargs)
+        job = await pool.enqueue_job(func_name, *args, **kwargs)
+        metrics.TASKS.labels(task=func_name, path="queued").inc()
+        return job
     except Exception as exc:
         logger.warning(
             "Task enqueue failed for %r: %s — caller will fall back in-process",
             func_name,
             exc,
         )
+        metrics.TASKS.labels(task=func_name, path="inline").inc()
         return None

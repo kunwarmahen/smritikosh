@@ -31,6 +31,7 @@ from smritikosh.api.deps import get_context_builder, get_reconsolidation_engine
 from smritikosh.config import settings
 from smritikosh.api.schemas import ContextRequest, ContextResponse, ProcedureItem
 from smritikosh.db.neo4j import get_neo4j_session
+from smritikosh.llm.usage import llm_context
 from smritikosh.db.postgres import get_session
 from smritikosh.processing.reconsolidation import ReconsolidationEngine
 from smritikosh.retrieval.context_builder import ContextBuilder, MemoryContext
@@ -72,15 +73,17 @@ async def get_context(
     assert_self_or_admin(current_user, body.user_id)
     resolved_app_ids = body.app_ids or current_user.get("app_ids")
     try:
-        ctx = await builder.build(
-            pg,
-            neo,
-            user_id=body.user_id,
-            query=body.query,
-            app_ids=resolved_app_ids,
-            from_date=body.from_date,
-            to_date=body.to_date,
-        )
+        _app_id = resolved_app_ids[0] if resolved_app_ids else "default"
+        with llm_context(user_id=body.user_id, app_id=_app_id, source="context"):
+            ctx = await builder.build(
+                pg,
+                neo,
+                user_id=body.user_id,
+                query=body.query,
+                app_ids=resolved_app_ids,
+                from_date=body.from_date,
+                to_date=body.to_date,
+            )
     except Exception as exc:
         logger.exception("ContextBuilder failed", extra={"user_id": body.user_id})
         raise HTTPException(status_code=500, detail=f"Context retrieval failed: {exc}") from exc

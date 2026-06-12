@@ -829,3 +829,44 @@ class UserConnector(Base):
             f"<UserConnector user={self.user_id!r} "
             f"provider={self.provider!r} status={self.status}>"
         )
+
+
+class LlmUsage(Base):
+    """
+    One row per billed LLM API call — token/cost accounting (item D1).
+
+    user_id/app_id/source come from the ambient llm_context() set at pipeline
+    entry points; calls made outside any context land as source="unknown" with
+    NULL user — still counted, just not attributable.
+
+    Written fire-and-forget by smritikosh.llm.usage; query via the admin
+    LLM-usage endpoint or roll up offline. High-volume deployments can prune
+    rows older than their reporting window.
+    """
+
+    __tablename__ = "llm_usage"
+    __table_args__ = (
+        Index("ix_llm_usage_user_app_created", "user_id", "app_id", "created_at"),
+        Index("ix_llm_usage_created", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    user_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, default=None)
+    app_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, default=None)
+    # Pipeline entry point: encode | context | consolidation | pruning |
+    # belief_mining | clustering | fact_decay | synthesis | unknown
+    source: Mapped[str] = mapped_column(String(50), default="unknown")
+    model: Mapped[str] = mapped_column(String(255))      # resolved litellm model string
+    kind: Mapped[str] = mapped_column(String(20))        # chat | embedding | vision
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    def __repr__(self) -> str:
+        return (
+            f"<LlmUsage {self.kind}:{self.model} user={self.user_id} "
+            f"source={self.source} tokens={self.prompt_tokens}+{self.completion_tokens}>"
+        )

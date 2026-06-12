@@ -20,6 +20,7 @@ from smritikosh.api.ratelimit import limiter
 from smritikosh.auth.deps import assert_app_access, assert_self_or_admin, get_current_user, require_write_scope
 from smritikosh.api.deps import get_audit_logger, get_hippocampus, get_episodic, get_llm
 from smritikosh.config import settings
+from smritikosh.llm.usage import llm_context
 from smritikosh.api.schemas import (
     DeleteEventResponse,
     DeleteUserMemoryResponse,
@@ -75,15 +76,16 @@ async def capture_event(
     assert_self_or_admin(current_user, body.user_id)
     assert_app_access(current_user, body.app_id)
     try:
-        result = await hippocampus.encode(
-            pg,
-            neo,
-            user_id=body.user_id,
-            raw_text=body.content,
-            app_id=body.app_id,
-            metadata=body.metadata,
-            source_type=body.source_type,
-        )
+        with llm_context(user_id=body.user_id, app_id=body.app_id, source="encode"):
+            result = await hippocampus.encode(
+                pg,
+                neo,
+                user_id=body.user_id,
+                raw_text=body.content,
+                app_id=body.app_id,
+                metadata=body.metadata,
+                source_type=body.source_type,
+            )
     except Exception as exc:
         logger.exception("Hippocampus encode failed", extra={"user_id": body.user_id})
         raise HTTPException(status_code=500, detail=f"Memory encoding failed: {exc}") from exc

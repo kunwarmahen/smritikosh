@@ -32,7 +32,7 @@ from smritikosh.api.schemas import (
 )
 from smritikosh.auth.deps import require_admin
 from smritikosh.config import settings
-from smritikosh.db.models import AppUser
+from smritikosh.db.models import AppUser, LlmUsage
 from smritikosh.db.postgres import get_session
 from smritikosh.processing.reconsolidation import ReconsolidationEngine
 from smritikosh.processing.scheduler import MemoryScheduler
@@ -510,3 +510,69 @@ async def trigger_re_embed(
 
     logger.info("Re-embed queued: %d events", queued)
     return ReEmbedResponse(status="started", queued=queued)
+
+
+@router.get("/llm-usage", summary="LLM token/cost accounting")
+async def get_llm_usage(
+    pg: Annotated[AsyncSession, Depends(get_session)],
+    _admin: Annotated[dict, Depends(require_admin)],
+    days: Annotated[int, Query(ge=1, le=365, description="Reporting window in days")] = 30,
+    group_by: Annotated[
+        str, Query(description="Aggregation key: model | source | user | kind")
+    ] = "model",
+) -> dict:
+    """
+    Aggregate LLM spend from the llm_usage table (item D1).
+
+    Rows are written per billed API call by the LLM adapter, attributed to
+    (user_id, app_id, source) via the ambient llm_context. Calls made before
+    accounting was enabled (or by providers that return no usage data, e.g.
+    some local models) are absent — treat totals as a lower bound for cost,
+    not an exact invoice.
+    """
+    group_columns = {
+        "model": LlmUsage.model,
+        "source": LlmUsage.source,
+        "user": LlmUsage.user_id,
+        "kind": LlmUsage.kind,
+    }
+    column = group_columns.get(group_by)
+    if column is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid group_by '{group_by}'. Must be one of: {', '.join(group_columns)}.",
+        )
+
+    since = text("NOW() - make_interval(days => :days)")
+    result = await pg.execute(
+        select(
+            column.label("key"),
+            func.count().label("calls"),
+            func.sum(LlmUsage.prompt_tokens).label("prompt_tokens"),
+            func.sum(LlmUsage.completion_tokens).label("completion_tokens"),
+            func.sum(LlmUsage.cost_usd).label("cost_usd"),
+        )
+        .where(LlmUsage.created_at >= since)
+        .group_by(column)
+        .order_by(func.sum(LlmUsage.cost_usd).desc()),
+        {"days": days},
+    )
+    groups = [
+        {
+            "key": row.key or "(none)",
+            "calls": int(row.calls or 0),
+            "prompt_tokens": int(row.prompt_tokens or 0),
+            "completion_tokens": int(row.completion_tokens or 0),
+            "cost_usd": round(float(row.cost_usd or 0.0), 6),
+        }
+        for row in result
+    ]
+    return {
+        "days": days,
+        "group_by": group_by,
+        "groups": groups,
+        "total_calls": sum(g["calls"] for g in groups),
+        "total_prompt_tokens": sum(g["prompt_tokens"] for g in groups),
+        "total_completion_tokens": sum(g["completion_tokens"] for g in groups),
+        "total_cost_usd": round(sum(g["cost_usd"] for g in groups), 6),
+    }

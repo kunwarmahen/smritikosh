@@ -45,6 +45,13 @@ logger = logging.getLogger(__name__)
 async def run_worker() -> None:
     """Initialise infrastructure, win leader election, run jobs until signalled."""
     enforce_runtime_security(settings)
+    if settings.worker_metrics_port:
+        from prometheus_client import start_http_server
+
+        start_http_server(settings.worker_metrics_port)
+        logger.info(
+            "Worker metrics exposed on :%d/metrics", settings.worker_metrics_port
+        )
     logger.info("Smritikosh worker starting — initialising databases …")
     await init_db()
     await init_neo4j()

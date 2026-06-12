@@ -29,7 +29,9 @@ from sqlalchemy import select, text
 
 from smritikosh.db.neo4j import neo4j_session
 from smritikosh.db.postgres import db_session
+from smritikosh.llm.usage import llm_context
 from smritikosh.memory.episodic import EpisodicMemory
+from smritikosh.metrics import JOB_USER_ERRORS, track_job
 from smritikosh.processing.belief_miner import BeliefMiner, MiningResult
 from smritikosh.processing.consolidator import Consolidator, ConsolidationResult
 from smritikosh.processing.cross_system_synthesizer import CrossSystemSynthesizer, SynthesisResult
@@ -170,60 +172,64 @@ class MemoryScheduler:
         Discover users with unconsolidated events and consolidate each.
         Called automatically by the scheduler or manually via admin endpoints.
         """
-        user_app_pairs = await self._get_active_users()
-        logger.info(
-            "Consolidation job triggered — %d active user(s) found",
-            len(user_app_pairs),
-        )
-        results: list[ConsolidationResult] = []
+        with track_job("consolidation"):
+            user_app_pairs = await self._get_active_users()
+            logger.info(
+                "Consolidation job triggered — %d active user(s) found",
+                len(user_app_pairs),
+            )
+            results: list[ConsolidationResult] = []
 
-        for user_id, app_id in user_app_pairs:
-            logger.debug("Consolidating user=%s app=%s", user_id, app_id)
-            result = await self.run_consolidation_now(user_id=user_id, app_id=app_id)
-            results.append(result)
+            for user_id, app_id in user_app_pairs:
+                logger.debug("Consolidating user=%s app=%s", user_id, app_id)
+                result = await self.run_consolidation_now(user_id=user_id, app_id=app_id)
+                results.append(result)
 
-        skipped = sum(1 for r in results if r.skipped)
-        logger.info(
-            "Consolidation job complete — processed=%d skipped=%d",
-            len(results) - skipped,
-            skipped,
-        )
-        return results
+            skipped = sum(1 for r in results if r.skipped)
+            logger.info(
+                "Consolidation job complete — processed=%d skipped=%d",
+                len(results) - skipped,
+                skipped,
+            )
+            return results
 
     async def run_pruning_for_all_users(self, override_thresholds=None) -> list[PruningResult]:
         """Run pruning for all users that have consolidated events."""
-        user_app_pairs = await self._get_all_users()
-        logger.info(
-            "Pruning job triggered — %d user(s) found",
-            len(user_app_pairs),
-        )
-        results: list[PruningResult] = []
-
-        for user_id, app_id in user_app_pairs:
-            logger.debug("Pruning user=%s app=%s", user_id, app_id)
-            result = await self.run_pruning_now(
-                user_id=user_id, app_id=app_id, override_thresholds=override_thresholds
+        with track_job("pruning"):
+            user_app_pairs = await self._get_all_users()
+            logger.info(
+                "Pruning job triggered — %d user(s) found",
+                len(user_app_pairs),
             )
-            results.append(result)
+            results: list[PruningResult] = []
 
-        skipped = sum(1 for r in results if r.skipped)
-        logger.info(
-            "Pruning job complete — processed=%d skipped=%d",
-            len(results) - skipped,
-            skipped,
-        )
-        return results
+            for user_id, app_id in user_app_pairs:
+                logger.debug("Pruning user=%s app=%s", user_id, app_id)
+                result = await self.run_pruning_now(
+                    user_id=user_id, app_id=app_id, override_thresholds=override_thresholds
+                )
+                results.append(result)
+
+            skipped = sum(1 for r in results if r.skipped)
+            logger.info(
+                "Pruning job complete — processed=%d skipped=%d",
+                len(results) - skipped,
+                skipped,
+            )
+            return results
 
     async def run_consolidation_now(
         self, *, user_id: str, app_id: str = "default"
     ) -> ConsolidationResult:
         """Run one consolidation cycle immediately for a specific user."""
         try:
-            async with db_session() as pg, neo4j_session() as neo:
-                return await self.consolidator.run(
-                    pg, neo, user_id=user_id, app_id=app_id
-                )
+            with llm_context(user_id=user_id, app_id=app_id, source="consolidation"):
+                async with db_session() as pg, neo4j_session() as neo:
+                    return await self.consolidator.run(
+                        pg, neo, user_id=user_id, app_id=app_id
+                    )
         except Exception as exc:
+            JOB_USER_ERRORS.labels(job="consolidation").inc()
             logger.error(
                 "Consolidation failed",
                 extra={"user_id": user_id, "error": str(exc)},
@@ -241,12 +247,14 @@ class MemoryScheduler:
     ) -> PruningResult:
         """Run pruning immediately for a specific user."""
         try:
-            async with db_session() as pg, neo4j_session() as neo:
-                return await self.pruner.prune(
-                    pg, user_id=user_id, app_id=app_id, neo_session=neo,
-                    override_thresholds=override_thresholds,
-                )
+            with llm_context(user_id=user_id, app_id=app_id, source="pruning"):
+                async with db_session() as pg, neo4j_session() as neo:
+                    return await self.pruner.prune(
+                        pg, user_id=user_id, app_id=app_id, neo_session=neo,
+                        override_thresholds=override_thresholds,
+                    )
         except Exception as exc:
+            JOB_USER_ERRORS.labels(job="pruning").inc()
             logger.error(
                 "Pruning failed",
                 extra={"user_id": user_id, "error": str(exc)},
@@ -258,25 +266,26 @@ class MemoryScheduler:
         """Run belief mining for all users that have consolidated events."""
         if self.belief_miner is None:
             return []
-        user_app_pairs = await self._get_all_users()
-        logger.info(
-            "Belief mining job triggered — %d user(s) found",
-            len(user_app_pairs),
-        )
-        results: list[MiningResult] = []
+        with track_job("belief_mining"):
+            user_app_pairs = await self._get_all_users()
+            logger.info(
+                "Belief mining job triggered — %d user(s) found",
+                len(user_app_pairs),
+            )
+            results: list[MiningResult] = []
 
-        for user_id, app_id in user_app_pairs:
-            logger.debug("Belief mining user=%s app=%s", user_id, app_id)
-            result = await self.run_belief_mining_now(user_id=user_id, app_id=app_id)
-            results.append(result)
+            for user_id, app_id in user_app_pairs:
+                logger.debug("Belief mining user=%s app=%s", user_id, app_id)
+                result = await self.run_belief_mining_now(user_id=user_id, app_id=app_id)
+                results.append(result)
 
-        skipped = sum(1 for r in results if r.skipped)
-        logger.info(
-            "Belief mining job complete — processed=%d skipped=%d",
-            len(results) - skipped,
-            skipped,
-        )
-        return results
+            skipped = sum(1 for r in results if r.skipped)
+            logger.info(
+                "Belief mining job complete — processed=%d skipped=%d",
+                len(results) - skipped,
+                skipped,
+            )
+            return results
 
     async def run_belief_mining_now(
         self, *, user_id: str, app_id: str = "default"
@@ -287,11 +296,13 @@ class MemoryScheduler:
             result.skip_reason = "No belief_miner configured."
             return result
         try:
-            async with db_session() as pg, neo4j_session() as neo:
-                return await self.belief_miner.mine(
-                    pg, neo, user_id=user_id, app_id=app_id
-                )
+            with llm_context(user_id=user_id, app_id=app_id, source="belief_mining"):
+                async with db_session() as pg, neo4j_session() as neo:
+                    return await self.belief_miner.mine(
+                        pg, neo, user_id=user_id, app_id=app_id
+                    )
         except Exception as exc:
+            JOB_USER_ERRORS.labels(job="belief_mining").inc()
             logger.error(
                 "Belief mining failed",
                 extra={"user_id": user_id, "error": str(exc)},
@@ -304,25 +315,26 @@ class MemoryScheduler:
         """Run clustering for all users that have events with embeddings."""
         if self.clusterer is None:
             return []
-        user_app_pairs = await self._get_all_users()
-        logger.info(
-            "Clustering job triggered — %d user(s) found",
-            len(user_app_pairs),
-        )
-        results: list[ClusterResult] = []
+        with track_job("clustering"):
+            user_app_pairs = await self._get_all_users()
+            logger.info(
+                "Clustering job triggered — %d user(s) found",
+                len(user_app_pairs),
+            )
+            results: list[ClusterResult] = []
 
-        for user_id, app_id in user_app_pairs:
-            logger.debug("Clustering user=%s app=%s", user_id, app_id)
-            result = await self.run_clustering_now(user_id=user_id, app_id=app_id)
-            results.append(result)
+            for user_id, app_id in user_app_pairs:
+                logger.debug("Clustering user=%s app=%s", user_id, app_id)
+                result = await self.run_clustering_now(user_id=user_id, app_id=app_id)
+                results.append(result)
 
-        skipped = sum(1 for r in results if r.skipped)
-        logger.info(
-            "Clustering job complete — processed=%d skipped=%d",
-            len(results) - skipped,
-            skipped,
-        )
-        return results
+            skipped = sum(1 for r in results if r.skipped)
+            logger.info(
+                "Clustering job complete — processed=%d skipped=%d",
+                len(results) - skipped,
+                skipped,
+            )
+            return results
 
     async def run_clustering_now(
         self, *, user_id: str, app_id: str = "default"
@@ -333,9 +345,11 @@ class MemoryScheduler:
             result.skip_reason = "No clusterer configured."
             return result
         try:
-            async with db_session() as pg:
-                return await self.clusterer.run(pg, user_id=user_id, app_id=app_id)
+            with llm_context(user_id=user_id, app_id=app_id, source="clustering"):
+                async with db_session() as pg:
+                    return await self.clusterer.run(pg, user_id=user_id, app_id=app_id)
         except Exception as exc:
+            JOB_USER_ERRORS.labels(job="clustering").inc()
             logger.error(
                 "Clustering failed",
                 extra={"user_id": user_id, "error": str(exc)},
@@ -355,8 +369,9 @@ class MemoryScheduler:
             return result
         logger.info("Fact decay job triggered")
         try:
-            async with neo4j_session() as neo:
-                result = await self.fact_decayer.run(neo)
+            with track_job("fact_decay"), llm_context(source="fact_decay"):
+                async with neo4j_session() as neo:
+                    result = await self.fact_decayer.run(neo)
             logger.info("Fact decay job complete")
             return result
         except Exception as exc:
@@ -369,25 +384,26 @@ class MemoryScheduler:
         """Run cross-system synthesis for all users. Called daily by the scheduler."""
         if self.synthesizer is None:
             return []
-        user_app_pairs = await self._get_all_users()
-        logger.info(
-            "Cross-system synthesis job triggered — %d user(s) found",
-            len(user_app_pairs),
-        )
-        results: list[SynthesisResult] = []
+        with track_job("synthesis"):
+            user_app_pairs = await self._get_all_users()
+            logger.info(
+                "Cross-system synthesis job triggered — %d user(s) found",
+                len(user_app_pairs),
+            )
+            results: list[SynthesisResult] = []
 
-        for user_id, app_id in user_app_pairs:
-            logger.debug("Synthesizing user=%s app=%s", user_id, app_id)
-            result = await self.run_synthesis_now(user_id=user_id, app_id=app_id)
-            results.append(result)
+            for user_id, app_id in user_app_pairs:
+                logger.debug("Synthesizing user=%s app=%s", user_id, app_id)
+                result = await self.run_synthesis_now(user_id=user_id, app_id=app_id)
+                results.append(result)
 
-        skipped = sum(1 for r in results if r.skipped)
-        logger.info(
-            "Cross-system synthesis job complete — processed=%d skipped=%d",
-            len(results) - skipped,
-            skipped,
-        )
-        return results
+            skipped = sum(1 for r in results if r.skipped)
+            logger.info(
+                "Cross-system synthesis job complete — processed=%d skipped=%d",
+                len(results) - skipped,
+                skipped,
+            )
+            return results
 
     async def run_synthesis_now(
         self, *, user_id: str, app_id: str = "default"
@@ -398,13 +414,13 @@ class MemoryScheduler:
             result.skip_reason = "No synthesizer configured."
             return result
         try:
-            from smritikosh.db.postgres import db_session
-            from smritikosh.db.neo4j import neo4j_session
-            async with db_session() as pg, neo4j_session() as neo:
-                return await self.synthesizer.run(
-                    pg, neo, user_id=user_id, app_id=app_id
-                )
+            with llm_context(user_id=user_id, app_id=app_id, source="synthesis"):
+                async with db_session() as pg, neo4j_session() as neo:
+                    return await self.synthesizer.run(
+                        pg, neo, user_id=user_id, app_id=app_id
+                    )
         except Exception as exc:
+            JOB_USER_ERRORS.labels(job="synthesis").inc()
             logger.error(
                 "Cross-system synthesis failed",
                 extra={"user_id": user_id, "error": str(exc)},
