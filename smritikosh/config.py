@@ -83,6 +83,22 @@ class Settings(BaseSettings):
     # without a token. Remove it immediately after creating the first account.
     bootstrap_admin: bool = False
 
+    # ── CORS ────────────────────────────────────────────────────────────────
+    # Comma-separated list of origins allowed to call the API from a browser,
+    # e.g. "https://app.example.com,https://admin.example.com".
+    # Empty (default) — no CORS headers are sent, so browsers block cross-origin
+    # calls. This is the intended posture when only server-side clients talk to
+    # the API (the SDKs and the Next.js dashboard both call it server-side).
+    # Set "*" only for a credential-less public API: when "*" is present,
+    # credentials (cookies / Authorization via fetch credentials mode) are
+    # disabled, as the CORS spec forbids combining them with a wildcard.
+    cors_allowed_origins: str = ""
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        """CORS_ALLOWED_ORIGINS parsed into a list; empty list = CORS disabled."""
+        return [o.strip() for o in self.cors_allowed_origins.split(",") if o.strip()]
+
     # ── Redis ───────────────────────────────────────────────────────────────
     # Shared store for the rate limiter (and, later, the task queue + caches).
     # If unset, the rate limiter falls back to per-process in-memory storage —

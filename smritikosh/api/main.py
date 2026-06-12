@@ -24,6 +24,7 @@ import logging.config
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -147,6 +148,26 @@ app = FastAPI(
 # Rate limiter — attach state and register the 429 handler
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# CORS — disabled unless CORS_ALLOWED_ORIGINS is set (browsers then block
+# cross-origin calls; server-side clients are unaffected). With a wildcard
+# origin, credentials are turned off — the CORS spec forbids combining them.
+def configure_cors(app: FastAPI, origins: list[str]) -> bool:
+    """Register CORSMiddleware for the given origins. Returns True if enabled."""
+    if not origins:
+        return False
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials="*" not in origins,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    logger.info("CORS enabled for origins: %s", origins)
+    return True
+
+
+configure_cors(app, settings.cors_origin_list)
 
 # Prometheus metrics — exposes GET /metrics with per-route latency, throughput, error rates.
 # Disable by setting ENABLE_METRICS=false in your environment.
