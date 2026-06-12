@@ -19,6 +19,7 @@ from typing import Optional
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     Float,
@@ -869,4 +870,46 @@ class LlmUsage(Base):
         return (
             f"<LlmUsage {self.kind}:{self.model} user={self.user_id} "
             f"source={self.source} tokens={self.prompt_tokens}+{self.completion_tokens}>"
+        )
+
+
+class UserQuota(Base):
+    """
+    Per-tenant usage quotas (item D2) — caps on what rate limiting can't:
+    total spend. Rate limits throttle burst; quotas cap volume per window.
+
+    One row per (user_id, app_id). A NULL limit means "no override" — the
+    config-level default applies (QUOTA_DEFAULT_*; 0 there = unlimited).
+    Event limits count rows in `events`; token limits sum prompt+completion
+    from `llm_usage` (so they require D1 accounting to be meaningful).
+
+    Windows are UTC-calendar: daily = since midnight, monthly = since the 1st.
+    """
+
+    __tablename__ = "user_quotas"
+    __table_args__ = (
+        UniqueConstraint("user_id", "app_id", name="uq_user_quota"),
+        Index("ix_user_quotas_user_app", "user_id", "app_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    app_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    daily_event_limit: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
+    monthly_event_limit: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
+    daily_token_limit: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True, default=None)
+    monthly_token_limit: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True, default=None)
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<UserQuota user={self.user_id} app={self.app_id} "
+            f"events={self.daily_event_limit}/{self.monthly_event_limit} "
+            f"tokens={self.daily_token_limit}/{self.monthly_token_limit}>"
         )

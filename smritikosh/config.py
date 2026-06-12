@@ -115,6 +115,17 @@ class Settings(BaseSettings):
     rate_limit_context: str = "60/minute"    # POST /context
     rate_limit_search: str = "120/minute"    # POST /memory/search
 
+    # ── Usage quotas (per-tenant caps) ──────────────────────────────────────
+    # Defaults applied to every (user_id, app_id) without a user_quotas row.
+    # 0 = unlimited. Event limits count stored events; token limits sum LLM
+    # prompt+completion tokens from the llm_usage accounting table. Windows
+    # are UTC-calendar (daily = since midnight, monthly = since the 1st).
+    # Per-tenant overrides: PUT /admin/quotas/{user_id}.
+    quota_default_daily_events: int = 0
+    quota_default_monthly_events: int = 0
+    quota_default_daily_tokens: int = 0
+    quota_default_monthly_tokens: int = 0
+
     # ── Semantic fact decay ─────────────────────────────────────────────────
     # Confidence halves every N days without reinforcement (exponential decay).
     # Relationships that fall below the floor are deleted; orphaned Fact nodes

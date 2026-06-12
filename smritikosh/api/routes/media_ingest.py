@@ -20,6 +20,7 @@ from smritikosh.api.schemas import (
     MediaIngestResponse,
     MediaStatusResponse,
 )
+from smritikosh.api.quotas import enforce_event_quota, enforce_token_quota
 from smritikosh.auth.deps import assert_self_or_admin, get_current_user
 from smritikosh.db.models import MediaIngest, MediaIngestStatus
 from neo4j import AsyncSession as NeoSession
@@ -65,6 +66,8 @@ async def ingest_media(
     """
     # Auth
     assert_self_or_admin(current_user, user_id)
+    await enforce_event_quota(pg, user_id, app_id)
+    await enforce_token_quota(pg, user_id, app_id)
 
     # Validate content_type
     _valid_types = {"voice_note", "document"} | _IMAGE_CONTENT_TYPES | _MEETING_CONTENT_TYPES

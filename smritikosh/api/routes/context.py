@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from smritikosh.api.ratelimit import limiter
 from smritikosh.auth.deps import assert_self_or_admin, get_current_user
 from smritikosh.api.deps import get_context_builder, get_reconsolidation_engine
+from smritikosh.api.quotas import enforce_token_quota
 from smritikosh.config import settings
 from smritikosh.api.schemas import ContextRequest, ContextResponse, ProcedureItem
 from smritikosh.db.neo4j import get_neo4j_session
@@ -72,8 +73,9 @@ async def get_context(
     """
     assert_self_or_admin(current_user, body.user_id)
     resolved_app_ids = body.app_ids or current_user.get("app_ids")
+    _app_id = resolved_app_ids[0] if resolved_app_ids else "default"
+    await enforce_token_quota(pg, body.user_id, _app_id)
     try:
-        _app_id = resolved_app_ids[0] if resolved_app_ids else "default"
         with llm_context(user_id=body.user_id, app_id=_app_id, source="context"):
             ctx = await builder.build(
                 pg,

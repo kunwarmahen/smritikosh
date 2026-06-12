@@ -14,10 +14,12 @@ import logging
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from smritikosh.api.deps import get_audit_logger, get_reconsolidation_engine
+from smritikosh.api.quotas import quota_usage_snapshot
 from smritikosh.api.schemas import (
     AdminJobRequest,
     AdminJobResponse,
@@ -32,7 +34,7 @@ from smritikosh.api.schemas import (
 )
 from smritikosh.auth.deps import require_admin
 from smritikosh.config import settings
-from smritikosh.db.models import AppUser, LlmUsage
+from smritikosh.db.models import AppUser, LlmUsage, UserQuota
 from smritikosh.db.postgres import get_session
 from smritikosh.processing.reconsolidation import ReconsolidationEngine
 from smritikosh.processing.scheduler import MemoryScheduler
@@ -576,3 +578,93 @@ async def get_llm_usage(
         "total_completion_tokens": sum(g["completion_tokens"] for g in groups),
         "total_cost_usd": round(sum(g["cost_usd"] for g in groups), 6),
     }
+
+
+# ── Usage quotas (D2) ──────────────────────────────────────────────────────────
+
+
+class QuotaUpdateRequest(BaseModel):
+    """All fields optional: null clears the override (config default applies)."""
+
+    app_id: str = "default"
+    daily_event_limit: Optional[int] = Field(None, ge=0)
+    monthly_event_limit: Optional[int] = Field(None, ge=0)
+    daily_token_limit: Optional[int] = Field(None, ge=0)
+    monthly_token_limit: Optional[int] = Field(None, ge=0)
+    note: Optional[str] = None
+
+
+@router.get("/quotas/{user_id}", summary="Effective quota + current usage")
+async def get_quota(
+    user_id: str,
+    pg: Annotated[AsyncSession, Depends(get_session)],
+    _admin: Annotated[dict, Depends(require_admin)],
+    app_id: Annotated[str, Query()] = "default",
+) -> dict:
+    """
+    Return the tenant's effective limits (override merged over config
+    defaults; null = unlimited) and consumption in the current UTC day/month
+    windows. Token usage comes from the llm_usage accounting table.
+    """
+    return await quota_usage_snapshot(pg, user_id, app_id)
+
+
+@router.put("/quotas/{user_id}", summary="Set per-tenant quota overrides")
+async def put_quota(
+    user_id: str,
+    body: QuotaUpdateRequest,
+    pg: Annotated[AsyncSession, Depends(get_session)],
+    _admin: Annotated[dict, Depends(require_admin)],
+) -> dict:
+    """
+    Upsert the (user_id, app_id) quota row. A null field clears that override
+    so the QUOTA_DEFAULT_* config value applies again; 0 there = unlimited.
+    Takes effect on the tenant's next request — no restart needed.
+    """
+    result = await pg.execute(
+        select(UserQuota).where(
+            UserQuota.user_id == user_id, UserQuota.app_id == body.app_id
+        )
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        row = UserQuota(user_id=user_id, app_id=body.app_id)
+        pg.add(row)
+
+    row.daily_event_limit = body.daily_event_limit
+    row.monthly_event_limit = body.monthly_event_limit
+    row.daily_token_limit = body.daily_token_limit
+    row.monthly_token_limit = body.monthly_token_limit
+    row.note = body.note
+    await pg.flush()
+
+    logger.info(
+        "Quota updated",
+        extra={"user_id": user_id, "app_id": body.app_id, "by": _admin["sub"]},
+    )
+    return await quota_usage_snapshot(pg, user_id, body.app_id)
+
+
+@router.delete("/quotas/{user_id}", summary="Remove per-tenant quota overrides")
+async def delete_quota(
+    user_id: str,
+    pg: Annotated[AsyncSession, Depends(get_session)],
+    _admin: Annotated[dict, Depends(require_admin)],
+    app_id: Annotated[str, Query()] = "default",
+) -> dict:
+    """Delete the override row; the tenant reverts to the config defaults."""
+    result = await pg.execute(
+        select(UserQuota).where(
+            UserQuota.user_id == user_id, UserQuota.app_id == app_id
+        )
+    )
+    row = result.scalar_one_or_none()
+    deleted = row is not None
+    if deleted:
+        await pg.delete(row)
+        await pg.flush()
+        logger.info(
+            "Quota override removed",
+            extra={"user_id": user_id, "app_id": app_id, "by": _admin["sub"]},
+        )
+    return {"user_id": user_id, "app_id": app_id, "deleted": deleted}

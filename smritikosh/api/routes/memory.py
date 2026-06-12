@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from smritikosh.api.ratelimit import limiter
 from smritikosh.auth.deps import assert_app_access, assert_self_or_admin, get_current_user, require_write_scope
 from smritikosh.api.deps import get_audit_logger, get_hippocampus, get_episodic, get_llm
+from smritikosh.api.quotas import enforce_event_quota, enforce_token_quota
 from smritikosh.config import settings
 from smritikosh.llm.usage import llm_context
 from smritikosh.api.schemas import (
@@ -75,6 +76,8 @@ async def capture_event(
     """
     assert_self_or_admin(current_user, body.user_id)
     assert_app_access(current_user, body.app_id)
+    await enforce_event_quota(pg, body.user_id, body.app_id)
+    await enforce_token_quota(pg, body.user_id, body.app_id)
     try:
         with llm_context(user_id=body.user_id, app_id=body.app_id, source="encode"):
             result = await hippocampus.encode(

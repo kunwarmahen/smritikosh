@@ -27,6 +27,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from smritikosh.api.deps import get_hippocampus, get_llm, get_semantic
+from smritikosh.api.quotas import enforce_event_quota, enforce_token_quota
 from smritikosh.auth.deps import assert_self_or_admin, require_write_scope
 from smritikosh.db.models import ProcessedSession, SourceType
 from smritikosh.db.neo4j import get_neo4j_session
@@ -104,6 +105,8 @@ async def ingest_session(
     - Optional trigger-word pre-filter skips the LLM entirely for low-signal windows
     """
     assert_self_or_admin(current_user, request.user_id)
+    await enforce_event_quota(pg, request.user_id, request.app_id)
+    await enforce_token_quota(pg, request.user_id, request.app_id)
 
     turns_raw = [t.model_dump() for t in request.turns]
 
