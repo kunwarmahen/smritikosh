@@ -1,0 +1,1017 @@
+{
+  "model": "ollama_chat/gemma4:e4b",
+  "generated_at": "2026-06-12T20:22:08-0400",
+  "duration_s": 24.0,
+  "aggregate": {
+    "cases": 52,
+    "tp": 63,
+    "fp": 30,
+    "fn": 5,
+    "violations": 1,
+    "errors": 0,
+    "precision": 0.6774,
+    "recall": 0.9265,
+    "f1": 0.7826
+  },
+  "categories": {
+    "belief": {
+      "expected": 2,
+      "found": 2,
+      "recall": 1.0
+    },
+    "diet": {
+      "expected": 4,
+      "found": 4,
+      "recall": 1.0
+    },
+    "education": {
+      "expected": 1,
+      "found": 1,
+      "recall": 1.0
+    },
+    "event": {
+      "expected": 1,
+      "found": 1,
+      "recall": 1.0
+    },
+    "finance": {
+      "expected": 2,
+      "found": 1,
+      "recall": 0.5
+    },
+    "goal": {
+      "expected": 5,
+      "found": 5,
+      "recall": 1.0
+    },
+    "habit": {
+      "expected": 1,
+      "found": 1,
+      "recall": 1.0
+    },
+    "health": {
+      "expected": 5,
+      "found": 5,
+      "recall": 1.0
+    },
+    "hobby": {
+      "expected": 5,
+      "found": 3,
+      "recall": 0.6
+    },
+    "identity": {
+      "expected": 5,
+      "found": 4,
+      "recall": 0.8
+    },
+    "interest": {
+      "expected": 1,
+      "found": 1,
+      "recall": 1.0
+    },
+    "lifestyle": {
+      "expected": 1,
+      "found": 1,
+      "recall": 1.0
+    },
+    "location": {
+      "expected": 3,
+      "found": 3,
+      "recall": 1.0
+    },
+    "personality": {
+      "expected": 1,
+      "found": 1,
+      "recall": 1.0
+    },
+    "pet": {
+      "expected": 2,
+      "found": 2,
+      "recall": 1.0
+    },
+    "preference": {
+      "expected": 2,
+      "found": 2,
+      "recall": 1.0
+    },
+    "project": {
+      "expected": 1,
+      "found": 1,
+      "recall": 1.0
+    },
+    "relationship": {
+      "expected": 3,
+      "found": 3,
+      "recall": 1.0
+    },
+    "religion": {
+      "expected": 1,
+      "found": 1,
+      "recall": 1.0
+    },
+    "role": {
+      "expected": 3,
+      "found": 3,
+      "recall": 1.0
+    },
+    "skill": {
+      "expected": 1,
+      "found": 0,
+      "recall": 0.0
+    },
+    "tool": {
+      "expected": 8,
+      "found": 8,
+      "recall": 1.0
+    },
+    "value": {
+      "expected": 1,
+      "found": 1,
+      "recall": 1.0
+    }
+  },
+  "cases": [
+    {
+      "id": "event-identity-name-age",
+      "tp": 2,
+      "fp": 0,
+      "fn": 0,
+      "violations": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "missed": [],
+      "spurious": [],
+      "violation_facts": []
+    },
+    {
+      "id": "event-location-move",
+      "tp": 2,
+      "fp": 0,
+      "fn": 0,
+      "violations": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "missed": [],
+      "spurious": [],
+      "violation_facts": []
+    },
+    {
+      "id": "event-role-title",
+      "tp": 1,
+      "fp": 1,
+      "fn": 0,
+      "violations": 0,
+      "precision": 0.5,
+      "recall": 1.0,
+      "f1": 0.6667,
+      "missed": [],
+      "spurious": [
+        {
+          "category": "location",
+          "key": "industry",
+          "value": "fintech"
+        }
+      ],
+      "violation_facts": []
+    },
+    {
+      "id": "event-skill-kubernetes",
+      "tp": 0,
+      "fp": 1,
+      "fn": 1,
+      "violations": 0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "missed": [
+        {
+          "category": "skill|tool",
+          "value": "Kubernetes"
+        }
+      ],
+      "spurious": [
+        {
+          "category": "skill",
+          "key": "kubernetes_experience",
+          "value": "six years"
+        }
+      ],
+      "violation_facts": []
+    },
+    {
+      "id": "event-education-mba",
+      "tp": 1,
+      "fp": 2,
+      "fn": 0,
+      "violations": 0,
+      "precision": 0.3333,
+      "recall": 1.0,
+      "f1": 0.5,
+      "missed": [],
+      "spurious": [
+        {
+          "category": "education",
+          "key": "school",
+          "value": "IIM Ahmedabad"
+        },
+        {
+          "category": "event",
+          "key": "completion_time",
+          "value": "last spring"
+        }
+      ],
+      "violation_facts": []
+    },
+    {
+      "id": "event-project-active",
+      "tp": 1,
+      "fp": 1,
+      "fn": 0,
+      "violations": 0,
+      "precision": 0.5,
+      "recall": 1.0,
+      "f1": 0.6667,
+      "missed": [],
+      "spurious": [
+        {
+          "category": "skill",
+          "key": "expertise",
+          "value": "memory layer for AI apps"
+        }
+      ],
+      "violation_facts": []
+    },
+    {
+      "id": "event-goal-deadline",
+      "tp": 1,
+      "fp": 1,
+      "fn": 0,
+      "violations": 0,
+      "precision": 0.5,
+      "recall": 1.0,
+      "f1": 0.6667,
+      "missed": [],
+      "spurious": [
+        {
+          "category": "goal",
+          "key": "deadline",
+          "value": "December"
+        }
+      ],
+      "violation_facts": []
+    },
+    {
+      "id": "event-interest-rl",
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "violations": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "missed": [],
+      "spurious": [],
+      "violation_facts": []
+    },
+    {
+      "id": "event-hobby-badminton",
+      "tp": 2,
+      "fp": 1,
+      "fn": 0,
+      "violations": 0,
+      "precision": 0.6667,
+      "recall": 1.0,
+      "f1": 0.8,
+      "missed": [],
+      "spurious": [
+        {
+          "category": "habit",
+          "key": "frequency",
+          "value": "every Saturday morning"
+        }
+      ],
+      "violation_facts": []
+    },
+    {
+      "id": "event-habit-meditation",
+      "tp": 1,
+      "fp": 1,
+      "fn": 0,
+      "violations": 0,
+      "precision": 0.5,
+      "recall": 1.0,
+      "f1": 0.6667,
+      "missed": [],
+      "spurious": [
+        {
+          "category": "habit",
+          "key": "phone_usage",
+          "value": "delayed until after meditation"
+        }
+      ],
+      "violation_facts": []
+    },
+    {
+      "id": "event-preference-dark-ui",
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "violations": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "missed": [],
+      "spurious": [],
+      "violation_facts": []
+    },
+    {
+      "id": "event-personality-introvert",
+      "tp": 1,
+      "fp": 1,
+      "fn": 0,
+      "violations": 0,
+      "precision": 0.5,
+      "recall": 1.0,
+      "f1": 0.6667,
+      "missed": [],
+      "spurious": [
+        {
+          "category": "preference",
+          "key": "social_setting",
+          "value": "large meetups are draining"
+        }
+      ],
+      "violation_facts": []
+    },
+    {
+      "id": "event-relationship-spouse",
+      "tp": 1,
+      "fp": 1,
+      "fn": 0,
+      "violations": 0,
+      "precision": 0.5,
+      "recall": 1.0,
+      "f1": 0.6667,
+      "missed": [],
+      "spurious": [
+        {
+          "category": "role",
+          "key": "job_title",
+          "value": "QA Team Lead"
+        }
+      ],
+      "violation_facts": []
+    },
+    {
+      "id": "event-pet-dog",
+      "tp": 1,
+      "fp": 2,
+      "fn": 0,
+      "violations": 0,
+      "precision": 0.3333,
+      "recall": 1.0,
+      "f1": 0.5,
+      "missed": [],
+      "spurious": [
+        {
+          "category": "pet",
+          "key": "type",
+          "value": "golden retriever"
+        },
+        {
+          "category": "event",
+          "key": "milestone",
+          "value": "3rd birthday"
+        }
+      ],
+      "violation_facts": []
+    },
+    {
+      "id": "event-health-diabetes",
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "violations": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "missed": [],
+      "spurious": [],
+      "violation_facts": []
+    },
+    {
+      "id": "event-diet-vegetarian-lactose",
+      "tp": 2,
+      "fp": 0,
+      "fn": 0,
+      "violations": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "missed": [],
+      "spurious": [],
+      "violation_facts": []
+    },
+    {
+      "id": "event-belief-open-source",
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "violations": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "missed": [],
+      "spurious": [],
+      "violation_facts": []
+    },
+    {
+      "id": "event-value-privacy",
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "violations": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "missed": [],
+      "spurious": [],
+      "violation_facts": []
+    },
+    {
+      "id": "event-religion-ramadan",
+      "tp": 1,
+      "fp": 1,
+      "fn": 0,
+      "violations": 0,
+      "precision": 0.5,
+      "recall": 1.0,
+      "f1": 0.6667,
+      "missed": [],
+      "spurious": [
+        {
+          "category": "belief",
+          "key": "importance_of",
+          "value": "fasting for faith"
+        }
+      ],
+      "violation_facts": []
+    },
+    {
+      "id": "event-finance-bootstrapped",
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "violations": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "missed": [],
+      "spurious": [],
+      "violation_facts": []
+    },
+    {
+      "id": "event-lifestyle-nomad",
+      "tp": 1,
+      "fp": 1,
+      "fn": 0,
+      "violations": 0,
+      "precision": 0.5,
+      "recall": 1.0,
+      "f1": 0.6667,
+      "missed": [],
+      "spurious": [
+        {
+          "category": "location",
+          "key": "duration_of_stay",
+          "value": "new city every few months"
+        }
+      ],
+      "violation_facts": []
+    },
+    {
+      "id": "event-event-graduation",
+      "tp": 1,
+      "fp": 1,
+      "fn": 0,
+      "violations": 0,
+      "precision": 0.5,
+      "recall": 1.0,
+      "f1": 0.6667,
+      "missed": [],
+      "spurious": [
+        {
+          "category": "location",
+          "key": "travel_reason",
+          "value": "Daughter's graduation"
+        }
+      ],
+      "violation_facts": []
+    },
+    {
+      "id": "event-tool-stack",
+      "tp": 3,
+      "fp": 0,
+      "fn": 0,
+      "violations": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "missed": [],
+      "spurious": [],
+      "violation_facts": []
+    },
+    {
+      "id": "event-question-only",
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "violations": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "missed": [],
+      "spurious": [],
+      "violation_facts": []
+    },
+    {
+      "id": "event-hypothetical-tokyo",
+      "tp": 0,
+      "fp": 1,
+      "fn": 0,
+      "violations": 0,
+      "precision": 0.0,
+      "recall": 1.0,
+      "f1": 0.0,
+      "missed": [],
+      "spurious": [
+        {
+          "category": "preference",
+          "key": "food_if_location",
+          "value": "ramen"
+        }
+      ],
+      "violation_facts": []
+    },
+    {
+      "id": "event-smalltalk",
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "violations": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "missed": [],
+      "spurious": [],
+      "violation_facts": []
+    },
+    {
+      "id": "event-third-party-tool",
+      "tp": 0,
+      "fp": 1,
+      "fn": 0,
+      "violations": 1,
+      "precision": 0.0,
+      "recall": 1.0,
+      "f1": 0.0,
+      "missed": [],
+      "spurious": [
+        {
+          "category": "tool",
+          "key": "colleague_recommendation",
+          "value": "Emacs"
+        }
+      ],
+      "violation_facts": [
+        {
+          "category": "tool",
+          "key": "colleague_recommendation",
+          "value": "Emacs",
+          "confidence": 0.9
+        }
+      ]
+    },
+    {
+      "id": "event-negation-diet",
+      "tp": 1,
+      "fp": 1,
+      "fn": 0,
+      "violations": 0,
+      "precision": 0.5,
+      "recall": 1.0,
+      "f1": 0.6667,
+      "missed": [],
+      "spurious": [
+        {
+          "category": "diet",
+          "key": "new_food_item",
+          "value": "chicken"
+        }
+      ],
+      "violation_facts": []
+    },
+    {
+      "id": "event-dense-intro",
+      "tp": 6,
+      "fp": 0,
+      "fn": 0,
+      "violations": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "missed": [],
+      "spurious": [],
+      "violation_facts": []
+    },
+    {
+      "id": "event-transient-state",
+      "tp": 0,
+      "fp": 2,
+      "fn": 0,
+      "violations": 0,
+      "precision": 0.0,
+      "recall": 1.0,
+      "f1": 0.0,
+      "missed": [],
+      "spurious": [
+        {
+          "category": "health",
+          "key": "condition",
+          "value": "exhausted"
+        },
+        {
+          "category": "health",
+          "key": "sleep_quality",
+          "value": "poor (barely slept)"
+        }
+      ],
+      "violation_facts": []
+    },
+    {
+      "id": "event-correction-deadline",
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "violations": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "missed": [],
+      "spurious": [],
+      "violation_facts": []
+    },
+    {
+      "id": "event-hinglish-languages",
+      "tp": 0,
+      "fp": 2,
+      "fn": 1,
+      "violations": 0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "missed": [
+        {
+          "category": "identity|skill|preference",
+          "value": "Hindi"
+        }
+      ],
+      "spurious": [
+        {
+          "category": "language",
+          "key": "thinking_language",
+          "value": "Hindi"
+        },
+        {
+          "category": "language",
+          "key": "working_language",
+          "value": "English"
+        }
+      ],
+      "violation_facts": []
+    },
+    {
+      "id": "session-basic-multi-turn",
+      "tp": 4,
+      "fp": 2,
+      "fn": 0,
+      "violations": 0,
+      "precision": 0.6667,
+      "recall": 1.0,
+      "f1": 0.8,
+      "missed": [],
+      "spurious": [
+        {
+          "category": "project",
+          "key": "current_focus",
+          "value": "data pipeline structuring"
+        },
+        {
+          "category": "goal",
+          "key": "deadline",
+          "value": "next year"
+        }
+      ],
+      "violation_facts": []
+    },
+    {
+      "id": "session-delta-no-repeat",
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "violations": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "missed": [],
+      "spurious": [],
+      "violation_facts": []
+    },
+    {
+      "id": "session-delta-new-alongside-known",
+      "tp": 1,
+      "fp": 1,
+      "fn": 0,
+      "violations": 0,
+      "precision": 0.5,
+      "recall": 1.0,
+      "f1": 0.6667,
+      "missed": [],
+      "spurious": [
+        {
+          "category": "pet",
+          "key": "type",
+          "value": "cat"
+        }
+      ],
+      "violation_facts": []
+    },
+    {
+      "id": "session-contradiction-city",
+      "tp": 2,
+      "fp": 0,
+      "fn": 0,
+      "violations": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "missed": [],
+      "spurious": [],
+      "violation_facts": []
+    },
+    {
+      "id": "session-assistant-contamination",
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "violations": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "missed": [],
+      "spurious": [],
+      "violation_facts": []
+    },
+    {
+      "id": "session-sentinel-contamination",
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "violations": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "missed": [],
+      "spurious": [],
+      "violation_facts": []
+    },
+    {
+      "id": "session-no-user-turns",
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "violations": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "missed": [],
+      "spurious": [],
+      "violation_facts": []
+    },
+    {
+      "id": "session-questions-only",
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "violations": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "missed": [],
+      "spurious": [],
+      "violation_facts": []
+    },
+    {
+      "id": "session-multi-fact-spread",
+      "tp": 4,
+      "fp": 2,
+      "fn": 1,
+      "violations": 0,
+      "precision": 0.6667,
+      "recall": 0.8,
+      "f1": 0.7273,
+      "missed": [
+        {
+          "category": "hobby|habit",
+          "value": "running"
+        }
+      ],
+      "spurious": [
+        {
+          "category": "location",
+          "key": "city",
+          "value": "Pune"
+        },
+        {
+          "category": "skill",
+          "key": "weekly_running_distance",
+          "value": "25km"
+        }
+      ],
+      "violation_facts": []
+    },
+    {
+      "id": "session-trigger-remember",
+      "tp": 2,
+      "fp": 0,
+      "fn": 0,
+      "violations": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "missed": [],
+      "spurious": [],
+      "violation_facts": []
+    },
+    {
+      "id": "session-preference-update",
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "violations": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "missed": [],
+      "spurious": [],
+      "violation_facts": []
+    },
+    {
+      "id": "session-goal-deadline",
+      "tp": 1,
+      "fp": 1,
+      "fn": 0,
+      "violations": 0,
+      "precision": 0.5,
+      "recall": 1.0,
+      "f1": 0.6667,
+      "missed": [],
+      "spurious": [
+        {
+          "category": "goal",
+          "key": "deadline",
+          "value": "Diwali this year"
+        }
+      ],
+      "violation_facts": []
+    },
+    {
+      "id": "session-relationship-event",
+      "tp": 2,
+      "fp": 0,
+      "fn": 0,
+      "violations": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "missed": [],
+      "spurious": [],
+      "violation_facts": []
+    },
+    {
+      "id": "session-chitchat-one-fact",
+      "tp": 0,
+      "fp": 0,
+      "fn": 1,
+      "violations": 0,
+      "precision": 1.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "missed": [
+        {
+          "category": "hobby|education|skill|event",
+          "value": "amateur radio license"
+        }
+      ],
+      "spurious": [],
+      "violation_facts": []
+    },
+    {
+      "id": "session-belief-stance",
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "violations": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "missed": [],
+      "spurious": [],
+      "violation_facts": []
+    },
+    {
+      "id": "session-tool-stack-discussion",
+      "tp": 4,
+      "fp": 0,
+      "fn": 0,
+      "violations": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "missed": [],
+      "spurious": [],
+      "violation_facts": []
+    },
+    {
+      "id": "session-health-medication",
+      "tp": 2,
+      "fp": 0,
+      "fn": 0,
+      "violations": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "missed": [],
+      "spurious": [],
+      "violation_facts": []
+    },
+    {
+      "id": "session-finance-budget",
+      "tp": 1,
+      "fp": 1,
+      "fn": 1,
+      "violations": 0,
+      "precision": 0.5,
+      "recall": 0.5,
+      "f1": 0.5,
+      "missed": [
+        {
+          "category": "finance",
+          "value": "infra budget under $200/month"
+        }
+      ],
+      "spurious": [
+        {
+          "category": "finance",
+          "key": "budget_constraint",
+          "value": "$200 per month"
+        }
+      ],
+      "violation_facts": []
+    },
+    {
+      "id": "session-hypothetical-vs-real",
+      "tp": 1,
+      "fp": 0,
+      "fn": 0,
+      "violations": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "missed": [],
+      "spurious": [],
+      "violation_facts": []
+    },
+    {
+      "id": "session-paraphrase-known",
+      "tp": 0,
+      "fp": 1,
+      "fn": 0,
+      "violations": 0,
+      "precision": 0.0,
+      "recall": 1.0,
+      "f1": 0.0,
+      "missed": [],
+      "spurious": [
+        {
+          "category": "diet",
+          "key": "restriction",
+          "value": "vegetarian"
+        }
+      ],
+      "violation_facts": []
+    }
+  ]
+}

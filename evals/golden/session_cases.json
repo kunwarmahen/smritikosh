@@ -1,0 +1,292 @@
+[
+  {
+    "id": "session-basic-multi-turn",
+    "kind": "session",
+    "notes": "Facts spread over three user turns, no prior knowledge.",
+    "turns": [
+      {"role": "user", "content": "Hey, I need help structuring a data pipeline."},
+      {"role": "assistant", "content": "Sure — what does your stack look like?"},
+      {"role": "user", "content": "I'm a backend engineer, we run everything on Postgres and Airflow."},
+      {"role": "assistant", "content": "Got it. Batch or streaming?"},
+      {"role": "user", "content": "Batch for now. Long term I want to move us to a streaming setup by next year."}
+    ],
+    "expected": [
+      {"category": "role", "value": "backend engineer"},
+      {"category": "tool", "value": "Postgres", "aliases": ["postgresql"]},
+      {"category": "tool", "value": "Airflow"},
+      {"category": ["goal", "project"], "value": "move to streaming", "aliases": ["streaming setup by next year", "streaming setup", "move to a streaming setup"]}
+    ]
+  },
+  {
+    "id": "session-delta-no-repeat",
+    "kind": "session",
+    "notes": "Everything mentioned is already known — delta extraction should return nothing.",
+    "existing_facts": [
+      {"category": "diet", "key": "restriction", "value": "vegetarian", "confidence": 0.95},
+      {"category": "location", "key": "city", "value": "Bangalore", "confidence": 0.95}
+    ],
+    "turns": [
+      {"role": "user", "content": "As a vegetarian living in Bangalore, where should I go for a good thali?"},
+      {"role": "assistant", "content": "There are great options around Jayanagar and Basavanagudi."}
+    ],
+    "expected": [],
+    "forbidden": [
+      {"category": "diet", "value": "vegetarian"},
+      {"category": "location", "value": "Bangalore", "aliases": ["bengaluru"]}
+    ]
+  },
+  {
+    "id": "session-delta-new-alongside-known",
+    "kind": "session",
+    "notes": "Known role repeated + genuinely new pet fact — only the pet should come out.",
+    "existing_facts": [
+      {"category": "role", "key": "current", "value": "software engineer", "confidence": 0.9}
+    ],
+    "turns": [
+      {"role": "user", "content": "Being a software engineer means long hours at the desk, so I just adopted a cat named Mishti to keep me company."}
+    ],
+    "expected": [
+      {"category": "pet", "value": "Mishti", "aliases": ["cat named mishti", "cat mishti", "cat"]}
+    ],
+    "forbidden": [
+      {"category": "role", "value": "software engineer"}
+    ]
+  },
+  {
+    "id": "session-contradiction-city",
+    "kind": "session",
+    "notes": "New statement contradicts a known fact — the new value should be extracted.",
+    "existing_facts": [
+      {"category": "location", "key": "city", "value": "Mumbai", "confidence": 0.9}
+    ],
+    "turns": [
+      {"role": "user", "content": "Quick update — we relocated to Pune last week, the Mumbai chapter is over."}
+    ],
+    "expected": [
+      {"category": "location", "value": "Pune"},
+      {"category": "location", "value": "Mumbai", "aliases": ["left mumbai", "moved from mumbai"], "optional": true}
+    ]
+  },
+  {
+    "id": "session-assistant-contamination",
+    "kind": "session",
+    "notes": "Facts appear ONLY in assistant turns — the pipeline filters them, so extraction must be empty.",
+    "turns": [
+      {"role": "user", "content": "Can you suggest something for dinner tonight?"},
+      {"role": "assistant", "content": "Since you're vegetarian and live in Pune, try the misal pav at a local joint — though as a diabetic you may want to go easy on it."},
+      {"role": "user", "content": "Sounds good, thanks."}
+    ],
+    "expected": [],
+    "forbidden": [
+      {"category": "diet", "value": "vegetarian"},
+      {"category": "location", "value": "Pune"},
+      {"category": "health", "value": "diabetic", "aliases": ["diabetes"]}
+    ]
+  },
+  {
+    "id": "session-sentinel-contamination",
+    "kind": "session",
+    "notes": "Injected memory-context block must be stripped; only the genuinely new fact survives.",
+    "turns": [
+      {"role": "user", "content": "<!-- smritikosh:context-start -->\nKnown about user: lives in Delhi, works as a teacher, allergic to dust.\n<!-- smritikosh:context-end -->\nBy the way, I started learning the violin last month."}
+    ],
+    "expected": [
+      {"category": ["hobby", "skill", "interest"], "value": "violin", "aliases": ["learning the violin", "learning violin", "plays violin"]}
+    ],
+    "forbidden": [
+      {"category": "location", "value": "Delhi"},
+      {"category": "role", "value": "teacher"},
+      {"category": "health", "value": "allergic to dust", "aliases": ["dust allergy"]}
+    ]
+  },
+  {
+    "id": "session-no-user-turns",
+    "kind": "session",
+    "notes": "All-assistant transcript — pipeline skips extraction entirely (no LLM call).",
+    "turns": [
+      {"role": "assistant", "content": "Following up on our last session: your deployment finished successfully."},
+      {"role": "assistant", "content": "Let me know if you need anything else."}
+    ],
+    "expected": []
+  },
+  {
+    "id": "session-questions-only",
+    "kind": "session",
+    "notes": "User only asks questions — at most a soft interest, nothing required.",
+    "turns": [
+      {"role": "user", "content": "How does vector search compare to keyword search?"},
+      {"role": "assistant", "content": "Vector search matches by meaning; keyword search by exact terms."},
+      {"role": "user", "content": "And which one is cheaper to run at scale?"}
+    ],
+    "expected": [
+      {"category": "interest", "value": "vector search", "aliases": ["search technology", "vector vs keyword search"], "optional": true}
+    ]
+  },
+  {
+    "id": "session-multi-fact-spread",
+    "kind": "session",
+    "notes": "Five facts spread across a longer conversation.",
+    "turns": [
+      {"role": "user", "content": "I'm planning my training schedule for the Pune half marathon in February."},
+      {"role": "assistant", "content": "Nice goal! How is your current running base?"},
+      {"role": "user", "content": "I run about 25km a week. I'm 35, so recovery matters more than it used to."},
+      {"role": "assistant", "content": "Sensible. Any constraints I should know about?"},
+      {"role": "user", "content": "I'm vegan, and my physio said to watch my left knee — old ACL injury."}
+    ],
+    "expected": [
+      {"category": ["goal", "event"], "value": "half marathon in February", "aliases": ["pune half marathon", "half marathon"]},
+      {"category": ["hobby", "habit"], "value": "running", "aliases": ["runs 25km a week", "25km a week"]},
+      {"category": "identity", "value": "35", "aliases": ["35 years old", "age 35"]},
+      {"category": "diet", "value": "vegan"},
+      {"category": "health", "value": "ACL injury", "aliases": ["old acl injury", "left knee injury", "knee injury"]}
+    ]
+  },
+  {
+    "id": "session-trigger-remember",
+    "kind": "session",
+    "notes": "Explicit 'remember that' trigger phrase.",
+    "turns": [
+      {"role": "user", "content": "Remember that I'm allergic to shellfish — it's serious, I carry an EpiPen."}
+    ],
+    "expected": [
+      {"category": ["health", "diet"], "value": "allergic to shellfish", "aliases": ["shellfish allergy", "shellfish"]},
+      {"category": "health", "value": "carries an EpiPen", "aliases": ["epipen"], "optional": true}
+    ]
+  },
+  {
+    "id": "session-preference-update",
+    "kind": "session",
+    "notes": "Preference changed — new value expected, stale value must not be re-extracted.",
+    "existing_facts": [
+      {"category": "preference", "key": "ui_color", "value": "green", "confidence": 0.9}
+    ],
+    "turns": [
+      {"role": "user", "content": "Actually I've moved on from green — set everything to dark purple themes now."}
+    ],
+    "expected": [
+      {"category": "preference", "value": "dark purple", "aliases": ["purple", "dark purple themes"]}
+    ],
+    "forbidden": [
+      {"category": "preference", "value": "green"}
+    ]
+  },
+  {
+    "id": "session-goal-deadline",
+    "kind": "session",
+    "notes": "Goal with measurable target stated conversationally.",
+    "turns": [
+      {"role": "user", "content": "I want to get my Hindi newsletter to 5,000 subscribers before Diwali this year."}
+    ],
+    "expected": [
+      {"category": ["goal", "project"], "value": "5,000 newsletter subscribers before Diwali", "aliases": ["5000 subscribers", "newsletter to 5000 subscribers", "grow newsletter to 5,000 subscribers"]},
+      {"category": ["project", "interest"], "value": "Hindi newsletter", "aliases": ["newsletter"], "optional": true}
+    ]
+  },
+  {
+    "id": "session-relationship-event",
+    "kind": "session",
+    "notes": "Family member + upcoming milestone.",
+    "turns": [
+      {"role": "user", "content": "My son Arjun starts school in June, so mornings are about to get chaotic."}
+    ],
+    "expected": [
+      {"category": "relationship", "value": "Arjun", "aliases": ["son arjun", "son"]},
+      {"category": "event", "value": "son starts school in June", "aliases": ["starts school in june", "school in june"], "optional": true}
+    ]
+  },
+  {
+    "id": "session-chitchat-one-fact",
+    "kind": "session",
+    "notes": "Long pleasantries hiding exactly one durable fact.",
+    "turns": [
+      {"role": "user", "content": "Hey! Hope you're doing well today."},
+      {"role": "assistant", "content": "Doing great — how can I help?"},
+      {"role": "user", "content": "Nothing major, just browsing. Oh, fun news — I got my amateur radio license last weekend!"},
+      {"role": "assistant", "content": "Congratulations!"},
+      {"role": "user", "content": "Thanks! Anyway, what's the weather like in general this time of year?"}
+    ],
+    "expected": [
+      {"category": ["hobby", "education", "skill", "event"], "value": "amateur radio license", "aliases": ["ham radio", "amateur radio"]}
+    ]
+  },
+  {
+    "id": "session-belief-stance",
+    "kind": "session",
+    "notes": "Opinion developed over two turns.",
+    "turns": [
+      {"role": "user", "content": "I keep going back and forth on remote work debates."},
+      {"role": "assistant", "content": "Where do you land currently?"},
+      {"role": "user", "content": "Firmly that fully remote teams outperform hybrid ones — I've seen it across three companies now."}
+    ],
+    "expected": [
+      {"category": ["belief", "value"], "value": "fully remote teams outperform hybrid", "aliases": ["remote teams outperform hybrid teams", "believes in remote work", "pro fully remote"]}
+    ]
+  },
+  {
+    "id": "session-tool-stack-discussion",
+    "kind": "session",
+    "notes": "Tools mentioned as part of the user's own stack.",
+    "turns": [
+      {"role": "user", "content": "Our stack is FastAPI behind Nginx, Redis for caching, and we deploy with Docker Compose."}
+    ],
+    "expected": [
+      {"category": "tool", "value": "FastAPI"},
+      {"category": "tool", "value": "Redis"},
+      {"category": "tool", "value": "Docker Compose", "aliases": ["docker"]},
+      {"category": "tool", "value": "Nginx", "optional": true}
+    ]
+  },
+  {
+    "id": "session-health-medication",
+    "kind": "session",
+    "notes": "Medication is a health fact; the morning routine is a bonus habit.",
+    "turns": [
+      {"role": "user", "content": "I take metformin every morning with breakfast, so my schedule has to account for that."}
+    ],
+    "expected": [
+      {"category": "health", "value": "metformin", "aliases": ["takes metformin"]},
+      {"category": "habit", "value": "metformin every morning", "aliases": ["morning medication with breakfast"], "optional": true}
+    ]
+  },
+  {
+    "id": "session-finance-budget",
+    "kind": "session",
+    "notes": "Budget constraint stated in passing.",
+    "turns": [
+      {"role": "user", "content": "Whatever we pick has to keep our infra budget under $200 a month — we're pre-revenue."}
+    ],
+    "expected": [
+      {"category": "finance", "value": "infra budget under $200/month", "aliases": ["under $200 a month", "$200 monthly budget", "200 a month"]},
+      {"category": "finance", "value": "pre-revenue", "optional": true}
+    ]
+  },
+  {
+    "id": "session-hypothetical-vs-real",
+    "kind": "session",
+    "notes": "One hypothetical and one real fact in the same turn — only the real one counts.",
+    "turns": [
+      {"role": "user", "content": "If we ever raise a Series A we'd hire aggressively, but for now it's just me and my co-founder Neha."}
+    ],
+    "expected": [
+      {"category": "relationship", "value": "Neha", "aliases": ["co-founder neha", "cofounder neha", "co-founder"]},
+      {"category": ["finance", "project", "role"], "value": "two-person team", "aliases": ["just me and my co-founder", "team of two"], "optional": true}
+    ],
+    "forbidden": [
+      {"category": ["finance", "goal"], "value": "Series A", "aliases": ["raising series a", "raise a series a"]},
+      {"category": ["goal", "project"], "value": "hire aggressively", "aliases": ["hiring aggressively"]}
+    ]
+  },
+  {
+    "id": "session-paraphrase-known",
+    "kind": "session",
+    "notes": "Known fact paraphrased ('don't eat meat' vs stored 'vegetarian') — semantic dedup should yield nothing new.",
+    "existing_facts": [
+      {"category": "diet", "key": "restriction", "value": "vegetarian", "confidence": 0.95}
+    ],
+    "turns": [
+      {"role": "user", "content": "Just a reminder for the meal plan — I don't eat meat."},
+      {"role": "assistant", "content": "Noted, I'll keep it meat-free."}
+    ],
+    "expected": []
+  }
+]

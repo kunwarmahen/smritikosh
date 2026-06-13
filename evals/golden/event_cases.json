@@ -1,0 +1,313 @@
+[
+  {
+    "id": "event-identity-name-age",
+    "kind": "event",
+    "notes": "Basic identity extraction: name + age from one utterance.",
+    "content": "By the way, my name is Mahen and I'm 42 years old.",
+    "expected": [
+      {"category": "identity", "value": "Mahen", "aliases": ["mahen singh"]},
+      {"category": "identity", "value": "42", "aliases": ["42 years old", "age 42"]}
+    ]
+  },
+  {
+    "id": "event-location-move",
+    "kind": "event",
+    "notes": "Current city should win; previous city is acceptable but not required.",
+    "content": "I just moved to Bangalore last month — the weather is so much better than Mumbai's.",
+    "expected": [
+      {"category": "location", "value": "Bangalore", "aliases": ["bengaluru"]},
+      {"category": "location", "value": "Mumbai", "aliases": ["previously mumbai", "moved from mumbai"], "optional": true}
+    ]
+  },
+  {
+    "id": "event-role-title",
+    "kind": "event",
+    "notes": "Job title extraction.",
+    "content": "I work as a senior data engineer at a fintech startup.",
+    "expected": [
+      {"category": "role", "value": "senior data engineer", "aliases": ["data engineer"]},
+      {"category": ["role", "project"], "value": "fintech startup", "aliases": ["fintech"], "optional": true}
+    ]
+  },
+  {
+    "id": "event-skill-kubernetes",
+    "kind": "event",
+    "notes": "Skill with implied expertise level.",
+    "content": "I've been doing Kubernetes administration for six years now, I know it inside out.",
+    "expected": [
+      {"category": ["skill", "tool"], "value": "Kubernetes", "aliases": ["kubernetes administration", "k8s"]}
+    ]
+  },
+  {
+    "id": "event-education-mba",
+    "kind": "event",
+    "notes": "Degree + institution.",
+    "content": "I finally finished my MBA from IIM Ahmedabad last spring.",
+    "expected": [
+      {"category": "education", "value": "MBA", "aliases": ["mba from iim ahmedabad", "iim ahmedabad"]}
+    ]
+  },
+  {
+    "id": "event-project-active",
+    "kind": "event",
+    "notes": "Active work initiative.",
+    "content": "Most of my time goes into Smritikosh, the memory layer I'm building for AI apps.",
+    "expected": [
+      {"category": "project", "value": "Smritikosh", "aliases": ["smritikosh memory layer", "memory layer for ai apps"]}
+    ]
+  },
+  {
+    "id": "event-goal-deadline",
+    "kind": "event",
+    "notes": "Goal with a target number and deadline.",
+    "content": "My goal is to hit 100 paying customers by December.",
+    "expected": [
+      {"category": "goal", "value": "100 paying customers by December", "aliases": ["100 paying customers", "hit 100 customers by december"]}
+    ]
+  },
+  {
+    "id": "event-interest-rl",
+    "kind": "event",
+    "notes": "Topic the user follows.",
+    "content": "I've been reading everything I can find about reinforcement learning lately.",
+    "expected": [
+      {"category": "interest", "value": "reinforcement learning", "aliases": ["rl"]}
+    ]
+  },
+  {
+    "id": "event-hobby-badminton",
+    "kind": "event",
+    "notes": "Active leisure pursuit; the weekly schedule may surface as a habit.",
+    "content": "I play badminton every Saturday morning with my college friends.",
+    "expected": [
+      {"category": ["hobby", "habit", "interest"], "value": "badminton", "aliases": ["plays badminton", "badminton every saturday"]},
+      {"category": ["relationship"], "value": "college friends", "optional": true}
+    ]
+  },
+  {
+    "id": "event-habit-meditation",
+    "kind": "event",
+    "notes": "Daily routine.",
+    "content": "I always start my day with 20 minutes of meditation before checking my phone.",
+    "expected": [
+      {"category": ["habit", "lifestyle"], "value": "meditation", "aliases": ["morning meditation", "20 minutes of meditation", "meditates every morning"]}
+    ]
+  },
+  {
+    "id": "event-preference-dark-ui",
+    "kind": "event",
+    "notes": "Stated UI taste.",
+    "content": "Please keep the UI dark — I can't stand bright themes.",
+    "expected": [
+      {"category": "preference", "value": "dark", "aliases": ["dark mode", "dark ui", "dark theme", "dark themes"]}
+    ]
+  },
+  {
+    "id": "event-personality-introvert",
+    "kind": "event",
+    "notes": "Self-described trait.",
+    "content": "I'm a pretty big introvert, large meetups drain me.",
+    "expected": [
+      {"category": "personality", "value": "introvert", "aliases": ["introverted"]}
+    ]
+  },
+  {
+    "id": "event-relationship-spouse",
+    "kind": "event",
+    "notes": "Family member with name.",
+    "content": "My wife Priya is also in tech — she leads a QA team.",
+    "expected": [
+      {"category": "relationship", "value": "Priya", "aliases": ["wife priya", "wife"]}
+    ]
+  },
+  {
+    "id": "event-pet-dog",
+    "kind": "event",
+    "notes": "Animal companion with name and breed.",
+    "content": "Our golden retriever Simba turned three yesterday.",
+    "expected": [
+      {"category": "pet", "value": "Simba", "aliases": ["golden retriever simba", "golden retriever", "dog named simba"]}
+    ]
+  },
+  {
+    "id": "event-health-diabetes",
+    "kind": "event",
+    "notes": "Medical condition.",
+    "content": "I was diagnosed with type 2 diabetes a couple of years back, so I keep an eye on my sugar.",
+    "expected": [
+      {"category": "health", "value": "type 2 diabetes", "aliases": ["diabetes", "diabetic"]},
+      {"category": ["habit", "health"], "value": "monitors blood sugar", "aliases": ["keeps an eye on sugar", "tracks blood sugar"], "optional": true}
+    ]
+  },
+  {
+    "id": "event-diet-vegetarian-lactose",
+    "kind": "event",
+    "notes": "Two dietary restrictions; lactose intolerance may land in health.",
+    "content": "I'm vegetarian, and I'm also lactose intolerant so no cheese please.",
+    "expected": [
+      {"category": "diet", "value": "vegetarian"},
+      {"category": ["diet", "health"], "value": "lactose intolerant", "aliases": ["lactose intolerance", "no dairy"]}
+    ]
+  },
+  {
+    "id": "event-belief-open-source",
+    "kind": "event",
+    "notes": "Opinion/stance, not a preference.",
+    "content": "Honestly, I think open-source models will overtake closed ones within five years.",
+    "expected": [
+      {"category": ["belief", "interest"], "value": "open-source models will overtake closed ones", "aliases": ["open source will overtake closed source", "open-source models will win", "believes in open source"]}
+    ]
+  },
+  {
+    "id": "event-value-privacy",
+    "kind": "event",
+    "notes": "Core principle.",
+    "content": "Privacy matters more to me than convenience — I'll always pick the private option.",
+    "expected": [
+      {"category": ["value", "belief", "preference"], "value": "privacy", "aliases": ["privacy over convenience", "values privacy"]}
+    ]
+  },
+  {
+    "id": "event-religion-ramadan",
+    "kind": "event",
+    "notes": "Religious practice.",
+    "content": "I observe Ramadan every year — fasting is important to my faith.",
+    "expected": [
+      {"category": ["religion", "habit"], "value": "observes Ramadan", "aliases": ["ramadan", "muslim", "islam", "fasts during ramadan"]}
+    ]
+  },
+  {
+    "id": "event-finance-bootstrapped",
+    "kind": "event",
+    "notes": "Financial situation.",
+    "content": "I'm bootstrapping the company — no VC money, running on savings.",
+    "expected": [
+      {"category": "finance", "value": "bootstrapping", "aliases": ["bootstrapped", "no vc funding", "self-funded", "running on savings"]}
+    ]
+  },
+  {
+    "id": "event-lifestyle-nomad",
+    "kind": "event",
+    "notes": "Overall life pattern.",
+    "content": "We've been living as digital nomads for two years — a new city every few months.",
+    "expected": [
+      {"category": "lifestyle", "value": "digital nomad", "aliases": ["nomadic", "digital nomads"]}
+    ]
+  },
+  {
+    "id": "event-event-graduation",
+    "kind": "event",
+    "notes": "Upcoming life event; the daughter relationship is a bonus.",
+    "content": "My daughter's graduation is on June 28th — I'm flying out for it.",
+    "expected": [
+      {"category": "event", "value": "daughter's graduation on June 28", "aliases": ["graduation june 28", "graduation on june 28th", "daughter's graduation"]},
+      {"category": "relationship", "value": "daughter", "optional": true}
+    ]
+  },
+  {
+    "id": "event-tool-stack",
+    "kind": "event",
+    "notes": "Multiple tools in one utterance.",
+    "content": "We do everything in Notion, and I write code in Neovim with tmux.",
+    "expected": [
+      {"category": "tool", "value": "Notion"},
+      {"category": "tool", "value": "Neovim", "aliases": ["nvim"]},
+      {"category": "tool", "value": "tmux", "optional": true}
+    ]
+  },
+  {
+    "id": "event-question-only",
+    "kind": "event",
+    "notes": "Pure question — nothing durable to extract; ML interest is plausible but not required.",
+    "content": "What's the best laptop for machine learning these days?",
+    "expected": [
+      {"category": "interest", "value": "machine learning", "optional": true}
+    ]
+  },
+  {
+    "id": "event-hypothetical-tokyo",
+    "kind": "event",
+    "notes": "Hypothetical must not become a location or diet fact.",
+    "content": "If I ever moved to Tokyo, I'd probably eat ramen every day.",
+    "expected": [],
+    "forbidden": [
+      {"category": "location", "value": "Tokyo"},
+      {"category": "diet", "value": "ramen", "aliases": ["ramen every day", "eats ramen"]}
+    ]
+  },
+  {
+    "id": "event-smalltalk",
+    "kind": "event",
+    "notes": "Filler/acknowledgement — zero facts.",
+    "content": "Haha yeah totally, that makes sense. Thanks for the help!",
+    "expected": []
+  },
+  {
+    "id": "event-third-party-tool",
+    "kind": "event",
+    "notes": "Colleague's tool must not be attributed to the user.",
+    "content": "My colleague Ravi swears by Emacs, but I've never tried it myself.",
+    "expected": [
+      {"category": "relationship", "value": "Ravi", "aliases": ["colleague ravi", "colleague"], "optional": true}
+    ],
+    "forbidden": [
+      {"category": "tool", "value": "Emacs", "aliases": ["emacs"]},
+      {"category": "skill", "value": "Emacs", "aliases": ["emacs"]}
+    ]
+  },
+  {
+    "id": "event-negation-diet",
+    "kind": "event",
+    "notes": "Negated fact: the OLD value must not be extracted as current.",
+    "content": "I'm not vegetarian anymore — I started eating chicken last year.",
+    "expected": [
+      {"category": "diet", "value": "not vegetarian", "aliases": ["non-vegetarian", "eats chicken", "eats meat", "stopped being vegetarian", "no longer vegetarian"]}
+    ],
+    "forbidden": [
+      {"category": "diet", "value": "vegetarian"}
+    ]
+  },
+  {
+    "id": "event-dense-intro",
+    "kind": "event",
+    "notes": "Six facts in one dense self-introduction.",
+    "content": "Quick intro: I'm Sara, a UX designer from Lisbon. I love hiking, I'm allergic to peanuts, and I use Figma daily.",
+    "expected": [
+      {"category": "identity", "value": "Sara"},
+      {"category": "role", "value": "UX designer", "aliases": ["ux design"]},
+      {"category": "location", "value": "Lisbon"},
+      {"category": ["hobby", "interest"], "value": "hiking", "aliases": ["loves hiking"]},
+      {"category": ["health", "diet"], "value": "allergic to peanuts", "aliases": ["peanut allergy", "peanuts"]},
+      {"category": "tool", "value": "Figma"}
+    ]
+  },
+  {
+    "id": "event-transient-state",
+    "kind": "event",
+    "notes": "Transient state ('tired today') is not a durable fact — any extraction is noise.",
+    "content": "I'm exhausted today, barely slept last night.",
+    "expected": []
+  },
+  {
+    "id": "event-correction-deadline",
+    "kind": "event",
+    "notes": "Correction: the corrected value should win; the retracted one must not appear.",
+    "content": "Actually, correction — the project deadline is March, not January.",
+    "expected": [
+      {"category": ["goal", "event", "project"], "value": "deadline in March", "aliases": ["march deadline", "project deadline march", "deadline march"]}
+    ],
+    "forbidden": [
+      {"category": ["goal", "event", "project"], "value": "deadline in January", "aliases": ["january deadline", "deadline january"]}
+    ]
+  },
+  {
+    "id": "event-hinglish-languages",
+    "kind": "event",
+    "notes": "Code-switched (Hinglish) input; languages are identity facts per the schema.",
+    "content": "Main mostly Hindi mein sochta hoon, par kaam English mein karta hoon.",
+    "expected": [
+      {"category": ["identity", "skill", "preference"], "value": "Hindi", "aliases": ["speaks hindi", "thinks in hindi", "hindi and english"]},
+      {"category": ["identity", "skill", "preference"], "value": "English", "aliases": ["works in english", "speaks english"], "optional": true}
+    ]
+  }
+]

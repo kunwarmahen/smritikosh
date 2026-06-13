@@ -16,6 +16,7 @@ Smritikosh gives any LLM application persistent, user-specific memory modelled o
 | [FLOW.md](FLOW.md) | End-to-end walkthrough — how memory flows through the system with real examples |
 | [sample/README.md](sample/README.md) | Running the demo chatbot against a live server |
 | [local_docs/MCP_SERVER.md](local_docs/MCP_SERVER.md) | MCP server — use Smritikosh from Claude Code / Claude Desktop with zero integration |
+| [evals/README.md](evals/README.md) | Extraction-quality eval harness — golden set + precision/recall scorer for the LLM extraction pipeline |
 
 ---
 
