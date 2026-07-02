@@ -94,7 +94,7 @@ async def get_context(
     # The ReconsolidationEngine opens its own session — the request session
     # may already be closed by the time the background task runs.
     reconsolidation_scheduled = False
-    if ctx.similar_events:
+    if ctx.similar_events and settings.reconsolidation_on_recall:
         _app_id = resolved_app_ids[0] if resolved_app_ids else "default"
         background_tasks.add_task(
             reconsolidation.reconsolidate_after_recall,

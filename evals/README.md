@@ -93,9 +93,18 @@ signal: the local model over-extracts (~30 spurious facts across 52 cases).
 `tests/test_evals_harness.py` covers the matcher, scorer, golden-set integrity,
 and runner plumbing with a fake LLM — runs in the normal suite, no tokens.
 
+## Public benchmarks (S3)
+
+`evals/benchmarks/` runs LoCoMo and LongMemEval end-to-end against a live
+Smritikosh server — see [benchmarks/RESULTS.md](benchmarks/RESULTS.md) for
+method, published comparison numbers, and the publication checklist.
+
+```bash
+python -m evals.benchmarks locomo --users 2 --questions 100
+```
+
 ## Future work
 
-- S3: run LoCoMo / LongMemEval public benchmarks on top of this harness.
 - Belief-mining eval (golden fact corpora → expected beliefs) — the
   `belief_miner` job is not yet covered; fact-level `belief` category is.
 - Nightly CI job once a hosted runner with an LLM key exists.

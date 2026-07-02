@@ -98,6 +98,12 @@ class Settings(BaseSettings):
     # without a token. Remove it immediately after creating the first account.
     bootstrap_admin: bool = False
 
+    # Reconsolidate the top recalled event after each /context call. The task
+    # runs an LLM call per request; on slow/local models it can saturate the
+    # provider and stall subsequent requests (see A3-followup: move it onto
+    # the ARQ queue). Set RECONSOLIDATION_ON_RECALL=0 for benchmark runs.
+    reconsolidation_on_recall: bool = True
+
     # ── CORS ────────────────────────────────────────────────────────────────
     # Comma-separated list of origins allowed to call the API from a browser,
     # e.g. "https://app.example.com,https://admin.example.com".

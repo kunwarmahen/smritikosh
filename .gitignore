@@ -17,3 +17,6 @@ uv.lock
 **/__pycache__/**/*
 **/node_modules/**/*
 local_docs/**/*
+
+# Benchmark datasets + run state (S3) — downloaded on demand
+evals/benchmarks/data/

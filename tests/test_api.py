@@ -349,6 +349,27 @@ class TestGetContext:
         assert response.status_code == 422
 
     @pytest.mark.asyncio
+    async def test_reconsolidation_scheduled_by_default(self, client, mock_context_builder):
+        mock_context_builder.build = AsyncMock(return_value=make_memory_context())
+
+        response = await client.post("/context", json={"user_id": "u1", "query": "test"})
+
+        assert response.json()["reconsolidation_scheduled"] is True
+
+    @pytest.mark.asyncio
+    async def test_reconsolidation_disabled_by_setting(
+        self, client, mock_context_builder, monkeypatch
+    ):
+        from smritikosh.config import settings
+
+        monkeypatch.setattr(settings, "reconsolidation_on_recall", False)
+        mock_context_builder.build = AsyncMock(return_value=make_memory_context())
+
+        response = await client.post("/context", json={"user_id": "u1", "query": "test"})
+
+        assert response.json()["reconsolidation_scheduled"] is False
+
+    @pytest.mark.asyncio
     async def test_builder_exception_returns_500(self, client, mock_context_builder):
         mock_context_builder.build = AsyncMock(side_effect=RuntimeError("retrieval failed"))
 
