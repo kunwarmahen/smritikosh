@@ -46,8 +46,10 @@ users afterwards.
 > load on a single local model these saturate the provider and stall subsequent
 > `/context` calls behind them (observed: ~5 min per request, client timeouts).
 > Disabling it for benchmark runs is fair — competitors' harnesses don't do
-> post-recall write-backs either — but note it in the writeup. The durable fix
-> is the A3-followup roadmap item (move reconsolidation onto the ARQ queue).
+> post-recall write-backs either — but note it in the writeup. (Since
+> 2026-07-01 the durable fix is in: with Redis configured, reconsolidation
+> runs on the ARQ taskworker instead of the API process — the flag remains
+> the simplest way to keep benchmark runs free of write-back LLM traffic.)
 > On a single-GPU local LLM also use `--concurrency 1`.
 
 ## Published numbers to compare against

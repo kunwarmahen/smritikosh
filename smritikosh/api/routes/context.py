@@ -9,10 +9,12 @@ POST /context/stream Same as above but returns Server-Sent Events so clients
                      similar events, identity) arrives, rather than waiting for
                      the full assembly.
 
-After the response is returned, a background task reconsolidates the top
-recalled event — updating its summary to incorporate the new recall context.
-This mirrors human memory reconsolidation (recalled memories are re-saved
-with new associations) without adding latency to the API response.
+After the response is returned, the top recalled event is reconsolidated —
+its summary updated to incorporate the new recall context, mirroring human
+memory reconsolidation (recalled memories are re-saved with new associations).
+The work runs on the durable ARQ queue when Redis is configured (so the LLM
+call can never stall the API process), falling back to an in-process
+BackgroundTask otherwise. Either way it adds no latency to the response.
 """
 
 import asyncio
@@ -36,6 +38,7 @@ from smritikosh.llm.usage import llm_context
 from smritikosh.db.postgres import get_session
 from smritikosh.processing.reconsolidation import ReconsolidationEngine
 from smritikosh.retrieval.context_builder import ContextBuilder, MemoryContext
+from smritikosh.tasks import enqueue
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["context"])
@@ -90,19 +93,29 @@ async def get_context(
         logger.exception("ContextBuilder failed", extra={"user_id": body.user_id})
         raise HTTPException(status_code=500, detail=f"Context retrieval failed: {exc}") from exc
 
-    # Schedule background reconsolidation for the top recalled event.
-    # The ReconsolidationEngine opens its own session — the request session
-    # may already be closed by the time the background task runs.
+    # Schedule reconsolidation for the top recalled events on the durable
+    # queue (A3-followup): the per-recall LLM call runs in the taskworker,
+    # not the API process, so a slow provider can't stall /context requests.
+    # Falls back to an in-process BackgroundTask when Redis is unavailable —
+    # the engine opens its own session either way.
     reconsolidation_scheduled = False
     if ctx.similar_events and settings.reconsolidation_on_recall:
         _app_id = resolved_app_ids[0] if resolved_app_ids else "default"
-        background_tasks.add_task(
-            reconsolidation.reconsolidate_after_recall,
-            ctx.similar_events,
-            body.query,
-            body.user_id,
-            _app_id,
+        event_ids = [
+            str(sr.event.id)
+            for sr in ctx.similar_events[: reconsolidation.max_events]
+        ]
+        job = await enqueue(
+            "reconsolidate_recalled", event_ids, body.query, body.user_id, _app_id
         )
+        if job is None:
+            background_tasks.add_task(
+                reconsolidation.reconsolidate_after_recall_by_ids,
+                event_ids,
+                body.query,
+                body.user_id,
+                _app_id,
+            )
         reconsolidation_scheduled = True
 
     return ContextResponse(

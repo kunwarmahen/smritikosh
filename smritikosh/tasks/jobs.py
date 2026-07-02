@@ -163,6 +163,32 @@ async def _re_embed_stale_events() -> dict:
     return {"success": success, "errors": errors, "total": len(stale)}
 
 
+# ── Reconsolidation after recall ────────────────────────────────────────────────
+
+
+async def _reconsolidate_recalled(
+    event_ids: list[str], query: str, user_id: str, app_id: str
+) -> dict:
+    """Reconsolidate recalled events by ID (A3-followup).
+
+    Shared by the ARQ task and the in-process fallback. Each /context call
+    that surfaces memories enqueues one of these; running it here keeps the
+    per-recall LLM call off the API process, where it can otherwise saturate
+    a slow provider and stall subsequent /context requests.
+    """
+    from smritikosh.api.deps import get_reconsolidation_engine
+
+    engine = get_reconsolidation_engine()
+    batch = await engine.reconsolidate_after_recall_by_ids(
+        event_ids, query, user_id, app_id
+    )
+    return {
+        "evaluated": batch.events_evaluated,
+        "updated": batch.events_updated,
+        "skipped": batch.events_skipped,
+    }
+
+
 # ── ARQ task wrappers ───────────────────────────────────────────────────────────
 
 
@@ -174,6 +200,13 @@ async def process_media(ctx, media_id: str) -> str:
 async def re_embed_events(ctx) -> dict:
     """ARQ task: re-embed all stale event embeddings."""
     return await _re_embed_stale_events()
+
+
+async def reconsolidate_recalled(
+    ctx, event_ids: list[str], query: str, user_id: str, app_id: str = "default"
+) -> dict:
+    """ARQ task: reconsolidate events recalled by a /context call."""
+    return await _reconsolidate_recalled(event_ids, query, user_id, app_id)
 
 
 # ── ARQ worker settings ─────────────────────────────────────────────────────────
@@ -195,7 +228,7 @@ async def _on_shutdown(ctx) -> None:
 class WorkerSettings:
     """ARQ worker entrypoint — run with: arq smritikosh.tasks.jobs.WorkerSettings"""
 
-    functions = [process_media, re_embed_events]
+    functions = [process_media, re_embed_events, reconsolidate_recalled]
     on_startup = _on_startup
     on_shutdown = _on_shutdown
     max_tries = 3                 # retry transient failures

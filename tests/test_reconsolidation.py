@@ -249,6 +249,17 @@ class TestReconsolidateEvent:
 # ── reconsolidate_after_recall ────────────────────────────────────────────────
 
 
+def _session_returning(events: list[Event]) -> tuple[AsyncMock, MagicMock]:
+    """Session mock whose .get() resolves event IDs like the real thing."""
+    by_id = {e.id: e for e in events}
+    session_mock = AsyncMock()
+    session_mock.get = AsyncMock(side_effect=lambda _model, eid: by_id.get(eid))
+    ctx_mock = MagicMock()
+    ctx_mock.__aenter__ = AsyncMock(return_value=session_mock)
+    ctx_mock.__aexit__ = AsyncMock(return_value=False)
+    return session_mock, ctx_mock
+
+
 class TestReconsolidateAfterRecall:
     def _make_search_result(self, **event_kwargs) -> SearchResult:
         event = make_event(**event_kwargs)
@@ -260,11 +271,7 @@ class TestReconsolidateAfterRecall:
         engine.max_events = 1
 
         results = [self._make_search_result(), self._make_search_result()]
-
-        session_mock = AsyncMock()
-        ctx_mock = MagicMock()
-        ctx_mock.__aenter__ = AsyncMock(return_value=session_mock)
-        ctx_mock.__aexit__ = AsyncMock(return_value=False)
+        _, ctx_mock = _session_returning([sr.event for sr in results])
 
         with patch("smritikosh.processing.reconsolidation.db_session", return_value=ctx_mock):
             batch = await engine.reconsolidate_after_recall(results, "query", "u1")
@@ -280,13 +287,10 @@ class TestReconsolidateAfterRecall:
         engine.max_events = 3
 
         sr_good = self._make_search_result(recall_count=5, importance_score=0.9)
-        sr_low_recall = self._make_search_result(recall_count=0, importance_score=0.9)
-        results = [sr_good, sr_low_recall, sr_low_recall]
-
-        session_mock = AsyncMock()
-        ctx_mock = MagicMock()
-        ctx_mock.__aenter__ = AsyncMock(return_value=session_mock)
-        ctx_mock.__aexit__ = AsyncMock(return_value=False)
+        sr_low_a = self._make_search_result(recall_count=0, importance_score=0.9)
+        sr_low_b = self._make_search_result(recall_count=0, importance_score=0.9)
+        results = [sr_good, sr_low_a, sr_low_b]
+        _, ctx_mock = _session_returning([sr.event for sr in results])
 
         with patch("smritikosh.processing.reconsolidation.db_session", return_value=ctx_mock):
             batch = await engine.reconsolidate_after_recall(results, "query", "u1")
@@ -297,14 +301,76 @@ class TestReconsolidateAfterRecall:
     @pytest.mark.asyncio
     async def test_empty_results_returns_empty_batch(self):
         engine, _, _ = make_engine()
-
-        session_mock = AsyncMock()
-        ctx_mock = MagicMock()
-        ctx_mock.__aenter__ = AsyncMock(return_value=session_mock)
-        ctx_mock.__aexit__ = AsyncMock(return_value=False)
+        _, ctx_mock = _session_returning([])
 
         with patch("smritikosh.processing.reconsolidation.db_session", return_value=ctx_mock):
             batch = await engine.reconsolidate_after_recall([], "query", "u1")
 
         assert batch.events_evaluated == 0
-        assert batch.events_updated == 0
+
+
+# ── reconsolidate_after_recall_by_ids (A3-followup: queue-safe entry point) ───
+
+
+class TestReconsolidateAfterRecallByIds:
+    @pytest.mark.asyncio
+    async def test_reconsolidates_by_id(self):
+        engine, _, _ = make_engine(
+            llm_response={"summary": "refined", "changed": True}
+        )
+        event = make_event(recall_count=5, importance_score=0.9)
+        _, ctx_mock = _session_returning([event])
+
+        with patch("smritikosh.processing.reconsolidation.db_session", return_value=ctx_mock):
+            batch = await engine.reconsolidate_after_recall_by_ids(
+                [str(event.id)], "query", "u1"
+            )
+
+        assert batch.events_evaluated == 1
+        assert batch.events_updated == 1
+        assert batch.results[0].new_summary == "refined"
+
+    @pytest.mark.asyncio
+    async def test_invalid_uuid_is_skipped_not_fatal(self):
+        engine, _, _ = make_engine(
+            llm_response={"summary": "refined", "changed": True}
+        )
+        engine.max_events = 2
+        event = make_event(recall_count=5, importance_score=0.9)
+        _, ctx_mock = _session_returning([event])
+
+        with patch("smritikosh.processing.reconsolidation.db_session", return_value=ctx_mock):
+            batch = await engine.reconsolidate_after_recall_by_ids(
+                ["not-a-uuid", str(event.id)], "query", "u1"
+            )
+
+        assert batch.events_evaluated == 2
+        assert batch.events_updated == 1
+        assert any("Invalid UUID" in r.skip_reason for r in batch.results)
+
+    @pytest.mark.asyncio
+    async def test_missing_event_is_skipped(self):
+        engine, _, _ = make_engine()
+        _, ctx_mock = _session_returning([])
+
+        with patch("smritikosh.processing.reconsolidation.db_session", return_value=ctx_mock):
+            batch = await engine.reconsolidate_after_recall_by_ids(
+                [str(uuid.uuid4())], "query", "u1"
+            )
+
+        assert batch.events_skipped == 1
+        assert "not found" in batch.results[0].skip_reason.lower()
+
+    @pytest.mark.asyncio
+    async def test_respects_max_events(self):
+        engine, llm, _ = make_engine()
+        engine.max_events = 1
+        events = [make_event(), make_event()]
+        _, ctx_mock = _session_returning(events)
+
+        with patch("smritikosh.processing.reconsolidation.db_session", return_value=ctx_mock):
+            batch = await engine.reconsolidate_after_recall_by_ids(
+                [str(e.id) for e in events], "query", "u1"
+            )
+
+        assert batch.events_evaluated == 1

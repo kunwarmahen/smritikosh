@@ -17,7 +17,7 @@ Test strategy:
 
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -368,6 +368,25 @@ class TestGetContext:
         response = await client.post("/context", json={"user_id": "u1", "query": "test"})
 
         assert response.json()["reconsolidation_scheduled"] is False
+
+    @pytest.mark.asyncio
+    async def test_reconsolidation_enqueued_on_durable_queue(
+        self, client, mock_context_builder
+    ):
+        """When Redis is available, reconsolidation goes to ARQ (A3-followup)."""
+        context = make_memory_context()
+        mock_context_builder.build = AsyncMock(return_value=context)
+        enqueue_mock = AsyncMock(return_value=object())  # a Job → queued path
+
+        with patch("smritikosh.api.routes.context.enqueue", enqueue_mock):
+            response = await client.post("/context", json={"user_id": "u1", "query": "test"})
+
+        assert response.json()["reconsolidation_scheduled"] is True
+        task_name, event_ids, query, user_id, app_id = enqueue_mock.await_args.args
+        assert task_name == "reconsolidate_recalled"
+        assert event_ids == [str(context.similar_events[0].event.id)]
+        assert query == "test"
+        assert user_id == "u1"
 
     @pytest.mark.asyncio
     async def test_builder_exception_returns_500(self, client, mock_context_builder):

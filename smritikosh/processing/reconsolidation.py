@@ -21,6 +21,7 @@ update.  It runs as a background task so the API response is never blocked.
 """
 
 import logging
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
@@ -127,23 +128,45 @@ class ReconsolidationEngine:
         app_id: str = "default",
     ) -> BatchReconsolidationResult:
         """
-        Reconsolidate the top recalled events in the background.
+        Reconsolidate the top recalled events (SearchResult convenience form).
 
-        Opens its own DB session (independent of the request session)
-        so this method is safe to run as a FastAPI BackgroundTask.
+        Thin adapter over :meth:`reconsolidate_after_recall_by_ids` — extracts
+        the event IDs so the actual work is process-boundary-safe.
+        """
+        event_ids = [str(sr.event.id) for sr in search_results]
+        return await self.reconsolidate_after_recall_by_ids(
+            event_ids, query, user_id, app_id
+        )
 
-        Only the top `max_events` results are processed to keep latency
-        and LLM cost proportional.
+    async def reconsolidate_after_recall_by_ids(
+        self,
+        event_ids: list[str],
+        query: str,
+        user_id: str,
+        app_id: str = "default",
+    ) -> BatchReconsolidationResult:
+        """
+        Reconsolidate the top recalled events, addressed by event ID.
+
+        IDs (not ORM objects) cross the ARQ queue boundary, so this is the
+        entry point for the durable-queue task *and* the in-process fallback.
+        Opens its own DB session and re-reads each event, so it is safe to run
+        long after the originating request session has closed.
+
+        Only the first `max_events` IDs are processed to keep latency and
+        LLM cost proportional.
         """
         batch = BatchReconsolidationResult(user_id=user_id)
 
-        candidates = search_results[: self.max_events]
+        candidates = event_ids[: self.max_events]
         batch.events_evaluated = len(candidates)
 
         try:
             async with db_session() as session:
-                for sr in candidates:
-                    result = await self._reconsolidate_one(session, sr.event, query)
+                for event_id in candidates:
+                    result = await self._load_and_reconsolidate(
+                        session, event_id, query, user_id
+                    )
                     batch.results.append(result)
                     if result.updated:
                         batch.events_updated += 1
@@ -194,6 +217,29 @@ class ReconsolidationEngine:
 
         return batch
 
+    async def _load_and_reconsolidate(
+        self,
+        session: AsyncSession,
+        event_id: str,
+        query: str,
+        user_id: str,
+    ) -> ReconsolidationResult:
+        """Resolve one event ID to a row and reconsolidate it (skip on bad/missing)."""
+        try:
+            eid = uuid.UUID(str(event_id))
+        except ValueError:
+            return ReconsolidationResult(
+                event_id=str(event_id), user_id=user_id,
+                skipped=True, skip_reason="Invalid UUID format.",
+            )
+        event = await session.get(Event, eid)
+        if event is None:
+            return ReconsolidationResult(
+                event_id=str(event_id), user_id=user_id,
+                skipped=True, skip_reason="Event not found.",
+            )
+        return await self._reconsolidate_one(session, event, query)
+
     async def reconsolidate_event(
         self,
         event_id_str: str,
@@ -208,10 +254,8 @@ class ReconsolidationEngine:
         Set force=True to bypass gate checks (recall_count, importance, cooldown)
         for testing.
         """
-        import uuid as _uuid_mod
-
         try:
-            eid = _uuid_mod.UUID(event_id_str)
+            eid = uuid.UUID(event_id_str)
         except ValueError:
             return ReconsolidationResult(
                 event_id=event_id_str, user_id=user_id,
