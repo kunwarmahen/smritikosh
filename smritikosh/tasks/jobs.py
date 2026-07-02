@@ -163,6 +163,52 @@ async def _re_embed_stale_events() -> dict:
     return {"success": success, "errors": errors, "total": len(stale)}
 
 
+# ── Connector-token key rotation (C3) ───────────────────────────────────────────
+
+
+async def _rotate_connector_tokens() -> dict:
+    """Re-encrypt every stored connector token under the current primary key.
+
+    Run after prepending a new secret to CONNECTOR_ENCRYPTION_KEYS. Idempotent:
+    tokens already under the primary key are rewritten harmlessly; tokens no
+    configured key can decrypt are counted as failed and left untouched (the
+    user must re-authorise the connector).
+    """
+    from sqlalchemy import select
+
+    from smritikosh.connectors.oauth import rotate_ciphertext
+    from smritikosh.db.models import UserConnector
+    from smritikosh.db.postgres import db_session
+
+    rotated = 0
+    failed = 0
+    skipped = 0
+    async with db_session() as pg:
+        rows = (await pg.execute(select(UserConnector))).scalars().all()
+        for connector in rows:
+            if not connector.encrypted_tokens:
+                skipped += 1
+                continue
+            try:
+                connector.encrypted_tokens = rotate_ciphertext(connector.encrypted_tokens)
+                rotated += 1
+            except Exception:
+                logger.warning(
+                    "Connector token rotation failed — no configured key decrypts it "
+                    "(user must re-authorise): user=%s provider=%s",
+                    connector.user_id,
+                    connector.provider,
+                )
+                failed += 1
+        await pg.commit()
+
+    logger.info(
+        "Connector key rotation complete: rotated=%d failed=%d skipped=%d",
+        rotated, failed, skipped,
+    )
+    return {"rotated": rotated, "failed": failed, "skipped": skipped, "total": len(rows)}
+
+
 # ── Reconsolidation after recall ────────────────────────────────────────────────
 
 
@@ -209,6 +255,11 @@ async def reconsolidate_recalled(
     return await _reconsolidate_recalled(event_ids, query, user_id, app_id)
 
 
+async def rotate_connector_tokens(ctx) -> dict:
+    """ARQ task: re-encrypt all connector tokens under the primary key (C3)."""
+    return await _rotate_connector_tokens()
+
+
 # ── ARQ worker settings ─────────────────────────────────────────────────────────
 
 
@@ -228,7 +279,12 @@ async def _on_shutdown(ctx) -> None:
 class WorkerSettings:
     """ARQ worker entrypoint — run with: arq smritikosh.tasks.jobs.WorkerSettings"""
 
-    functions = [process_media, re_embed_events, reconsolidate_recalled]
+    functions = [
+        process_media,
+        re_embed_events,
+        reconsolidate_recalled,
+        rotate_connector_tokens,
+    ]
     on_startup = _on_startup
     on_shutdown = _on_shutdown
     max_tries = 3                 # retry transient failures

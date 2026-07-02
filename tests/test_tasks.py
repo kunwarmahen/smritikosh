@@ -120,7 +120,12 @@ class TestReconsolidateRecalledHelper:
 class TestWorkerSettings:
     def test_worker_registers_all_tasks(self):
         names = {f.__name__ for f in jobs.WorkerSettings.functions}
-        assert names == {"process_media", "re_embed_events", "reconsolidate_recalled"}
+        assert names == {
+            "process_media",
+            "re_embed_events",
+            "reconsolidate_recalled",
+            "rotate_connector_tokens",
+        }
 
     def test_worker_has_retry_and_timeout(self):
         assert jobs.WorkerSettings.max_tries >= 1

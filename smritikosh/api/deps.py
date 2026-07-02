@@ -81,6 +81,13 @@ def get_procedural() -> ProceduralMemory:
 
 
 @lru_cache(maxsize=1)
+def get_consent_service():
+    """Cross-app memory consent layer (S4)."""
+    from smritikosh.memory.consent import ConsentService
+
+    return ConsentService(semantic=get_semantic(), audit=get_audit_logger())
+
+
 def get_context_builder() -> ContextBuilder:
     return ContextBuilder(
         llm=get_llm(),
@@ -91,6 +98,7 @@ def get_context_builder() -> ContextBuilder:
         include_chains=True,
         procedural=get_procedural(),
         audit=get_audit_logger(),
+        consent=get_consent_service(),
     )
 
 

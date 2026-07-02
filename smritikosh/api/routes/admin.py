@@ -668,3 +668,32 @@ async def delete_quota(
             extra={"user_id": user_id, "app_id": app_id, "by": _admin["sub"]},
         )
     return {"user_id": user_id, "app_id": app_id, "deleted": deleted}
+
+
+# ── Connector encryption-key rotation (C3) ─────────────────────────────────────
+
+
+@router.post("/rotate-connector-keys")
+async def rotate_connector_keys(
+    _admin: Annotated[dict, Depends(require_admin)],
+) -> dict:
+    """
+    Re-encrypt every stored connector token under the current primary key.
+
+    Rotation procedure:
+      1. Prepend the new secret: CONNECTOR_ENCRYPTION_KEYS="new,old" (restart)
+      2. Call this endpoint — tokens are re-encrypted under the new key
+      3. Drop the old secret: CONNECTOR_ENCRYPTION_KEYS="new" (restart)
+
+    Runs on the durable queue when Redis is configured; inline otherwise.
+    Tokens that no configured key can decrypt are left untouched and counted
+    as failed — those users must re-authorise their connector.
+    """
+    from smritikosh.tasks import enqueue
+    from smritikosh.tasks.jobs import _rotate_connector_tokens
+
+    job = await enqueue("rotate_connector_tokens")
+    if job is not None:
+        return {"queued": True, "job_id": job.job_id}
+    result = await _rotate_connector_tokens()
+    return {"queued": False, **result}

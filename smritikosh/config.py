@@ -94,6 +94,25 @@ class Settings(BaseSettings):
     #   python -c "import secrets; print(secrets.token_hex(32))"
     connector_encryption_key: str | None = None
 
+    # Rotatable connector-token encryption (C3). Comma-separated list of
+    # secrets, newest FIRST: the first key encrypts, every key decrypts
+    # (MultiFernet). Rotation procedure:
+    #   1. prepend the new secret:  CONNECTOR_ENCRYPTION_KEYS="new,old"
+    #   2. POST /admin/rotate-connector-keys  (re-encrypts stored tokens)
+    #   3. drop the old secret:     CONNECTOR_ENCRYPTION_KEYS="new"
+    # When unset, falls back to CONNECTOR_ENCRYPTION_KEY, then JWT_SECRET.
+    connector_encryption_keys: str = ""
+
+    @property
+    def connector_key_list(self) -> list[str]:
+        """Ordered encryption secrets: first encrypts, all decrypt."""
+        keys = [k.strip() for k in self.connector_encryption_keys.split(",") if k.strip()]
+        if keys:
+            return keys
+        if self.connector_encryption_key:
+            return [self.connector_encryption_key]
+        return [self.jwt_secret]
+
     # Set BOOTSTRAP_ADMIN=1 temporarily to allow the first admin registration
     # without a token. Remove it immediately after creating the first account.
     bootstrap_admin: bool = False
@@ -271,6 +290,15 @@ def security_warnings(s: "Settings | None" = None) -> list[str]:
             f"CONNECTOR_ENCRYPTION_KEY is too short ({len(s.connector_encryption_key)} chars); "
             f"use at least {_MIN_SECRET_LEN} characters."
         )
+
+    for i, key in enumerate(
+        k.strip() for k in s.connector_encryption_keys.split(",") if k.strip()
+    ):
+        if len(key) < _MIN_SECRET_LEN:
+            problems.append(
+                f"CONNECTOR_ENCRYPTION_KEYS entry #{i + 1} is too short ({len(key)} chars); "
+                f"use at least {_MIN_SECRET_LEN} characters."
+            )
 
     return problems
 

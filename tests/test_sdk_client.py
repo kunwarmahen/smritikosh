@@ -207,6 +207,34 @@ class TestEncode:
 
 class TestBuildContext:
     @respx.mock
+    async def test_sends_app_ids_list(self, client):
+        """/context and /memory/search take app_ids (plural) — a singular
+        app_id is silently ignored by the API and the call falls back to the
+        token's app list (regression: found during S4 e2e testing)."""
+        route = respx.post(f"{BASE_URL}/context").mock(
+            return_value=Response(200, json=CONTEXT_RESPONSE)
+        )
+        await client.build_context(user_id="alice", query="q", app_id="myapp")
+        import json
+        payload = json.loads(route.calls[0].request.content)
+        assert payload["app_ids"] == ["myapp"]
+        assert "app_id" not in payload
+
+    @respx.mock
+    async def test_search_sends_app_ids_list(self, client):
+        route = respx.post(f"{BASE_URL}/memory/search").mock(
+            return_value=Response(200, json={
+                "user_id": "alice", "query": "q", "results": [],
+                "total": 0, "embedding_failed": False,
+            })
+        )
+        await client.search(user_id="alice", query="q")
+        import json
+        payload = json.loads(route.calls[0].request.content)
+        assert payload["app_ids"] == ["default"]
+        assert "app_id" not in payload
+
+    @respx.mock
     async def test_returns_memory_context(self, client):
         respx.post(f"{BASE_URL}/context").mock(
             return_value=Response(200, json=CONTEXT_RESPONSE)

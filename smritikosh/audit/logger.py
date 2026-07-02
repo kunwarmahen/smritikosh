@@ -53,6 +53,9 @@ class EventType:
     SEARCH_PERFORMED       = "search.performed"
     EMBEDDING_REEMBED_QUEUED   = "embedding.reembed_queued"
     EMBEDDING_REEMBED_COMPLETE = "embedding.reembed_complete"
+    CONSENT_GRANTED        = "consent.granted"          # cross-app grant created/reactivated (S4)
+    CONSENT_REVOKED        = "consent.revoked"          # cross-app grant revoked (S4)
+    CONSENT_CROSS_APP_READ = "consent.cross_app_read"   # facts read across apps under a grant (S4)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

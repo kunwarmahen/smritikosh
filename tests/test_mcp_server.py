@@ -198,7 +198,7 @@ async def test_recall(mcp_state):
     assert result["results"][0]["hybrid_score"] == 0.82
 
     payload = json.loads(route.calls.last.request.content)
-    assert payload == {"user_id": "alice", "query": "editor", "app_id": "default", "limit": 5}
+    assert payload == {"user_id": "alice", "query": "editor", "app_ids": ["default"], "limit": 5}
 
 
 # ── get_context ───────────────────────────────────────────────────────────────

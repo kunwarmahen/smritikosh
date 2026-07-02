@@ -217,6 +217,7 @@ class ContextBuilder:
         procedural: ProceduralMemory | None = None,
         top_k_procedures: int = 5,
         audit=None,   # AuditLogger | None
+        consent=None,  # ConsentService | None — cross-app fact sharing (S4)
     ) -> None:
         self.llm = llm
         self.episodic = episodic
@@ -232,6 +233,7 @@ class ContextBuilder:
         self.procedural = procedural
         self.top_k_procedures = top_k_procedures
         self.audit = audit
+        self.consent = consent
 
     # ── Primary entry point ────────────────────────────────────────────────
 
@@ -321,6 +323,32 @@ class ContextBuilder:
         user_profile   = _safe_result(profile, None, "get_user_profile", user_id)
         recent_events  = _safe_result(recent,  [], "get_recent", user_id)
         procedures     = _safe_result(procedures_raw, [], "search_by_query", user_id)
+
+        # ── 4b. Merge facts shared from other apps under consent (S4) ──────
+        # Own-app facts win on (category, key) collisions; shared facts carry
+        # provenance in source_meta["shared_from_app"] and each source read
+        # is audited by the ConsentService.
+        if self.consent is not None:
+            try:
+                shared_facts = await self.consent.consented_facts(
+                    pg_session, neo_session,
+                    user_id=user_id,
+                    target_app_id=neo4j_app_id,
+                    min_confidence=self.min_profile_confidence,
+                )
+            except Exception:
+                logger.exception(
+                    "Consented-fact merge failed — continuing without shared facts",
+                    extra={"user_id": user_id, "app_id": neo4j_app_id},
+                )
+                shared_facts = []
+            if shared_facts:
+                if user_profile is None:
+                    user_profile = UserProfile(user_id=user_id, app_id=neo4j_app_id)
+                own = {(f.category, f.key) for f in user_profile.facts}
+                user_profile.facts.extend(
+                    f for f in shared_facts if (f.category, f.key) not in own
+                )
 
         # Track recall so the frequency signal stays current
         if similar_events:

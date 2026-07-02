@@ -196,7 +196,7 @@ class SmritikoshClient:
         payload: dict = {
             "user_id": user_id,
             "query": query,
-            "app_id": app_id or self._app_id,
+            "app_ids": [app_id or self._app_id],
         }
         if from_date is not None:
             payload["from_date"] = from_date.isoformat()
@@ -604,7 +604,7 @@ class SmritikoshClient:
         payload: dict = {
             "user_id": user_id,
             "query": query,
-            "app_id": app_id or self._app_id,
+            "app_ids": [app_id or self._app_id],
             "limit": limit,
         }
         if from_date is not None:

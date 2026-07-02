@@ -16,7 +16,7 @@ from urllib.parse import urlencode
 
 import httpx
 import jwt
-from cryptography.fernet import Fernet, InvalidToken
+from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 
 from smritikosh.config import settings
 
@@ -36,54 +36,63 @@ DEFAULT_SCOPES = [
 # ── Fernet token encryption ────────────────────────────────────────────────────
 
 
-def _get_fernet_key() -> bytes:
-    """Derive the Fernet key used to encrypt connector OAuth tokens at rest.
-
-    Uses settings.connector_encryption_key when set, so the connector-token key
-    can be rotated independently of the JWT secret. Falls back to jwt_secret for
-    backward compatibility with deployments that predate the separate key —
-    their already-stored tokens stay decryptable.
+def _derive_fernet_key(secret: str) -> bytes:
+    """Derive one Fernet key from a secret string.
 
     SHA-256 produces 32 raw bytes; Fernet requires those bytes as URL-safe base64,
     which is what base64.urlsafe_b64encode produces (44 chars from 32 bytes).
-
-    NOTE: switching a deployment from the jwt_secret-derived key to a dedicated
-    connector_encryption_key makes previously stored tokens undecryptable until
-    the user re-authorises. Hot key rotation is tracked as item C3 (MultiFernet).
     """
-    secret = settings.connector_encryption_key or settings.jwt_secret
     key_bytes = hashlib.sha256(secret.encode("utf-8")).digest()
     return base64.urlsafe_b64encode(key_bytes)
 
 
+def _get_multifernet() -> MultiFernet:
+    """Build the MultiFernet for connector-token encryption (C3, rotatable).
+
+    Keys come from settings.connector_key_list: CONNECTOR_ENCRYPTION_KEYS
+    (comma-separated, newest first) → CONNECTOR_ENCRYPTION_KEY → JWT_SECRET.
+    The FIRST key encrypts; every key decrypts, so prepending a new key never
+    breaks previously stored tokens. Ciphertexts need no key-version column —
+    MultiFernet identifies the right key by trying them in order.
+    """
+    return MultiFernet([Fernet(_derive_fernet_key(s)) for s in settings.connector_key_list])
+
+
 def encrypt_tokens(tokens: dict[str, Any]) -> str:
     """
-    Encrypt a token dict to a Fernet-protected string.
+    Encrypt a token dict to a Fernet-protected string (under the primary key).
 
     tokens dict should contain: access_token, refresh_token, expires_in, token_type, etc.
     Returns a URL-safe Fernet string.
     """
-    key = _get_fernet_key()
-    fernet = Fernet(key)
     payload = json.dumps(tokens, default=str).encode("utf-8")
-    encrypted = fernet.encrypt(payload)
-    return encrypted.decode("utf-8")
+    return _get_multifernet().encrypt(payload).decode("utf-8")
 
 
 def decrypt_tokens(encrypted: str) -> dict[str, Any]:
     """
     Decrypt a Fernet-protected string back to a token dict.
 
-    Raises InvalidToken if decryption fails (e.g. wrong key, corrupted data).
+    Tries every configured key (newest first), so tokens encrypted under a
+    previous key remain readable during rotation. Raises InvalidToken when no
+    configured key matches (or the data is corrupted).
     """
-    key = _get_fernet_key()
-    fernet = Fernet(key)
     try:
-        payload = fernet.decrypt(encrypted.encode("utf-8"))
+        payload = _get_multifernet().decrypt(encrypted.encode("utf-8"))
         return json.loads(payload.decode("utf-8"))
     except InvalidToken:
-        logger.error("Token decryption failed (wrong key or corrupted data)")
+        logger.error("Token decryption failed (no configured key matches, or corrupted data)")
         raise
+
+
+def rotate_ciphertext(encrypted: str) -> str:
+    """
+    Re-encrypt a stored ciphertext under the current primary key.
+
+    Decrypts with whichever configured key matches, re-encrypts with the first.
+    Raises InvalidToken when no configured key can decrypt the value.
+    """
+    return _get_multifernet().rotate(encrypted.encode("utf-8")).decode("utf-8")
 
 
 # ── OAuth state JWT ────────────────────────────────────────────────────────────

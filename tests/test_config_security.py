@@ -96,25 +96,32 @@ class TestConnectorEncryptionKey:
     def test_falls_back_to_jwt_secret_when_unset(self, monkeypatch):
         from smritikosh.connectors import oauth
 
+        monkeypatch.setattr(oauth.settings, "connector_encryption_keys", "")
         monkeypatch.setattr(oauth.settings, "connector_encryption_key", None)
         monkeypatch.setattr(oauth.settings, "jwt_secret", "jwt-derived-secret-value")
-        key_from_jwt = oauth._get_fernet_key()
 
-        # Same jwt_secret, still no dedicated key → identical key.
-        assert oauth._get_fernet_key() == key_from_jwt
+        assert oauth.settings.connector_key_list == ["jwt-derived-secret-value"]
 
     def test_dedicated_key_overrides_jwt_secret(self, monkeypatch):
         from smritikosh.connectors import oauth
 
+        monkeypatch.setattr(oauth.settings, "connector_encryption_keys", "")
         monkeypatch.setattr(oauth.settings, "jwt_secret", "jwt-derived-secret-value")
-        monkeypatch.setattr(oauth.settings, "connector_encryption_key", None)
-        key_jwt = oauth._get_fernet_key()
-
         monkeypatch.setattr(oauth.settings, "connector_encryption_key", "a-dedicated-connector-key")
-        key_dedicated = oauth._get_fernet_key()
 
-        # A dedicated key must produce a different Fernet key than the jwt fallback.
-        assert key_dedicated != key_jwt
+        assert oauth.settings.connector_key_list == ["a-dedicated-connector-key"]
+        # Distinct secrets derive distinct Fernet keys.
+        assert oauth._derive_fernet_key("a-dedicated-connector-key") != oauth._derive_fernet_key(
+            "jwt-derived-secret-value"
+        )
+
+    def test_keys_list_takes_priority_and_preserves_order(self, monkeypatch):
+        from smritikosh.connectors import oauth
+
+        monkeypatch.setattr(oauth.settings, "connector_encryption_keys", " new-key , old-key ")
+        monkeypatch.setattr(oauth.settings, "connector_encryption_key", "ignored-key")
+
+        assert oauth.settings.connector_key_list == ["new-key", "old-key"]
 
     def test_encrypt_decrypt_round_trip_with_dedicated_key(self, monkeypatch):
         from smritikosh.connectors import oauth

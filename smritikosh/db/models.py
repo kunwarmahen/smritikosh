@@ -832,6 +832,60 @@ class UserConnector(Base):
         )
 
 
+class MemoryConsent(Base):
+    """
+    Cross-app memory read grant (item S4).
+
+    A user grants ``target_app_id`` read access to facts learned in
+    ``source_app_id``, optionally restricted to specific fact categories
+    (empty ``categories`` = all categories). Revocation sets ``revoked_at``
+    rather than deleting the row, so the grant history is auditable;
+    re-granting reactivates the same row. Every cross-app read performed
+    under a grant is written to the MongoDB audit trail (B2).
+
+    One row per (user, source app, target app) — grants are directional:
+    A→B and B→A are independent consents.
+    """
+
+    __tablename__ = "memory_consents"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "source_app_id", "target_app_id", name="uq_memory_consent"
+        ),
+        Index("ix_memory_consents_user_target", "user_id", "target_app_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_app_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    target_app_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    # FactCategory values the grant covers; empty list = all categories.
+    categories: Mapped[list[str]] = mapped_column(
+        PG_ARRAY(String(64)), nullable=False, default=list
+    )
+    granted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    @property
+    def is_active(self) -> bool:
+        return self.revoked_at is None
+
+    def __repr__(self) -> str:
+        state = "active" if self.is_active else "revoked"
+        return (
+            f"<MemoryConsent user={self.user_id!r} "
+            f"{self.source_app_id!r}→{self.target_app_id!r} {state}>"
+        )
+
+
 class LlmUsage(Base):
     """
     One row per billed LLM API call — token/cost accounting (item D1).
