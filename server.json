@@ -1,0 +1,58 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+  "name": "io.github.kunwarmahen/smritikosh",
+  "description": "Store, recall, and inject persistent user memory from a self-hosted Smritikosh memory server.",
+  "repository": {
+    "url": "https://github.com/kunwarmahen/smritikosh",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "smritikosh",
+      "version": "0.1.0",
+      "runtimeHint": "uvx",
+      "runtimeArguments": [
+        {
+          "type": "named",
+          "name": "--from",
+          "value": "smritikosh[mcp]",
+          "description": "install the package with the MCP extra"
+        },
+        {
+          "type": "positional",
+          "value": "smritikosh-mcp",
+          "valueHint": "smritikosh-mcp"
+        }
+      ],
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "SMRITIKOSH_API_KEY",
+          "description": "API key (sk-smriti-…), sent as a Bearer token; store_memory needs the write scope",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "SMRITIKOSH_USER_ID",
+          "description": "Default user whose memory the tools act on",
+          "isRequired": true
+        },
+        {
+          "name": "SMRITIKOSH_BASE_URL",
+          "description": "URL of the running Smritikosh server",
+          "default": "http://localhost:8080"
+        },
+        {
+          "name": "SMRITIKOSH_APP_ID",
+          "description": "App namespace; must be in the key's app_ids",
+          "default": "default"
+        }
+      ]
+    }
+  ]
+}

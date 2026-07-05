@@ -1,0 +1,409 @@
+# Smritikosh alert rules — Grafana unified-alerting file provisioning.
+#
+# Covers the "Grafana alert rules" remainder of items B1/G1: background-job
+# staleness and failures, LLM error ratio and cost burn, task-queue fallback,
+# and API 5xx/latency. Series definitions live in smritikosh/metrics.py.
+#
+# Install: copy (or bind-mount) into the Grafana container at
+#   /etc/grafana/provisioning/alerting/smritikosh_alerts.yaml
+# and provision your Prometheus datasource with `uid: prometheus`, or replace
+# every `datasourceUid: prometheus` below with your datasource's UID.
+# See grafana/README.md.
+#
+# Staleness thresholds assume the production default crons in
+# smritikosh/config.py (consolidation hourly, pruning daily, clustering 6 h,
+# belief mining 12 h, fact decay weekly) at ~2× the interval plus slack.
+# If you override SCHEDULER_*_CRON, adjust the evaluator params to match.
+
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: smritikosh-jobs
+    folder: Smritikosh
+    interval: 5m
+    rules:
+      - uid: smriti-job-stale-consolidation
+        title: Consolidation job stale
+        condition: C
+        for: 10m
+        noDataState: OK        # metric absent until the first successful cycle
+        execErrState: Error
+        labels: { severity: warning, component: scheduler }
+        annotations:
+          summary: "No successful consolidation cycle for > 2.5 h (default cron: hourly)."
+          description: >-
+            time() - smritikosh_job_last_success_timestamp_seconds{job="consolidation"}
+            exceeded 9000s. The scheduler leader may be down, deadlocked, or the
+            job is failing — check smritikosh_job_runs_total{outcome="error"}.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              expr: time() - smritikosh_job_last_success_timestamp_seconds{job="consolidation"}
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [9000] }
+
+      - uid: smriti-job-stale-pruning
+        title: Pruning job stale
+        condition: C
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels: { severity: warning, component: scheduler }
+        annotations:
+          summary: "No successful pruning cycle for > 50 h (default cron: daily 02:00 UTC)."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              expr: time() - smritikosh_job_last_success_timestamp_seconds{job="pruning"}
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [180000] }
+
+      - uid: smriti-job-stale-clustering
+        title: Clustering job stale
+        condition: C
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels: { severity: warning, component: scheduler }
+        annotations:
+          summary: "No successful clustering cycle for > 13 h (default cron: every 6 h)."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              expr: time() - smritikosh_job_last_success_timestamp_seconds{job="clustering"}
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [46800] }
+
+      - uid: smriti-job-stale-belief-mining
+        title: Belief-mining job stale
+        condition: C
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels: { severity: warning, component: scheduler }
+        annotations:
+          summary: "No successful belief-mining cycle for > 25 h (default cron: every 12 h)."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              expr: time() - smritikosh_job_last_success_timestamp_seconds{job="belief_mining"}
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [90000] }
+
+      - uid: smriti-job-stale-fact-decay
+        title: Fact-decay job stale
+        condition: C
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels: { severity: warning, component: scheduler }
+        annotations:
+          summary: "No successful fact-decay cycle for > 15 days (default cron: weekly, Sun 03:00 UTC)."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              expr: time() - smritikosh_job_last_success_timestamp_seconds{job="fact_decay"}
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [1296000] }
+
+      - uid: smriti-job-errors
+        title: Background job failing
+        condition: C
+        for: 0m
+        noDataState: OK
+        execErrState: Error
+        labels: { severity: critical, component: scheduler }
+        annotations:
+          summary: A background job cycle raised in the last hour ({{ $labels.job }}).
+          description: >-
+            rate(smritikosh_job_runs_total{outcome="error"}[1h]) > 0. Whole
+            cycles are failing, not just individual users — memory maintenance
+            (consolidation/pruning/clustering/belief mining/fact decay) is not
+            running for anyone.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 3600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              expr: sum by (job) (rate(smritikosh_job_runs_total{outcome="error"}[1h]))
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+
+      - uid: smriti-job-user-errors
+        title: Per-user job errors being swallowed
+        condition: C
+        for: 0m
+        noDataState: OK
+        execErrState: Error
+        labels: { severity: warning, component: scheduler }
+        annotations:
+          summary: Per-user failures inside {{ $labels.job }} in the last hour.
+          description: >-
+            rate(smritikosh_job_user_errors_total[1h]) > 0. The cycle reports
+            success but skipped users — memory quality is silently degrading
+            for part of the tenant base (item B1).
+        data:
+          - refId: A
+            relativeTimeRange: { from: 3600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              expr: sum by (job) (rate(smritikosh_job_user_errors_total[1h]))
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+
+  - orgId: 1
+    name: smritikosh-llm
+    folder: Smritikosh
+    interval: 1m
+    rules:
+      - uid: smriti-llm-error-ratio
+        title: LLM error ratio high
+        condition: C
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        labels: { severity: critical, component: llm }
+        annotations:
+          summary: ">20% of LLM calls failed over 15 min (all retries count)."
+          description: >-
+            Provider outage, rate limiting, or bad credentials. Encoding,
+            retrieval context building, and background cognition all degrade
+            together when this fires.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              expr: >-
+                sum(rate(smritikosh_llm_calls_total{outcome="error"}[15m]))
+                /
+                sum(rate(smritikosh_llm_calls_total[15m]))
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0.2] }
+
+      - uid: smriti-llm-cost-burn
+        title: LLM spend burning fast
+        condition: C
+        for: 0m
+        noDataState: OK
+        execErrState: Error
+        labels: { severity: warning, component: llm }
+        annotations:
+          summary: Estimated LLM spend exceeded $5 in the last hour.
+          description: >-
+            sum(increase(smritikosh_llm_cost_usd_total[1h])) > 5 (litellm
+            pricing table; local models cost 0). Tune the threshold to your
+            budget — this default suits a small deployment, not a benchmark run.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 3600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              expr: sum(increase(smritikosh_llm_cost_usd_total[1h]))
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [5] }
+
+      - uid: smriti-tasks-inline-fallback
+        title: Task queue falling back to inline execution
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels: { severity: warning, component: tasks }
+        annotations:
+          summary: Background tasks are running in-process instead of on the ARQ queue.
+          description: >-
+            rate(smritikosh_tasks_total{path="inline"}[15m]) > 0. Expected only
+            when Redis is deliberately unset (single-process dev). In a
+            deployment with a taskworker this means Redis is down or
+            misconfigured, and LLM write-backs are competing with request
+            handling in the API process (item A3).
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              expr: sum(rate(smritikosh_tasks_total{path="inline"}[15m]))
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+
+  - orgId: 1
+    name: smritikosh-api
+    folder: Smritikosh
+    interval: 1m
+    rules:
+      - uid: smriti-api-5xx-ratio
+        title: API 5xx ratio high
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels: { severity: critical, component: api }
+        annotations:
+          summary: ">5% of API requests returned 5xx over 5 min."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              expr: >-
+                sum(rate(http_requests_total{status=~"5.."}[5m]))
+                /
+                sum(rate(http_requests_total[5m]))
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0.05] }
+
+      - uid: smriti-api-latency-p95
+        title: API p95 latency high
+        condition: C
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels: { severity: warning, component: api }
+        annotations:
+          summary: Overall p95 request latency above 5 s for 10 min.
+          description: >-
+            /context and /memory/event are LLM-bound, so tune per deployment;
+            a sustained breach usually means provider slowness, pool
+            exhaustion (see /health pool sub-check), or inline task fallback.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              expr: >-
+                histogram_quantile(0.95, sum by (le)
+                (rate(http_request_duration_seconds_bucket[10m])))
+          - refId: C
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              datasource: { type: __expr__, uid: __expr__ }
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [5] }

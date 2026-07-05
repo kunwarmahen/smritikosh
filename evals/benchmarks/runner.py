@@ -15,6 +15,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from smritikosh.config import settings as default_settings
 from smritikosh.llm.adapter import LLMAdapter
 from smritikosh.sdk.client import SmritikoshClient
 
@@ -32,6 +33,33 @@ from evals.benchmarks.datasets import DATA_DIR
 logger = logging.getLogger(__name__)
 
 
+def llm_for(spec: str) -> LLMAdapter:
+    """
+    Build an LLMAdapter from a "provider:model" spec (e.g. "openai:gpt-4o",
+    "claude:claude-sonnet-4-6", "ollama:gemma4:e4b"), independent of the
+    server's .env LLM — publishable runs need a GPT-4o-class answer/judge
+    even when the product under test runs on a local model.
+
+    API keys come from the provider's standard env var (OPENAI_API_KEY,
+    ANTHROPIC_API_KEY, GEMINI_API_KEY). The fallback chain is disabled so
+    every reported score is produced by exactly the named model.
+    """
+    provider, _, model = spec.partition(":")
+    if not provider or not model:
+        raise ValueError(f"model spec must be 'provider:model', got {spec!r}")
+    cfg = default_settings.model_copy(
+        update={
+            "llm_provider": provider,
+            "llm_model": model,
+            "llm_api_key": None,
+            "llm_base_url": None,
+            "llm_fallback_provider": None,
+            "llm_fallback_model": None,
+        }
+    )
+    return LLMAdapter(cfg)
+
+
 @dataclass
 class BenchConfig:
     benchmark: str  # "locomo" | "longmemeval"
@@ -40,6 +68,7 @@ class BenchConfig:
     app_id: str = ""
     chunk_turns: int = 1
     qa_concurrency: int = 4
+    ingest_concurrency: int = 1  # users ingested in parallel (per-user order kept)
     timeout_s: float = 300.0  # /context and encode are LLM-bound server-side
     data_dir: Path = DATA_DIR
 
@@ -80,6 +109,7 @@ class BenchReport:
     ingest_s: float = 0.0
     qa_s: float = 0.0
     answer_model: str = ""
+    judge_model: str = ""
 
     @property
     def scored(self) -> list[QAResult]:
@@ -120,6 +150,7 @@ class BenchReport:
         return {
             "benchmark": self.benchmark,
             "answer_model": self.answer_model,
+            "judge_model": self.judge_model,
             "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             "questions": len(self.results),
             "errors": sum(1 for r in self.results if r.error),
@@ -138,30 +169,46 @@ async def run_benchmark(
     config: BenchConfig,
     *,
     llm: LLMAdapter | None = None,
+    judge_llm: LLMAdapter | None = None,
     skip_ingest: bool = False,
     cleanup: bool = False,
     progress: bool = True,
 ) -> BenchReport:
     llm = llm or LLMAdapter()
+    judge_llm = judge_llm or llm
     report = BenchReport(benchmark=config.benchmark)
     report.answer_model = getattr(llm, "_chat_model", "unknown")
+    report.judge_model = getattr(judge_llm, "_chat_model", "unknown")
     state = config.state()
 
     async with config.make_client() as client:
-        # ── Ingest (sequential: encode is already LLM-bound server-side) ─────
+        # ── Ingest ────────────────────────────────────────────────────────────
+        # Parallel across users only — turn order within a user is part of the
+        # method (temporal questions). Keep ingest_concurrency=1 for a local
+        # single-GPU LLM; raise it against cloud providers, where sequential
+        # ingestion of a full benchmark takes days.
         if not skip_ingest:
             started = time.monotonic()
-            for i, user in enumerate(users, 1):
-                stored = await ingest_user(
-                    client, user, state, chunk_turns=config.chunk_turns
-                )
-                report.ingested_events += stored
+            ingest_semaphore = asyncio.Semaphore(max(1, config.ingest_concurrency))
+            ingested_users = 0
+
+            async def ingest_one(user: BenchUser) -> int:
+                nonlocal ingested_users
+                async with ingest_semaphore:
+                    stored = await ingest_user(
+                        client, user, state, chunk_turns=config.chunk_turns
+                    )
+                ingested_users += 1
                 if progress and stored:
                     print(
                         f"  ingested {user.user_id} "
-                        f"({stored} events, {i}/{len(users)} users)",
+                        f"({stored} events, {ingested_users}/{len(users)} users)",
                         flush=True,
                     )
+                return stored
+
+            stored_counts = await asyncio.gather(*(ingest_one(u) for u in users))
+            report.ingested_events += sum(stored_counts)
             report.ingest_s = time.monotonic() - started
 
         # ── QA with bounded concurrency ───────────────────────────────────────
@@ -173,7 +220,7 @@ async def run_benchmark(
             async with semaphore:
                 try:
                     result = await answer_question(client, llm, user.user_id, q)
-                    result.correct = await judge_result(llm, result)
+                    result.correct = await judge_result(judge_llm, result)
                 except Exception as exc:  # noqa: BLE001 — record, keep going
                     logger.exception("QA failed for %s", q.question_id)
                     # str(exc) alone can be empty (httpx timeouts) — keep the type

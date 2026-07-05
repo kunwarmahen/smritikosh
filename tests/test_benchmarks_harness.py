@@ -20,7 +20,12 @@ from evals.benchmarks.adapter import (
 )
 from evals.benchmarks.common import BenchQuestion, BenchSession, BenchTurn, BenchUser
 from evals.benchmarks.datasets import load_locomo, load_longmemeval
-from evals.benchmarks.runner import BenchConfig, BenchReport, apply_limits, run_benchmark
+from evals.benchmarks.runner import (
+    BenchConfig,
+    apply_limits,
+    llm_for,
+    run_benchmark,
+)
 
 # ── Fixture data ──────────────────────────────────────────────────────────────
 
@@ -374,3 +379,69 @@ async def test_run_benchmark_skip_ingest_and_cleanup(tmp_path):
                         cleanup=True, progress=False)
     assert client.encoded == []                 # ingestion skipped
     assert user.user_id in client.deleted       # cleanup ran
+
+
+# ── Separate answer/judge models ──────────────────────────────────────────────
+
+
+async def test_run_benchmark_separate_judge_llm(tmp_path):
+    """The judge LLM sees only judge prompts; the answer LLM only answers."""
+    answer_llm = FakeLLM(answer="a dog")
+    judge_llm = FakeLLM(verdict="CORRECT")
+    judge_llm._chat_model = "fake/judge"
+    config = FakeBenchConfig(FakeClient(), tmp_path)
+    report = await run_benchmark([bench_user()], config, llm=answer_llm,
+                                 judge_llm=judge_llm, progress=False)
+    assert report.accuracy == 1.0
+    assert report.answer_model == "fake/model"
+    assert report.judge_model == "fake/judge"
+    assert report.to_json()["judge_model"] == "fake/judge"
+    assert all("Gold answer" not in p for p in answer_llm.prompts)
+    assert all("Gold answer" in p for p in judge_llm.prompts)
+
+
+async def test_judge_defaults_to_answer_llm(tmp_path):
+    llm = FakeLLM()
+    config = FakeBenchConfig(FakeClient(), tmp_path)
+    report = await run_benchmark([bench_user()], config, llm=llm, progress=False)
+    assert report.judge_model == report.answer_model == "fake/model"
+
+
+def test_llm_for_parses_provider_and_model():
+    adapter = llm_for("openai:gpt-4o")
+    assert adapter._cfg.llm_provider == "openai"
+    assert adapter._cfg.llm_model == "gpt-4o"
+    assert adapter._chat_model == "gpt-4o"
+    # no key/base-url/fallback inherited from the server .env
+    assert adapter._cfg.llm_api_key is None
+    assert adapter._cfg.llm_base_url is None
+    assert adapter._fallback_model is None
+
+
+def test_llm_for_keeps_colons_in_model_names():
+    adapter = llm_for("ollama:gemma4:e4b")
+    assert adapter._cfg.llm_provider == "ollama"
+    assert adapter._cfg.llm_model == "gemma4:e4b"
+    assert adapter._chat_model == "ollama_chat/gemma4:e4b"
+
+
+def test_llm_for_rejects_bare_model():
+    with pytest.raises(ValueError, match="provider:model"):
+        llm_for("gpt-4o")
+
+
+async def test_run_benchmark_parallel_ingest(tmp_path):
+    client = FakeClient()
+    config = FakeBenchConfig(client, tmp_path, ingest_concurrency=4)
+    users = [
+        BenchUser(
+            user_id=f"locomo-conv-{i}",
+            sessions=bench_user().sessions,
+            questions=[BenchQuestion(f"q{i}", "Who adopted a dog?", "Alice", "single-hop")],
+        )
+        for i in range(5)
+    ]
+    report = await run_benchmark(users, config, llm=FakeLLM(), progress=False)
+    assert report.ingested_events == 15  # 5 users × 3 turns, none lost
+    assert config.state().is_done("locomo-conv-4")
+    assert len(report.results) == 5

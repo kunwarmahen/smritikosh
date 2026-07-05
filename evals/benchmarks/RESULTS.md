@@ -37,6 +37,26 @@ python -m evals.benchmarks locomo --json locomo-results.json
 python -m evals.benchmarks longmemeval --variant oracle --json lme-results.json
 ```
 
+Answering and judging default to the server's `.env` LLM; for publishable runs
+override them independently of the product under test (API keys come from the
+provider's standard env var, e.g. `OPENAI_API_KEY`):
+
+```bash
+python -m evals.benchmarks locomo \
+    --answer-model openai:gpt-4o --judge-model openai:gpt-4o-mini \
+    --ingest-concurrency 8 --json locomo-results.json
+```
+
+`--ingest-concurrency N` parallelizes ingestion **across users only** (turn
+order within a user is part of the method); keep it 1 on a local single-GPU
+model, raise it against cloud providers where sequential ingestion of a full
+benchmark takes days. The judge model is recorded in the report JSON
+(`judge_model`) alongside `answer_model`.
+
+**`scripts/run_publishable_benchmarks.sh`** wraps all of this (preflight
+checks, chunk-turns 1, timestamped JSON reports in `evals/benchmarks/results/`)
+— see its header for knobs and rough cost/time estimates per benchmark.
+
 Full LoCoMo is ~5,900 ingested turns + 1,540×2 LLM calls — start with
 `--users 2 --questions 100` and scale up. `--cleanup` removes the synthetic
 users afterwards.
@@ -93,9 +113,18 @@ publishable run, plus a chunk-1 ingestion pass.
 
 ## Publication checklist
 
+Harness-side prerequisites are all in place (separate `--answer-model` /
+`--judge-model`, `--ingest-concurrency`, `scripts/run_publishable_benchmarks.sh`).
+The runs themselves are **blocked on a cloud API key** (OPENAI_API_KEY or
+ANTHROPIC_API_KEY) — both for answering/judging and for the server's own
+extraction + embedding config, which the smoke run showed dominates the score.
+
+- [ ] Point the server at its recommended cloud config (GPT-4o-class
+      `LLM_MODEL`, `text-embedding-3-small`+ `EMBEDDING_MODEL`) and re-ingest
 - [ ] Full LoCoMo run (10 conversations, 1,540 questions) with a GPT-4o-class
       answer model and a *different* (or at least GPT-4o-class) judge model
-- [ ] Full LongMemEval `s` run (500 questions)
+- [ ] Full LongMemEval `s` run (500 questions) — estimate cost from a
+      10-user partial first (~57M haystack tokens through extraction)
 - [ ] `--chunk-turns 1` (product-native granularity) for the headline number
 - [ ] Latency table (retrieval p50/p95) alongside accuracy
 - [ ] Re-verify competitor numbers from primary sources at publication time

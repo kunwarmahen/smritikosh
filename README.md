@@ -17,6 +17,8 @@ Smritikosh gives any LLM application persistent, user-specific memory modelled o
 | [sample/README.md](sample/README.md) | Running the demo chatbot against a live server |
 | [local_docs/MCP_SERVER.md](local_docs/MCP_SERVER.md) | MCP server — use Smritikosh from Claude Code / Claude Desktop with zero integration |
 | [evals/README.md](evals/README.md) | Extraction-quality eval harness — golden set + precision/recall scorer for the LLM extraction pipeline |
+| [evals/benchmarks/RESULTS.md](evals/benchmarks/RESULTS.md) | Public memory benchmarks (LoCoMo, LongMemEval) — method, results, publication checklist |
+| [grafana/README.md](grafana/README.md) | Grafana dashboard + provisionable alert rules (jobs, LLM cost/errors, API health) |
 
 ---
 
@@ -4577,3 +4579,9 @@ subquery on the `events` table.
 
 `--include-users` additionally truncates `app_users` (PostgreSQL) — use this
 to reset a demo environment back to a completely blank state.
+
+---
+
+<!-- MCP registry ownership proof — must stay in the PyPI-published README
+     and match the `name` in server.json. See local_docs/MCP_SERVER.md. -->
+mcp-name: io.github.kunwarmahen/smritikosh

@@ -9,6 +9,7 @@ packages = ["smritikosh"]
 name = "smritikosh"
 version = "0.1.0"
 description = "Universal memory layer for LLM applications"
+readme = "README.md"     # published to PyPI — must keep the mcp-name marker (MCP registry ownership proof)
 requires-python = ">=3.11"
 dependencies = [
     # API

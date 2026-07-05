@@ -7,11 +7,15 @@ CLI for the public memory benchmarks.
     python -m evals.benchmarks longmemeval --variant oracle --users 50
     python -m evals.benchmarks locomo --skip-ingest --json out.json
     python -m evals.benchmarks locomo --reset-state        # force re-ingestion
+    python -m evals.benchmarks locomo \
+        --answer-model openai:gpt-4o --judge-model openai:gpt-4o-mini
 
-Needs: a running Smritikosh server (SMRITIKOSH_BASE_URL), an **admin** API key
-(SMRITIKOSH_API_KEY), and the same .env LLM provider the server uses for
-answering/judging. Full runs make thousands of LLM calls — start with --users/
---questions limits and scale up.
+Needs: a running Smritikosh server (SMRITIKOSH_BASE_URL) and an **admin** API
+key (SMRITIKOSH_API_KEY). Answering/judging default to the .env LLM the server
+uses; --answer-model / --judge-model override them with any provider:model
+(keys from the provider's standard env var, e.g. OPENAI_API_KEY) — required
+for publishable runs, which need GPT-4o-class answering and judging. Full runs
+make thousands of LLM calls — start with --users/--questions limits and scale up.
 """
 
 from __future__ import annotations
@@ -24,7 +28,7 @@ import sys
 from pathlib import Path
 
 from evals.benchmarks.datasets import DATA_DIR, load_locomo, load_longmemeval
-from evals.benchmarks.runner import BenchConfig, apply_limits, run_benchmark
+from evals.benchmarks.runner import BenchConfig, apply_limits, llm_for, run_benchmark
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -39,8 +43,17 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--chunk-turns", type=int, default=1,
                         help="turns per ingested event (1 = product-native; "
                              "higher = fewer extraction calls)")
+    parser.add_argument("--answer-model", metavar="PROVIDER:MODEL",
+                        help="answer LLM, e.g. openai:gpt-4o "
+                             "(default: the server's .env LLM)")
+    parser.add_argument("--judge-model", metavar="PROVIDER:MODEL",
+                        help="judge LLM, e.g. openai:gpt-4o-mini "
+                             "(default: the answer model)")
     parser.add_argument("--concurrency", type=int, default=4,
                         help="QA concurrency (use 1 for a local single-GPU LLM)")
+    parser.add_argument("--ingest-concurrency", type=int, default=1,
+                        help="users ingested in parallel; per-user turn order "
+                             "is always preserved (raise for cloud providers)")
     parser.add_argument("--timeout", type=float, default=300.0,
                         help="per-request timeout in seconds (server calls are LLM-bound)")
     parser.add_argument("--skip-ingest", action="store_true",
@@ -69,6 +82,7 @@ def main(argv: list[str] | None = None) -> int:
     total_turns = sum(u.total_turns for u in users)
     config = BenchConfig.from_env(args.benchmark, chunk_turns=args.chunk_turns,
                                   qa_concurrency=args.concurrency,
+                                  ingest_concurrency=args.ingest_concurrency,
                                   timeout_s=args.timeout)
     if args.reset_state:
         config.state().reset()
@@ -80,6 +94,8 @@ def main(argv: list[str] | None = None) -> int:
         run_benchmark(
             users,
             config,
+            llm=llm_for(args.answer_model) if args.answer_model else None,
+            judge_llm=llm_for(args.judge_model) if args.judge_model else None,
             skip_ingest=args.skip_ingest,
             cleanup=args.cleanup,
             progress=not args.quiet,
@@ -87,7 +103,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     data = report.to_json()
-    print(f"\n{args.benchmark} — model={data['answer_model']}")
+    print(f"\n{args.benchmark} — model={data['answer_model']} judge={data['judge_model']}")
     print(f"Judge accuracy (J): {data['accuracy']:.1%} "
           f"({data['questions']} questions, {data['errors']} errors)")
     for category, entry in data["by_category"].items():
