@@ -65,6 +65,8 @@ class MemoryScheduler:
         fact_decay_cron:         Cron expression for fact decay (default: weekly Sunday 03:00 UTC).
         synthesizer:             Optional CrossSystemSynthesizer instance.
         synthesis_cron:          Cron expression for cross-system synthesis (default: daily 01:00 UTC).
+        reflection_agent:        Optional ReflectionAgent instance (E4).
+        reflection_cron:         Cron expression for reflection cycles (default: daily 05:00 UTC).
 
     Cron format: standard 5-field UTC — "minute hour day-of-month month day-of-week"
     Examples:
@@ -88,6 +90,8 @@ class MemoryScheduler:
         fact_decay_cron: str = "0 3 * * 0",
         synthesizer: CrossSystemSynthesizer | None = None,
         synthesis_cron: str = "0 1 * * *",
+        reflection_agent=None,   # cognition.reflection.ReflectionAgent | None
+        reflection_cron: str = "0 5 * * *",
     ) -> None:
         self.consolidator = consolidator
         self.pruner = pruner
@@ -96,6 +100,7 @@ class MemoryScheduler:
         self.belief_miner = belief_miner
         self.fact_decayer = fact_decayer
         self.synthesizer = synthesizer
+        self.reflection_agent = reflection_agent
         self._scheduler = AsyncIOScheduler()
 
         self._scheduler.add_job(
@@ -142,6 +147,14 @@ class MemoryScheduler:
                 trigger=CronTrigger.from_crontab(synthesis_cron),
                 id="cross_system_synthesis_job",
                 name="Cross-System Synthesis",
+                max_instances=1,
+            )
+        if self.reflection_agent is not None:
+            self._scheduler.add_job(
+                self.run_reflection_for_all_users,
+                trigger=CronTrigger.from_crontab(reflection_cron),
+                id="reflection_job",
+                name="Reflection Cycles",
                 max_instances=1,
             )
 
@@ -426,6 +439,55 @@ class MemoryScheduler:
             result.skip_reason = str(exc)
             return result
 
+    async def run_reflection_for_all_users(self) -> list:
+        """Run reflection cycles for all users, stalest first (E4)."""
+        if self.reflection_agent is None:
+            return []
+        with track_job("reflection"):
+            user_app_pairs = await self._get_all_users("last_reflected_at")
+            logger.info(
+                "Reflection job triggered — %d user(s) found",
+                len(user_app_pairs),
+            )
+            results = await self._run_for_users(
+                user_app_pairs, self.run_reflection_now
+            )
+            skipped = sum(1 for r in results if r.skipped)
+            logger.info(
+                "Reflection job complete — processed=%d skipped=%d",
+                len(results) - skipped,
+                skipped,
+            )
+            return results
+
+    async def run_reflection_now(
+        self, *, user_id: str, app_id: str = "default"
+    ):
+        """Run one reflection cycle immediately for a specific user."""
+        from smritikosh.cognition.reflection import ReflectionResult
+
+        if self.reflection_agent is None:
+            result = ReflectionResult(user_id=user_id, app_id=app_id, skipped=True)
+            result.skip_reason = "No reflection_agent configured."
+            return result
+        try:
+            with llm_context(user_id=user_id, app_id=app_id, source="reflection"):
+                async with db_session() as pg, neo4j_session() as neo:
+                    result = await self.reflection_agent.reflect(
+                        pg, neo, user_id=user_id, app_id=app_id
+                    )
+                    await mark_job_done(pg, user_id, app_id, "reflected")
+                    return result
+        except Exception as exc:
+            JOB_USER_ERRORS.labels(job="reflection").inc()
+            logger.error(
+                "Reflection failed",
+                extra={"user_id": user_id, "error": str(exc)},
+            )
+            result = ReflectionResult(user_id=user_id, app_id=app_id, skipped=True)
+            result.skip_reason = str(exc)
+            return result
+
     # ── User discovery ─────────────────────────────────────────────────────
 
     async def _get_active_users(self) -> list[tuple[str, str]]:
@@ -545,6 +607,7 @@ def build_scheduler() -> "MemoryScheduler":
         get_episodic,
         get_fact_decayer,
         get_pruner,
+        get_reflection_agent,
         get_synthesizer,
     )
     from smritikosh.config import settings
@@ -557,11 +620,13 @@ def build_scheduler() -> "MemoryScheduler":
         belief_miner=get_belief_miner(),
         fact_decayer=get_fact_decayer(),
         synthesizer=get_synthesizer(),
+        reflection_agent=get_reflection_agent(),
         consolidation_cron=settings.scheduler_consolidation_cron,
         pruning_cron=settings.scheduler_pruning_cron,
         clustering_cron=settings.scheduler_clustering_cron,
         belief_mining_cron=settings.scheduler_belief_mining_cron,
         fact_decay_cron=settings.scheduler_fact_decay_cron,
+        reflection_cron=settings.scheduler_reflection_cron,
     )
 
 

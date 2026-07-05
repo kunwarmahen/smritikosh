@@ -115,6 +115,7 @@ class ContextResponse(BaseModel):
     total_memories: int
     embedding_failed: bool
     intent: str                 # detected query intent (e.g. "career", "technical")
+    complexity: str = "moderate"  # meta-cognition tier the build was routed at (E4)
     reconsolidation_scheduled: bool = False   # True if background reconsolidation was triggered
     procedures: list['ProcedureItem'] = []    # matched behavioral rules that fired for this query
 
@@ -210,6 +211,7 @@ class IdentityDimensionItem(BaseModel):
 
 
 class BeliefItem(BaseModel):
+    belief_id: str = ""          # UUID string; lets the UI link to /beliefs actions
     statement: str
     category: str
     confidence: float
@@ -225,6 +227,123 @@ class IdentityResponse(BaseModel):
     total_facts: int
     computed_at: str
     is_empty: bool
+
+
+# ── /beliefs — list, evidence, retraction (E2) ────────────────────────────────
+
+
+class BeliefRecord(BaseModel):
+    belief_id: str
+    user_id: str
+    app_id: str
+    statement: str
+    category: str
+    confidence: float
+    evidence_count: int
+    evidence_event_ids: list[str] = []
+    status: str                        # active | rejected
+    retracted_at: str | None = None
+    first_inferred_at: str
+    last_updated_at: str
+
+
+class BeliefListResponse(BaseModel):
+    user_id: str
+    app_id: str
+    beliefs: list[BeliefRecord]
+
+
+class BeliefEvidenceEvent(BaseModel):
+    event_id: str
+    text: str                          # summary if consolidated, else raw_text
+    importance_score: float
+    created_at: str | None = None
+
+
+class BeliefEvidenceResponse(BaseModel):
+    belief: BeliefRecord
+    evidence_events: list[BeliefEvidenceEvent]
+    # Evidence IDs whose events were since pruned/deleted
+    missing_event_ids: list[str] = []
+
+
+class BeliefRetractResponse(BaseModel):
+    belief_id: str
+    status: str
+    retracted_at: str
+
+
+# ── Cognitive agent layer (E4) ────────────────────────────────────────────────
+
+
+class DecisionRequest(BaseModel):
+    user_id: str
+    decision: str = Field(..., min_length=3, description="The decision to reason about")
+    options: list[str] | None = Field(None, description="Optional explicit options")
+    app_ids: list[str] | None = None
+
+
+class BeliefAlignmentItem(BaseModel):
+    belief: str
+    alignment: str              # supports | conflicts | neutral
+    note: str = ""
+
+
+class DecisionResponse(BaseModel):
+    user_id: str
+    app_id: str
+    decision: str
+    recommendation: str
+    reasoning: str
+    confidence: float
+    belief_alignment: list[BeliefAlignmentItem] = []
+    risks: list[str] = []
+    cited_event_ids: list[str] = []
+    open_questions: list[str] = []
+    memories_considered: int = 0
+    logged_event_id: str | None = None
+    skipped: bool = False
+    skip_reason: str = ""
+
+
+class PredictionItem(BaseModel):
+    prediction_id: str
+    query_preview: str
+    intent: str
+    predicted_event_ids: list[str] = []
+    predicted_cluster_ids: list[int] = []
+    actual_event_ids: list[str] = []
+    hit_rate: float | None = None
+    created_at: str
+    scored_at: str | None = None
+
+
+class PredictionListResponse(BaseModel):
+    user_id: str
+    app_id: str
+    accuracy: dict              # {days, scored_predictions, avg_hit_rate}
+    predictions: list[PredictionItem]
+
+
+class ReflectionItem(BaseModel):
+    reflection_id: str
+    kind: str                   # drift | contradiction | stale_belief | observation
+    insight: str
+    severity: str               # info | notice | warning
+    evidence: dict = {}
+    acknowledged: bool = False
+    created_at: str
+
+
+class ReflectionListResponse(BaseModel):
+    user_id: str
+    app_id: str
+    reflections: list[ReflectionItem]
+
+
+class ReflectionAckResponse(BaseModel):
+    reflection_id: str
+    acknowledged: bool
 
 
 # ── GET /graph/facts/{user_id} ────────────────────────────────────────────────
@@ -397,9 +516,30 @@ class EmbeddingHealthResponse(BaseModel):
 
 
 class ReEmbedResponse(BaseModel):
-    status: str               # "ok" | "started"
+    status: str               # "ok" | "started" | "resumed"
     queued: int
     message: str | None = None
+    migration_id: str | None = None   # embedding_migrations row driving the run (H1)
+
+
+class EmbeddingMigrationItem(BaseModel):
+    migration_id: str
+    status: str               # running | complete | failed | cancelled
+    target_model: str
+    target_dim: int
+    total: int
+    processed: int
+    errors: int
+    progress_pct: float       # processed/total (100.0 when total == 0)
+    started_at: str
+    updated_at: str
+    finished_at: str | None = None
+    error_message: str | None = None
+
+
+class EmbeddingMigrationStatusResponse(BaseModel):
+    current: EmbeddingMigrationItem | None = None    # the running migration, if any
+    history: list[EmbeddingMigrationItem] = []       # most recent runs, newest first
 
 
 # ── GET /health ───────────────────────────────────────────────────────────────

@@ -520,3 +520,38 @@ class TestEpisodicMemoryDB:
 
         assert len(pending) == 1
         assert pending[0].raw_text == "not done"
+
+
+# ── E1: consolidated-event search semantics ───────────────────────────────────
+
+
+class TestConsolidatedPenalty:
+    def test_penalty_defaults_to_none_meaning_config(self):
+        w = HybridWeights()
+        assert w.consolidated_penalty is None
+
+    def test_penalty_not_part_of_weight_sum(self):
+        # A penalty override must not break the sum-to-1.0 validation.
+        w = HybridWeights(consolidated_penalty=0.5)
+        total = w.similarity + w.recency + w.importance + w.frequency + w.contextual_match
+        assert abs(total - 1.0) < 1e-6
+
+    @pytest.mark.asyncio
+    async def test_mark_consolidated_with_anchor_issues_second_update(self):
+        episodic = make_episodic()
+        session = make_mock_session()
+        ids = [uuid.uuid4(), uuid.uuid4()]
+
+        await episodic.mark_consolidated(session, ids, anchor_event_id=ids[0])
+
+        # one UPDATE for the batch flags + one for the anchor flag
+        assert session.execute.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_mark_consolidated_without_anchor_single_update(self):
+        episodic = make_episodic()
+        session = make_mock_session()
+
+        await episodic.mark_consolidated(session, [uuid.uuid4()])
+
+        assert session.execute.call_count == 1

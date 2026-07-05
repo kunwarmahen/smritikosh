@@ -137,9 +137,11 @@ class TestConfidence:
         result = classifier.classify("career")
         assert 0.0 < result.confidence < 1.0
 
-    def test_three_matches_gives_full_confidence(self, classifier):
+    def test_three_matches_hits_keyword_ceiling(self, classifier):
+        # E3: keyword confidence saturates at the 0.75 ceiling, never 1.0 —
+        # so a raised LLM threshold can always route past the keyword tier.
         result = classifier.classify("career job role salary")
-        assert result.confidence == pytest.approx(1.0)
+        assert result.confidence == pytest.approx(0.75)
 
     def test_more_matches_higher_confidence(self, classifier):
         one_match = classifier.classify("career")
@@ -250,3 +252,157 @@ class TestClassifyAsync:
         classifier = IntentClassifier(llm=llm, llm_confidence_threshold=0.5)
         result = await classifier.classify_async("show me")
         assert result.weights == _INTENT_WEIGHTS[QueryIntent.HISTORICAL_RECALL]
+
+
+# ── E3: multi-intent blending, tie handling, cache, complexity ────────────────
+
+
+from smritikosh.retrieval.intent_classifier import (  # noqa: E402
+    ComplexityTier,
+    _blend_weights,
+    classify_complexity,
+)
+
+
+class TestMultiIntentBlending:
+    def test_blended_weights_sum_to_one(self):
+        for a in QueryIntent:
+            for b in QueryIntent:
+                if a == b:
+                    continue
+                w = _blend_weights(a, b)
+                total = w.similarity + w.recency + w.importance + w.frequency + w.contextual_match
+                assert abs(total - 1.0) < 1e-6, f"{a}+{b} sums to {total}"
+
+    def test_blend_is_seventy_thirty(self):
+        w = _blend_weights(QueryIntent.CAREER, QueryIntent.TECHNICAL)
+        c = _INTENT_WEIGHTS[QueryIntent.CAREER]
+        t = _INTENT_WEIGHTS[QueryIntent.TECHNICAL]
+        assert w.similarity == pytest.approx(0.7 * c.similarity + 0.3 * t.similarity)
+
+    def test_keyword_tie_halves_confidence_and_sets_secondary(self, classifier):
+        # "job" (career) + "code" (technical): one match each → tie
+        result = classifier.classify("job code")
+        assert len(result.secondary_intents) == 1
+        untied = classifier.classify("job")
+        assert result.confidence == pytest.approx(untied.confidence * 0.5)
+
+    @pytest.mark.asyncio
+    async def test_llm_secondary_intent_blends_weights(self):
+        llm = _make_llm({
+            "primary_intent": "career",
+            "secondary_intents": ["technical"],
+            "confidence": 0.9,
+        })
+        classifier = IntentClassifier(llm=llm, llm_confidence_threshold=0.5)
+        result = await classifier.classify_async("show me")
+        assert result.weights == _blend_weights(QueryIntent.CAREER, QueryIntent.TECHNICAL)
+        assert result.weights != _INTENT_WEIGHTS[QueryIntent.CAREER]
+
+
+class TestComplexityTier:
+    def test_short_lookup_is_simple(self, classifier):
+        result = classifier.classify("what coffee does Alice like?")
+        assert result.complexity == ComplexityTier.SIMPLE
+
+    def test_decision_marker_is_complex(self, classifier):
+        result = classifier.classify("should I take this job offer?")
+        assert result.complexity == ComplexityTier.COMPLEX
+
+    def test_long_nondecision_is_moderate(self, classifier):
+        result = classifier.classify(
+            "tell me everything you know about the state of my current work situation"
+        )
+        assert result.complexity == ComplexityTier.MODERATE
+
+    def test_marker_beats_length(self):
+        # short but deliberative
+        assert classify_complexity("laptop versus desktop") == ComplexityTier.COMPLEX
+
+    @pytest.mark.asyncio
+    async def test_llm_complexity_wins_when_valid(self):
+        llm = _make_llm({
+            "primary_intent": "personal",
+            "secondary_intents": [],
+            "confidence": 0.9,
+            "complexity": "complex",
+        })
+        classifier = IntentClassifier(llm=llm, llm_confidence_threshold=0.5)
+        result = await classifier.classify_async("show me")
+        assert result.complexity == ComplexityTier.COMPLEX
+
+    @pytest.mark.asyncio
+    async def test_invalid_llm_complexity_falls_back_to_heuristic(self):
+        llm = _make_llm({
+            "primary_intent": "personal",
+            "secondary_intents": [],
+            "confidence": 0.9,
+            "complexity": "galactic",
+        })
+        classifier = IntentClassifier(llm=llm, llm_confidence_threshold=0.5)
+        result = await classifier.classify_async("show me")   # 2 words → simple
+        assert result.complexity == ComplexityTier.SIMPLE
+
+
+class TestClassificationCache:
+    @pytest.mark.asyncio
+    async def test_repeat_query_skips_second_llm_call(self):
+        llm = _make_llm({"primary_intent": "personal", "secondary_intents": [], "confidence": 0.9})
+        classifier = IntentClassifier(llm=llm, llm_confidence_threshold=0.5)
+
+        first = await classifier.classify_async("show me")
+        second = await classifier.classify_async("show me")
+
+        assert llm.complete.await_count == 1
+        assert second is first
+
+    @pytest.mark.asyncio
+    async def test_cache_normalises_whitespace_and_case(self):
+        llm = _make_llm({"primary_intent": "personal", "secondary_intents": [], "confidence": 0.9})
+        classifier = IntentClassifier(llm=llm, llm_confidence_threshold=0.5)
+
+        await classifier.classify_async("Show   Me")
+        await classifier.classify_async("show me")
+
+        assert llm.complete.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_llm_failure_not_cached(self):
+        llm = AsyncMock()
+        llm.complete = AsyncMock(side_effect=RuntimeError("down"))
+        classifier = IntentClassifier(llm=llm, llm_confidence_threshold=0.5)
+
+        await classifier.classify_async("show me")
+        await classifier.classify_async("show me")
+
+        # both attempts reached the LLM — the failed fallback was not cached
+        assert llm.complete.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_cache_disabled_with_zero_size(self):
+        llm = _make_llm({"primary_intent": "personal", "secondary_intents": [], "confidence": 0.9})
+        classifier = IntentClassifier(llm=llm, llm_confidence_threshold=0.5, cache_size=0)
+
+        await classifier.classify_async("show me")
+        await classifier.classify_async("show me")
+
+        assert llm.complete.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_cache_ttl_expiry(self):
+        llm = _make_llm({"primary_intent": "personal", "secondary_intents": [], "confidence": 0.9})
+        classifier = IntentClassifier(llm=llm, llm_confidence_threshold=0.5, cache_ttl_s=-1.0)
+
+        await classifier.classify_async("show me")
+        await classifier.classify_async("show me")
+
+        # negative TTL → every entry is already expired on read
+        assert llm.complete.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_eviction_bounds_cache_size(self):
+        classifier = IntentClassifier(cache_size=2)
+        await classifier.classify_async("query one two three")
+        await classifier.classify_async("query four five six")
+        await classifier.classify_async("query seven eight nine")
+        assert len(classifier._cache) <= 2

@@ -30,13 +30,19 @@ from neo4j import AsyncSession as NeoSession
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from smritikosh.db.models import Event, UserProcedure
+from smritikosh import metrics
+from smritikosh.db.models import BeliefStatus, Event, UserBelief, UserProcedure
 from smritikosh.llm.adapter import LLMAdapter
 from smritikosh.memory.episodic import EpisodicMemory, SearchResult
 from smritikosh.memory.narrative import NarrativeMemory
 from smritikosh.memory.procedural import ProceduralMemory
 from smritikosh.memory.semantic import SemanticMemory, UserProfile
-from smritikosh.retrieval.intent_classifier import IntentClassifier, QueryIntent
+from smritikosh.retrieval.intent_classifier import (
+    ComplexityTier,
+    IntentClassifier,
+    QueryIntent,
+    classify_complexity,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +77,10 @@ class MemoryContext:
     narrative_chains: list[list[Event]] = field(default_factory=list)
     # Procedural rules that fired for this query
     procedures: list[UserProcedure] = field(default_factory=list)
+    # Meta-cognition tier this context was routed at (E4): simple | moderate | complex
+    complexity: str = ComplexityTier.MODERATE
+    # Core beliefs for belief-alignment — populated only on the complex tier (E4)
+    beliefs: list[UserBelief] = field(default_factory=list)
 
     # ── Rendering ─────────────────────────────────────────────────────────
 
@@ -122,6 +132,15 @@ class MemoryContext:
                 sections.append(f"- [{date_str}] {_truncate(text, 120)}")
             sections.append("")
 
+        # ── Core beliefs (complex tier only — belief alignment) ───────────
+        if self.beliefs:
+            sections.append("### Core beliefs & values (check alignment before advising):")
+            for b in sorted(self.beliefs, key=lambda b: b.confidence, reverse=True):
+                sections.append(
+                    f"- [{b.category}] {b.statement}  (confidence: {b.confidence:.2f})"
+                )
+            sections.append("")
+
         # ── Semantically similar past memories ────────────────────────────
         if self.similar_events:
             sections.append("### Relevant past memories:")
@@ -169,6 +188,7 @@ class MemoryContext:
             and no_profile
             and not self.recent_events
             and not self.procedures
+            and not self.beliefs
         )
 
     def total_memories(self) -> int:
@@ -179,6 +199,7 @@ class MemoryContext:
             + profile_count
             + len(self.recent_events)
             + len(self.procedures)
+            + len(self.beliefs)
         )
 
 
@@ -247,17 +268,24 @@ class ContextBuilder:
         app_ids: list[str] | None = None,
         from_date: Optional[datetime] = None,
         to_date: Optional[datetime] = None,
+        complexity_override: "ComplexityTier | None" = None,
     ) -> MemoryContext:
         """
         Build a MemoryContext for the given query.
 
         Steps:
-            1. Embed the query (required for vector recall).
-            2. Concurrently fetch: similar events, user profile, recent events.
-            3. Assemble and return MemoryContext.
+            1. Classify intent + complexity; route the pipeline by tier (E4):
+                 simple   — trimmed retrieval (fewer similar/recent, no chains)
+                 moderate — the standard pipeline
+                 complex  — chains + core beliefs added for belief alignment
+            2. Embed the query (required for vector recall).
+            3. Concurrently fetch: similar events, user profile, recent events.
+            4. Assemble and return MemoryContext.
 
-        If embedding fails, similar_events will be empty but profile and
-        recent events are still included (partial context is better than none).
+        `complexity_override` forces a tier (the DecisionAgent always builds
+        at COMPLEX). If embedding fails, similar_events will be empty but
+        profile and recent events are still included (partial context is
+        better than none).
         """
         # ── 1. Classify intent (uses LLM when keyword confidence is low) ──
         intent_result = (
@@ -266,6 +294,24 @@ class ContextBuilder:
             else None
         )
         detected_intent = intent_result.intent if intent_result else QueryIntent.GENERAL
+
+        # ── 1b. Meta-cognition routing (E4): effort follows complexity ────
+        complexity = complexity_override or (
+            intent_result.complexity if intent_result else classify_complexity(query)
+        )
+        metrics.COMPLEXITY_ROUTED.labels(tier=str(complexity)).inc()
+
+        top_k_similar = self.top_k_similar
+        recent_limit = self.recent_limit
+        include_chains = self.include_chains
+        include_beliefs = False
+        if complexity == ComplexityTier.SIMPLE:
+            top_k_similar = min(3, self.top_k_similar)
+            recent_limit = min(3, self.recent_limit)
+            include_chains = False
+        elif complexity == ComplexityTier.COMPLEX:
+            include_chains = self.narrative is not None
+            include_beliefs = True
 
         # ── 2. Embed query ────────────────────────────────────────────────
         embedding, embedding_failed = await self._embed_query(query, user_id)
@@ -286,7 +332,7 @@ class ContextBuilder:
             similar = (
                 await self.episodic.hybrid_search(
                     pg_session, user_id, embedding, app_ids=app_ids,
-                    top_k=self.top_k_similar,
+                    top_k=top_k_similar,
                     weights_override=intent_result.weights if intent_result else None,
                     from_date=from_date, to_date=to_date,
                 )
@@ -297,11 +343,33 @@ class ContextBuilder:
 
         try:
             recent = await self.episodic.get_recent(
-                pg_session, user_id, app_ids, limit=self.recent_limit,
+                pg_session, user_id, app_ids, limit=recent_limit,
                 from_date=from_date, to_date=to_date,
             )
         except Exception as e:
             recent = e
+
+        # Complex tier: fetch core beliefs for alignment checking (E4)
+        beliefs: list[UserBelief] = []
+        if include_beliefs:
+            try:
+                belief_rows = await pg_session.execute(
+                    select(UserBelief)
+                    .where(
+                        UserBelief.user_id == user_id,
+                        UserBelief.app_id == neo4j_app_id,
+                        UserBelief.status != BeliefStatus.REJECTED,
+                        UserBelief.confidence >= 0.5,
+                    )
+                    .order_by(UserBelief.confidence.desc())
+                    .limit(10)
+                )
+                beliefs = list(belief_rows.scalars().all())
+            except Exception as exc:
+                logger.warning(
+                    "Belief fetch failed — context assembled without beliefs",
+                    extra={"user_id": user_id, "error": str(exc)},
+                )
 
         try:
             procedures_raw = (
@@ -371,7 +439,7 @@ class ContextBuilder:
         # similar_events with a small score boost so causally-related memories
         # surface alongside the event that triggered their inclusion.
         narrative_chains: list[list[Event]] = []
-        if self.narrative and self.include_chains and similar_events:
+        if self.narrative and include_chains and similar_events:
             try:
                 seen_ids = {sr.event.id for sr in similar_events}
                 anchors = similar_events[: self.chain_top_k]
@@ -440,7 +508,7 @@ class ContextBuilder:
                     combined = similar_events + chain_additions
                     combined.sort(key=lambda sr: sr.hybrid_score, reverse=True)
                     # Cap at 2× top_k so context doesn't balloon
-                    similar_events = combined[: self.top_k_similar * 2]
+                    similar_events = combined[: top_k_similar * 2]
 
             except Exception as exc:
                 logger.warning(
@@ -458,6 +526,8 @@ class ContextBuilder:
             intent=str(detected_intent),
             narrative_chains=narrative_chains,
             procedures=procedures,
+            complexity=str(complexity),
+            beliefs=beliefs,
         )
 
         logger.info(
@@ -465,10 +535,12 @@ class ContextBuilder:
             extra={
                 "user_id": user_id,
                 "intent": str(detected_intent),
+                "complexity": str(complexity),
                 "similar": len(similar_events),
                 "facts": len(user_profile.facts) if user_profile else 0,
                 "recent": len(recent_events),
                 "procedures": len(procedures),
+                "beliefs": len(beliefs),
                 "total": ctx.total_memories(),
             },
         )
@@ -482,6 +554,7 @@ class ContextBuilder:
                 payload={
                     "query_preview": query[:200],
                     "intent": str(detected_intent),
+                    "complexity": str(complexity),
                     "embedding_failed": embedding_failed,
                     "similar_events_count": len(similar_events),
                     "recent_events_count": len(recent_events),

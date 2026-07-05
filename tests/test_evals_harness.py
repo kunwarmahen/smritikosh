@@ -5,7 +5,6 @@ Covers the deterministic parts — matching, scoring, golden-set loading, and
 the runner's prompt routing — with a fake LLM adapter. No real LLM calls.
 """
 
-import pytest
 
 from evals.matcher import (
     AggregateScore,

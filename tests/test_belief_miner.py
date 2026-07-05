@@ -51,16 +51,20 @@ def make_fact(category="role", key="current", value="entrepreneur", confidence=0
 def make_mock_session(
     events: list[Event] | None = None,
     existing_beliefs: list[UserBelief] | None = None,
+    rejected_beliefs: list[UserBelief] | None = None,
 ) -> AsyncMock:
     """Mock AsyncSession for BeliefMiner.mine's query sequence:
     1st execute → consolidated-events SELECT, 2nd → existing-beliefs SELECT,
-    any later calls → upsert statements (opaque results)."""
+    3rd → rejected-beliefs SELECT (E2), any later calls → upsert statements
+    (opaque results)."""
     session = AsyncMock()
     events_result = MagicMock()
     events_result.scalars.return_value.all.return_value = events or []
     beliefs_result = MagicMock()
     beliefs_result.scalars.return_value.all.return_value = existing_beliefs or []
-    selects = iter([events_result, beliefs_result])
+    rejected_result = MagicMock()
+    rejected_result.scalars.return_value.all.return_value = rejected_beliefs or []
+    selects = iter([events_result, beliefs_result, rejected_result])
     session.execute = AsyncMock(side_effect=lambda *a, **kw: next(selects, MagicMock()))
     return session
 
@@ -216,8 +220,8 @@ class TestBeliefMinerSuccess:
 
         await miner.mine(session, AsyncMock(), user_id="u1")
 
-        # 2 SELECTs (events + existing beliefs) + 2 upserts (one per belief)
-        assert session.execute.call_count == 4
+        # 3 SELECTs (events + existing beliefs + rejected beliefs) + 2 upserts
+        assert session.execute.call_count == 5
 
     @pytest.mark.asyncio
     async def test_invalid_category_uses_fallback(self):
@@ -507,7 +511,7 @@ class TestBeliefEvidenceTracking:
         await miner.mine(session, AsyncMock(), user_id="u1")
 
         # All 3 event IDs should appear in each upsert call's evidence_event_ids
-        upsert_execute_calls = session.execute.call_args_list[2:]  # skip the 2 SELECTs
+        upsert_execute_calls = session.execute.call_args_list[3:]  # skip the 3 SELECTs
         for call in upsert_execute_calls:
             insert_stmt = call.args[0]
             compiled_params = insert_stmt.compile().params
@@ -605,3 +609,72 @@ class TestBeliefMinerDB:
 
         # At least one belief should have evidence_count >= 2
         assert any(b.evidence_count >= 2 for b in beliefs)
+
+
+# ── E2: belief retraction — rejected beliefs never resurface ──────────────────
+
+
+def make_rejected_belief(statement: str) -> UserBelief:
+    return UserBelief(
+        id=uuid.uuid4(),
+        user_id="u1",
+        app_id="default",
+        statement=statement,
+        category="value",
+        confidence=0.8,
+        evidence_count=3,
+        evidence_event_ids=[],
+        status="rejected",
+    )
+
+
+class TestRejectedBeliefs:
+    @pytest.mark.asyncio
+    async def test_rejected_statement_skipped_on_remine(self):
+        events = [make_event() for _ in range(3)]
+        rejected = [make_rejected_belief("believes in iterative development")]
+        session = make_mock_session(events, rejected_beliefs=rejected)
+        # LLM returns the rejected statement verbatim plus one new belief
+        miner = BeliefMiner(llm=make_mock_llm(), semantic=make_mock_semantic())
+
+        result = await miner.mine(session, AsyncMock(), user_id="u1")
+
+        assert result.beliefs_found == 2
+        assert result.beliefs_upserted == 1   # rejected one skipped
+
+    @pytest.mark.asyncio
+    async def test_rejection_match_is_case_insensitive(self):
+        events = [make_event() for _ in range(3)]
+        rejected = [make_rejected_belief("BELIEVES IN ITERATIVE DEVELOPMENT")]
+        session = make_mock_session(events, rejected_beliefs=rejected)
+        miner = BeliefMiner(llm=make_mock_llm(), semantic=make_mock_semantic())
+
+        result = await miner.mine(session, AsyncMock(), user_id="u1")
+
+        assert result.beliefs_upserted == 1
+
+    def test_prompt_lists_rejected_beliefs(self):
+        rejected = [make_rejected_belief("assumes remote work is always better")]
+        prompt = _build_belief_prompt([], [make_event()], rejected_beliefs=rejected)
+        assert "REJECTED BELIEFS" in prompt
+        assert "assumes remote work is always better" in prompt
+
+    def test_prompt_omits_rejected_section_when_empty(self):
+        prompt = _build_belief_prompt([], [make_event()])
+        assert "REJECTED BELIEFS" not in prompt
+
+    def test_upsert_conflict_action_guards_rejected_rows(self):
+        # The SQL-level guard: the ON CONFLICT DO UPDATE carries a WHERE clause
+        # on status, so even a statement that slips past the prompt/skip layers
+        # cannot reactivate a rejected row.
+        import asyncio
+
+        session = AsyncMock()
+        bd = {"statement": "s", "category": "value", "confidence": 0.9}
+        asyncio.get_event_loop().run_until_complete(
+            _upsert_belief(session, "u1", "default", bd, datetime.now(timezone.utc), [])
+        )
+        stmt = session.execute.call_args.args[0]
+        compiled = str(stmt.compile(compile_kwargs={"literal_binds": False}))
+        assert "ON CONFLICT" in compiled
+        assert "user_beliefs.status" in compiled

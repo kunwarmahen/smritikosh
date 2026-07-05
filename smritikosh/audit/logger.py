@@ -48,6 +48,9 @@ class EventType:
     MEMORY_RECONSOLIDATE_RUN = "memory.reconsolidate_run"  # job-run summary (always emitted)
     MEMORY_CLUSTERED       = "memory.clustered"
     BELIEF_MINED           = "belief.mined"
+    BELIEF_RETRACTED       = "belief.retracted"          # user rejected an inferred belief (E2)
+    AGENT_DECISION         = "agent.decision"            # DecisionAgent recommendation issued (E4)
+    AGENT_REFLECTION       = "agent.reflection"          # ReflectionAgent cycle stored insights (E4)
     FEEDBACK_SUBMITTED     = "feedback.submitted"
     CONTEXT_BUILT          = "context.built"
     SEARCH_PERFORMED       = "search.performed"

@@ -63,6 +63,7 @@ async def get_identity(
         ],
         beliefs=[
             BeliefItem(
+                belief_id=str(b.id),
                 statement=b.statement,
                 category=b.category,
                 confidence=b.confidence,

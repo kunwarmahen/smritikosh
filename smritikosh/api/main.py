@@ -32,6 +32,7 @@ from slowapi.errors import RateLimitExceeded
 from smritikosh.api.ratelimit import limiter, using_persistent_storage
 from smritikosh.api.routes import admin, audit, auth, context, facts, feedback, graph, health, identity, ingest, keys, memory, procedures
 from smritikosh.api.routes import session_ingest, media_ingest, voice_enrollment, connectors, consents
+from smritikosh.api.routes import beliefs, cognition
 from smritikosh.audit.mongodb import close_audit, init_audit_indexes
 from smritikosh.db.neo4j import close_neo4j, init_neo4j
 from smritikosh.db.postgres import close_db, init_db
@@ -198,3 +199,5 @@ app.include_router(graph.router)
 app.include_router(voice_enrollment.router)
 app.include_router(connectors.router)
 app.include_router(consents.router)
+app.include_router(beliefs.router)
+app.include_router(cognition.router)

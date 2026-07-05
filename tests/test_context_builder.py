@@ -513,7 +513,7 @@ class TestNarrativeChains:
         ])
         episodic.increment_recall = AsyncMock()
 
-        ctx = await builder.build(pg, neo, user_id="u1", query="test")
+        ctx = await builder.build(pg, neo, user_id="u1", query="tell me the story of how these events unfolded")
 
         assert len(ctx.narrative_chains) == 1
         assert ctx.narrative_chains[0][0].id == anchor_event.id
@@ -531,7 +531,7 @@ class TestNarrativeChains:
             SearchResult(event=anchor_event, hybrid_score=0.9)
         ])
 
-        ctx = await builder.build(pg, neo, user_id="u1", query="test")
+        ctx = await builder.build(pg, neo, user_id="u1", query="tell me the story of how these events unfolded")
 
         assert ctx.narrative_chains == []
 
@@ -548,7 +548,7 @@ class TestNarrativeChains:
         episodic.get_recent = AsyncMock(return_value=[])
         semantic.get_user_profile = AsyncMock(return_value=make_profile([]))
 
-        ctx = await builder.build(pg, neo, user_id="u1", query="test")
+        ctx = await builder.build(pg, neo, user_id="u1", query="tell me the story of how these events unfolded")
 
         narrative.get_chain_forward.assert_not_called()
         assert ctx.narrative_chains == []
@@ -559,7 +559,7 @@ class TestNarrativeChains:
         builder, llm, episodic, semantic, pg, neo = self._setup_with_narrative(narrative)
         episodic.hybrid_search = AsyncMock(return_value=[])
 
-        ctx = await builder.build(pg, neo, user_id="u1", query="test")
+        ctx = await builder.build(pg, neo, user_id="u1", query="tell me the story of how these events unfolded")
 
         narrative.get_chain_forward.assert_not_called()
         assert ctx.narrative_chains == []
@@ -576,7 +576,7 @@ class TestNarrativeChains:
             SearchResult(event=anchor_event, hybrid_score=0.9)
         ])
 
-        ctx = await builder.build(pg, neo, user_id="u1", query="test")
+        ctx = await builder.build(pg, neo, user_id="u1", query="tell me the story of how these events unfolded")
 
         assert ctx.narrative_chains == []
 
@@ -598,7 +598,7 @@ class TestNarrativeChains:
         ])
         episodic.increment_recall = AsyncMock()
 
-        ctx = await builder.build(pg, neo, user_id="u1", query="test")
+        ctx = await builder.build(pg, neo, user_id="u1", query="tell me the story of how these events unfolded")
 
         similar_ids = {sr.event.id for sr in ctx.similar_events}
         assert chain_event.id in similar_ids
@@ -623,7 +623,7 @@ class TestNarrativeChains:
         episodic.increment_recall = AsyncMock()
 
         # Default chain_boost is 0.05
-        ctx = await builder.build(pg, neo, user_id="u1", query="test")
+        ctx = await builder.build(pg, neo, user_id="u1", query="tell me the story of how these events unfolded")
 
         chain_sr = next(sr for sr in ctx.similar_events if sr.event.id == chain_event.id)
         assert abs(chain_sr.hybrid_score - (anchor_score + 0.05)) < 1e-9
@@ -653,7 +653,7 @@ class TestNarrativeChains:
         episodic.increment_recall = AsyncMock()
         semantic.get_user_profile = AsyncMock(return_value=make_profile([]))
 
-        ctx = await builder.build(pg, neo, user_id="u1", query="test")
+        ctx = await builder.build(pg, neo, user_id="u1", query="tell me the story of how these events unfolded")
 
         chain_sr = next(sr for sr in ctx.similar_events if sr.event.id == chain_event.id)
         assert chain_sr.hybrid_score <= 1.0
@@ -678,7 +678,7 @@ class TestNarrativeChains:
         ])
         episodic.increment_recall = AsyncMock()
 
-        ctx = await builder.build(pg, neo, user_id="u1", query="test")
+        ctx = await builder.build(pg, neo, user_id="u1", query="tell me the story of how these events unfolded")
 
         similar_ids = {sr.event.id for sr in ctx.similar_events}
         assert predecessor.id in similar_ids
@@ -701,7 +701,7 @@ class TestNarrativeChains:
         ])
         episodic.increment_recall = AsyncMock()
 
-        ctx = await builder.build(pg, neo, user_id="u1", query="test")
+        ctx = await builder.build(pg, neo, user_id="u1", query="tell me the story of how these events unfolded")
 
         b_count = sum(1 for sr in ctx.similar_events if sr.event.id == event_b.id)
         assert b_count == 1
@@ -726,7 +726,7 @@ class TestNarrativeChains:
         episodic.increment_recall = AsyncMock()
         semantic.get_user_profile = AsyncMock(return_value=make_profile([]))
 
-        await builder.build(pg, neo, user_id="u1", query="test")
+        await builder.build(pg, neo, user_id="u1", query="tell me the story of how these events unfolded")
 
         # With chain_top_k=1, only 1 anchor was traversed → 1 fwd + 1 bwd call
         assert narrative.get_chain_forward.call_count == 1
@@ -738,7 +738,7 @@ class TestNarrativeChains:
         e2 = make_event(raw_text="engineers hired")
         ctx = MemoryContext(
             user_id="u1",
-            query="test",
+            query="tell me the story of how these events unfolded",
             narrative_chains=[[e1, e2]],
         )
         text = ctx.as_prompt_text()

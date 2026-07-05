@@ -124,17 +124,34 @@ memories              after recall
 ```
 Query + ProceduralMemory lookup
       │
+      ├── IntentClassifier      (intent + complexity tier: simple|moderate|complex)
+      ├── PredictionEngine      (predicts which memories will surface — scored after)
       ▼
-ContextBuilder
+ContextBuilder                  (retrieval effort routed by complexity tier)
       │
-      ├── hybrid_search()      (vector + recency + importance)
+      ├── hybrid_search()      (vector + recency + importance; consolidated
+      │                         non-anchor events down-weighted)
       ├── get_user_profile()   (Neo4j semantic facts)
       ├── get_recent()         (last N raw events)
-      └── search_by_query()    (trigger→instruction rules)
+      ├── search_by_query()    (trigger→instruction rules)
+      └── beliefs              (complex tier only — belief alignment)
                 │
                 ▼
         MemoryContext.messages  →  prepend to LLM messages
 ```
+
+### Cognitive agent layer
+
+```
+POST /agent/decision            memory-grounded recommendation with cited events,
+                                belief alignment, risks (DecisionAgent)
+GET  /cognition/predictions/…   predict-observe-learn accuracy per user
+GET  /cognition/reflections/…   drift / contradiction / stale-belief insights
+                                (ReflectionAgent — scheduled daily; POST /admin/reflect)
+```
+Every `/context` call runs a zero-cost prediction of which memories will surface;
+the outcome is scored on the task queue and nudges `importance_score`, so retrieval
+specialises to each user over time.
 
 ### Identity model
 
@@ -1135,10 +1152,12 @@ smritikosh/
 │       ├── identity.py      # GET /identity/{user_id}
 │       ├── feedback.py      # POST /feedback
 │       ├── procedures.py    # CRUD /procedures + DELETE /procedures/user/{id}
-│       ├── admin.py         # POST /admin/{consolidate,prune,cluster,mine-beliefs,reconsolidate,synthesize}
-│       │                    #   GET /admin/embedding-health, POST /admin/re-embed
+│       ├── admin.py         # POST /admin/{consolidate,prune,cluster,mine-beliefs,reconsolidate,synthesize,reflect}
+│       │                    #   GET /admin/embedding-health, POST/GET/DELETE /admin/re-embed[/status]
 │       │                    #   GET /admin/users, GET /admin/users/{username},
 │       │                    #   PATCH /admin/users/{username}
+│       ├── beliefs.py       # GET /beliefs/{user_id}[/{id}/evidence], DELETE /beliefs/{user_id}/{id}
+│       ├── cognition.py     # POST /agent/decision, GET /cognition/{predictions,reflections}/{user_id}
 │       ├── batch.py         # POST /batch (array of encode operations → ordered results)
 │       ├── ingest.py        # POST /ingest/{push,file,slack/events,email/sync,calendar}
 │       ├── session_ingest.py # POST /ingest/session, POST /ingest/transcript
@@ -1192,12 +1211,17 @@ smritikosh/
 │   ├── media_processor.py   # MediaProcessor: transcription, text extraction, vision, relevance routing
 │   ├── leader.py            # Postgres advisory-lock leader election for the scheduler
 │   └── scheduler.py         # APScheduler background jobs (consolidation, pruning, clustering,
-│                             #   belief mining, fact decay, cross-system synthesis)
+│                             #   belief mining, fact decay, cross-system synthesis, reflection)
+├── cognition/
+│   ├── prediction.py        # PredictionEngine: predict-observe-learn loop over /context
+│   ├── decision.py          # DecisionAgent: memory-grounded recommendations with citations
+│   └── reflection.py        # ReflectionAgent: identity-vs-behaviour drift detection
 ├── worker/
 │   └── main.py              # Standalone scheduler worker (python -m smritikosh.worker.main)
 ├── tasks/
 │   ├── queue.py             # ARQ connection + enqueue helpers (durable task queue)
-│   └── jobs.py              # Task definitions + WorkerSettings (media processing, re-embed)
+│   └── jobs.py              # Task definitions + WorkerSettings (media processing,
+│                             #   chunked re-embed migrations, prediction scoring)
 ├── retrieval/
 │   └── context_builder.py   # Build memory context for LLM calls
 ├── audit/

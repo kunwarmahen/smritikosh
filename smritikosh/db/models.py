@@ -103,6 +103,12 @@ class BeliefCategory(StrEnum):
     ASSUMPTION = "assumption"  # things the user takes for granted
 
 
+class BeliefStatus(StrEnum):
+    """Lifecycle state for inferred beliefs — gates context assembly and re-mining (E2)."""
+    ACTIVE   = "active"     # included in identity/context; miner may reinforce it
+    REJECTED = "rejected"   # user retracted it; hidden everywhere and never re-mined
+
+
 class UserRole(StrEnum):
     """Roles for UI authentication."""
     ADMIN = "admin"   # can access all users' data and admin operations
@@ -120,6 +126,8 @@ class SourceType(StrEnum):
     WEBHOOK_INGEST      = "webhook_ingest"       # App POSTed a transcript to /ingest/transcript
     TOOL_USE            = "tool_use"            # LLM called the remember() tool
     CROSS_SYSTEM        = "cross_system"        # Synthesized from correlated cross-integration signals
+    AGENT_DECISION      = "agent_decision"      # DecisionAgent recommendation logged as memory (E4)
+    AGENT_REFLECTION    = "agent_reflection"    # ReflectionAgent cycle summary logged as memory (E4)
     MEDIA_VOICE         = "media_voice"         # Extracted from a voice note
     MEDIA_AUDIO         = "media_audio"         # Extracted from a meeting/call recording
     MEDIA_IMAGE         = "media_image"         # Extracted from an image
@@ -137,6 +145,8 @@ SOURCE_CONFIDENCE_DEFAULTS: dict[str, float] = {
     SourceType.WEBHOOK_INGEST:       0.70,
     SourceType.TOOL_USE:             0.90,
     SourceType.CROSS_SYSTEM:         0.65,
+    SourceType.AGENT_DECISION:       0.80,
+    SourceType.AGENT_REFLECTION:     0.70,
     SourceType.MEDIA_VOICE:          0.85,
     SourceType.MEDIA_AUDIO:          0.75,
     SourceType.MEDIA_IMAGE:          0.70,
@@ -230,6 +240,10 @@ class Event(Base):
         DateTime(timezone=True), nullable=True, default=None
     )
     consolidated: Mapped[bool] = mapped_column(Boolean, default=False)
+    # True for the one event per consolidation batch that carries the distilled
+    # summary embedding (the "anchor"). Consolidated non-anchor events are
+    # down-weighted in hybrid search (E1) — superseded by their anchor.
+    consolidation_anchor: Mapped[bool] = mapped_column(Boolean, default=False)
     cluster_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
     cluster_label: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
     source_type: Mapped[str] = mapped_column(String(32), default=SourceType.API_EXPLICIT)
@@ -504,6 +518,11 @@ class UserBelief(Base):
 
     Upserted on (user_id, app_id, statement): re-inferring the same belief
     increments evidence_count and updates confidence rather than creating a duplicate.
+
+    Retraction (E2): DELETE /beliefs/{id} sets status=rejected instead of
+    deleting the row, so the belief miner can see the rejection and never
+    resurrect the same statement. Rejected beliefs are excluded from identity,
+    context assembly, and re-mining prompts.
     """
 
     __tablename__ = "user_beliefs"
@@ -511,6 +530,7 @@ class UserBelief(Base):
         UniqueConstraint("user_id", "app_id", "statement", name="uq_user_belief"),
         Index("ix_user_beliefs_user_app", "user_id", "app_id"),
         Index("ix_user_beliefs_confidence", "confidence"),
+        Index("ix_user_beliefs_status", "status"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -523,6 +543,10 @@ class UserBelief(Base):
     confidence: Mapped[float] = mapped_column(Float, default=0.8)
     evidence_count: Mapped[int] = mapped_column(Integer, default=1)
     evidence_event_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(String(16), default=BeliefStatus.ACTIVE)
+    retracted_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
     first_inferred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now
     )
@@ -531,7 +555,7 @@ class UserBelief(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<UserBelief {self.category}: {self.statement[:60]!r}>"
+        return f"<UserBelief {self.category}: {self.statement[:60]!r} status={self.status}>"
 
 
 class AppUser(Base):
@@ -1009,9 +1033,156 @@ class UserActivity(Base):
     last_synthesized_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True, default=None
     )
+    last_reflected_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
 
     def __repr__(self) -> str:
         return (
             f"<UserActivity user={self.user_id} app={self.app_id} "
             f"last_event={self.last_event_at}>"
         )
+
+
+class EmbeddingMigrationStatus(StrEnum):
+    """Lifecycle state for a bulk re-embedding run (item H1)."""
+    RUNNING   = "running"     # chunks are being processed (or queued to be)
+    COMPLETE  = "complete"    # no stale embeddings remain past the cursor
+    FAILED    = "failed"      # a chunk raised repeatedly; resume via POST /admin/re-embed
+    CANCELLED = "cancelled"   # operator cancelled; resume creates a fresh run
+
+
+class EmbeddingMigration(Base):
+    """
+    Progress/state row for one resumable bulk re-embed run (item H1).
+
+    POST /admin/re-embed creates (or resumes) a row; the chunked queue task
+    processes RE_EMBED_BATCH_SIZE events at a time, committing progress and
+    the keyset cursor after every chunk, then re-enqueues itself. A crash or
+    deploy mid-run loses at most one chunk of work — the next chunk resumes
+    from (cursor_created_at, cursor_id).
+
+    The cursor advances past permanently-failing rows (they're counted in
+    `errors`) so one bad event can never wedge the whole migration.
+    """
+
+    __tablename__ = "embedding_migrations"
+    __table_args__ = (
+        Index("ix_embedding_migrations_status", "status"),
+        Index("ix_embedding_migrations_started", "started_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), default=EmbeddingMigrationStatus.RUNNING
+    )
+    target_model: Mapped[str] = mapped_column(String(255))
+    target_dim: Mapped[int] = mapped_column(Integer)
+    total: Mapped[int] = mapped_column(Integer, default=0)       # stale count at start
+    processed: Mapped[int] = mapped_column(Integer, default=0)   # rows attempted
+    errors: Mapped[int] = mapped_column(Integer, default=0)      # rows that failed to embed
+    # Keyset cursor: resume processing after this (created_at, id) pair.
+    cursor_created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    cursor_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), nullable=True, default=None
+    )
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True, default=None)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+    finished_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<EmbeddingMigration {self.status} {self.processed}/{self.total} "
+            f"model={self.target_model}>"
+        )
+
+
+class MemoryPrediction(Base):
+    """
+    One predict-observe-learn cycle for a /context call (E4, FUTURE.md #7).
+
+    Before retrieval, the PredictionEngine guesses which memories the query
+    will surface (from cluster affinity + recall history). After retrieval,
+    the actual surfaced event IDs are recorded and a hit rate computed. The
+    delta drives small importance_score adjustments: predictably-useful
+    memories are reinforced, predicted-but-unused ones decay slightly.
+    """
+
+    __tablename__ = "memory_predictions"
+    __table_args__ = (
+        Index("ix_memory_predictions_user_app_created", "user_id", "app_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    user_id: Mapped[str] = mapped_column(String(255))
+    app_id: Mapped[str] = mapped_column(String(255), default="default")
+    query_preview: Mapped[str] = mapped_column(String(300), default="")
+    intent: Mapped[str] = mapped_column(String(32), default="general")
+    predicted_event_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    predicted_cluster_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    actual_event_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    # |predicted ∩ actual| / |actual| — NULL until the outcome is recorded.
+    hit_rate: Mapped[Optional[float]] = mapped_column(Float, nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    scored_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<MemoryPrediction user={self.user_id} intent={self.intent} "
+            f"hit_rate={self.hit_rate}>"
+        )
+
+
+class ReflectionKind(StrEnum):
+    """What a reflection insight is about (E4, FUTURE.md #9)."""
+    DRIFT         = "drift"          # stated goal vs. actual logged behaviour diverge
+    CONTRADICTION = "contradiction"  # identity/beliefs conflict with recent events
+    STALE_BELIEF  = "stale_belief"   # belief with no recent supporting evidence
+    OBSERVATION   = "observation"    # notable pattern that fits none of the above
+
+
+class Reflection(Base):
+    """
+    One insight produced by a ReflectionAgent cycle (E4, FUTURE.md #9).
+
+    The reflection job periodically compares the user's stated identity
+    (goals, beliefs, facts) against their recent episodic events and surfaces
+    drift, contradictions, and stale beliefs. Insights persist here for the
+    dashboard/API; the cycle summary is also logged as an episodic event
+    (source_type=agent_reflection) so future cycles can learn from past ones.
+    """
+
+    __tablename__ = "reflections"
+    __table_args__ = (
+        Index("ix_reflections_user_app_created", "user_id", "app_id", "created_at"),
+        Index("ix_reflections_acknowledged", "acknowledged"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    user_id: Mapped[str] = mapped_column(String(255))
+    app_id: Mapped[str] = mapped_column(String(255), default="default")
+    kind: Mapped[str] = mapped_column(String(20), default=ReflectionKind.OBSERVATION)
+    insight: Mapped[str] = mapped_column(Text)
+    severity: Mapped[str] = mapped_column(String(10), default="info")  # info | notice | warning
+    # Free-form provenance: {"event_ids": [...], "belief_ids": [...], "fact_keys": [...]}
+    evidence: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    acknowledged: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    def __repr__(self) -> str:
+        return f"<Reflection {self.kind}/{self.severity}: {self.insight[:60]!r}>"

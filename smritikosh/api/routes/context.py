@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from smritikosh.api.ratelimit import limiter
 from smritikosh.auth.deps import assert_self_or_admin, get_current_user
-from smritikosh.api.deps import get_context_builder, get_reconsolidation_engine
+from smritikosh.api.deps import get_context_builder, get_prediction_engine, get_reconsolidation_engine
 from smritikosh.api.quotas import enforce_token_quota
 from smritikosh.config import settings
 from smritikosh.api.schemas import ContextRequest, ContextResponse, ProcedureItem
@@ -78,6 +78,27 @@ async def get_context(
     resolved_app_ids = body.app_ids or current_user.get("app_ids")
     _app_id = resolved_app_ids[0] if resolved_app_ids else "default"
     await enforce_token_quota(pg, body.user_id, _app_id)
+
+    # ── Predict (E4, predict-observe-learn): guess what retrieval will
+    # surface BEFORE it runs. Two indexed PG queries, no LLM — failures never
+    # block context assembly. Intent metadata uses the zero-I/O keyword tier.
+    prediction = None
+    if settings.prediction_enabled:
+        try:
+            keyword_intent = (
+                builder.intent_classifier.classify(body.query).intent
+                if builder.intent_classifier is not None else "general"
+            )
+            prediction = await get_prediction_engine().predict(
+                pg,
+                user_id=body.user_id,
+                query=body.query,
+                intent=str(keyword_intent),
+                app_ids=resolved_app_ids,
+            )
+        except Exception:
+            logger.exception("Prediction failed — continuing without it")
+
     try:
         with llm_context(user_id=body.user_id, app_id=_app_id, source="context"):
             ctx = await builder.build(
@@ -92,6 +113,21 @@ async def get_context(
     except Exception as exc:
         logger.exception("ContextBuilder failed", extra={"user_id": body.user_id})
         raise HTTPException(status_code=500, detail=f"Context retrieval failed: {exc}") from exc
+
+    # ── Observe + Learn (E4): score the prediction against what actually
+    # surfaced. Runs post-response on the durable queue (in-process fallback),
+    # like reconsolidation — zero added latency.
+    if prediction is not None:
+        actual_ids = [str(sr.event.id) for sr in ctx.similar_events]
+        job = await enqueue(
+            "record_prediction_outcome", prediction.prediction_id, actual_ids
+        )
+        if job is None:
+            background_tasks.add_task(
+                get_prediction_engine().record_outcome_by_id,
+                prediction.prediction_id,
+                actual_ids,
+            )
 
     # Schedule reconsolidation for the top recalled events on the durable
     # queue (A3-followup): the per-recall LLM call runs in the taskworker,
@@ -126,6 +162,7 @@ async def get_context(
         total_memories=ctx.total_memories(),
         embedding_failed=ctx.embedding_failed,
         intent=ctx.intent,
+        complexity=ctx.complexity,
         reconsolidation_scheduled=reconsolidation_scheduled,
         procedures=[
             ProcedureItem(

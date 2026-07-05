@@ -115,6 +115,16 @@ export function createApiClient(token?: string) {
     getIdentity: (userId: string, appId = "default") =>
       request(`/identity/${userId}?app_id=${appId}`, opts()),
 
+    // ── Beliefs (inferred worldview; retraction) ──────────────────────────
+    listBeliefs: (userId: string, appId = "default", includeRejected = false) =>
+      request(`/beliefs/${userId}?app_id=${appId}&include_rejected=${includeRejected}`, opts()),
+
+    getBeliefEvidence: (userId: string, beliefId: string, appId = "default") =>
+      request(`/beliefs/${userId}/${beliefId}/evidence?app_id=${appId}`, opts()),
+
+    retractBelief: (userId: string, beliefId: string, appId = "default") =>
+      request(`/beliefs/${userId}/${beliefId}?app_id=${appId}`, opts({ method: "DELETE" })),
+
     // ── Audit ─────────────────────────────────────────────────────────────
     getAuditTimeline: (
       userId: string,

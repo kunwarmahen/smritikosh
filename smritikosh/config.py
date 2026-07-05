@@ -166,6 +166,34 @@ class Settings(BaseSettings):
     quota_default_daily_tokens: int = 0
     quota_default_monthly_tokens: int = 0
 
+    # ── Cognitive agent layer (E4) ──────────────────────────────────────────
+    # Predict-observe-learn loop on /context: before retrieval the engine
+    # predicts which memories will surface (two indexed PG queries, no LLM);
+    # after retrieval the hit rate is scored on the task queue and small
+    # importance nudges applied. Set 0 to disable the loop entirely.
+    prediction_enabled: bool = True
+    # Importance nudge sizes for prediction hits/misses (see cognition/prediction.py).
+    prediction_hit_bump: float = 0.02
+    prediction_miss_decay: float = 0.01
+    # Reflection cycles: periodic drift/contradiction detection per user.
+    # One LLM call per active user per cycle — schedule accordingly.
+    scheduler_reflection_cron: str = "0 5 * * *"       # daily at 05:00 UTC
+    # Minimum recent events before a reflection cycle runs for a user.
+    reflection_min_events: int = 5
+
+    # ── Bulk re-embedding (H1) ──────────────────────────────────────────────
+    # Events re-embedded per chunk of a resumable embedding migration. Each
+    # chunk is one queue task: it commits progress + cursor, then re-enqueues
+    # the next chunk — so a crash/deploy loses at most one chunk of work.
+    re_embed_batch_size: int = 100
+
+    # ── Hybrid search semantics (E1) ────────────────────────────────────────
+    # Multiplier applied to the hybrid score of consolidated NON-anchor events
+    # — raw sources superseded by their batch's distilled summary. The anchor
+    # (the event that carries the summary embedding) is exempt. 1.0 disables
+    # the down-weight; lower values approach excluding superseded sources.
+    search_consolidated_penalty: float = 0.85
+
     # ── Semantic fact decay ─────────────────────────────────────────────────
     # Confidence halves every N days without reinforcement (exponential decay).
     # Relationships that fall below the floor are deleted; orphaned Fact nodes

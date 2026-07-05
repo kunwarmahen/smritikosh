@@ -78,10 +78,24 @@ export interface IdentityDimension {
 }
 
 export interface UserBelief {
+  belief_id: string;
   statement: string;
   category: string;
   confidence: number;
   evidence_count: number;
+}
+
+export interface BeliefEvidenceEvent {
+  event_id: string;
+  text: string;
+  importance_score: number;
+  created_at: string | null;
+}
+
+export interface BeliefEvidence {
+  belief: UserBelief & { status: string; evidence_event_ids: string[] };
+  evidence_events: BeliefEvidenceEvent[];
+  missing_event_ids: string[];
 }
 
 export interface IdentityProfile {

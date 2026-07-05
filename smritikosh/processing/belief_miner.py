@@ -32,7 +32,7 @@ from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from smritikosh.db.models import Event, UserBelief
+from smritikosh.db.models import BeliefStatus, Event, UserBelief
 from smritikosh.llm.adapter import LLMAdapter
 from smritikosh.memory.semantic import FactRecord, SemanticMemory
 
@@ -156,13 +156,15 @@ class BeliefMiner:
         facts = (profile.facts if profile else [])[:MAX_FACTS_IN_PROMPT]
 
         existing_beliefs = await self.get_beliefs(pg_session, user_id, app_id)
+        rejected_beliefs = await self._get_rejected(pg_session, user_id, app_id)
+        rejected_statements = {b.statement.strip().lower() for b in rejected_beliefs}
 
         # Capture event IDs before the LLM call — these become the evidence
         # sources stored alongside each belief for provenance and auditability.
         event_ids = [str(e.id) for e in events]
 
         # ── 4. Extract beliefs via LLM ────────────────────────────────────
-        prompt = _build_belief_prompt(facts, events, existing_beliefs)
+        prompt = _build_belief_prompt(facts, events, existing_beliefs, rejected_beliefs)
         try:
             extracted = await self.llm.extract_structured(
                 prompt=prompt,
@@ -183,9 +185,19 @@ class BeliefMiner:
         result.beliefs_found = len(belief_dicts)
 
         # ── 5. Upsert valid beliefs ────────────────────────────────────────
+        # Rejected statements are guarded twice: skipped here when the LLM
+        # returns one verbatim, and again at the SQL layer (the upsert's
+        # conflict action carries WHERE status != 'rejected'), so a retracted
+        # belief can never be resurrected by re-mining (E2).
         now = datetime.now(timezone.utc)
         for bd in belief_dicts:
             try:
+                if str(bd.get("statement", "")).strip().lower() in rejected_statements:
+                    logger.debug(
+                        "Skipping re-mined rejected belief",
+                        extra={"user_id": user_id, "statement": bd.get("statement")},
+                    )
+                    continue
                 upserted = await _upsert_belief(pg_session, user_id, app_id, bd, now, event_ids)
                 if upserted:
                     result.beliefs_upserted += 1
@@ -235,9 +247,14 @@ class BeliefMiner:
         user_id: str,
         app_id: str = "default",
         min_confidence: float = 0.5,
+        include_rejected: bool = False,
     ) -> list[UserBelief]:
-        """Fetch all beliefs for a user above the confidence threshold."""
-        result = await pg_session.execute(
+        """Fetch beliefs for a user above the confidence threshold.
+
+        Rejected (user-retracted) beliefs are excluded by default — they must
+        not reach identity synthesis, context assembly, or re-mining prompts.
+        """
+        q = (
             select(UserBelief)
             .where(
                 UserBelief.user_id == user_id,
@@ -245,6 +262,23 @@ class BeliefMiner:
                 UserBelief.confidence >= min_confidence,
             )
             .order_by(UserBelief.confidence.desc())
+        )
+        if not include_rejected:
+            q = q.where(UserBelief.status != BeliefStatus.REJECTED)
+        result = await pg_session.execute(q)
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def _get_rejected(
+        pg_session: AsyncSession, user_id: str, app_id: str
+    ) -> list[UserBelief]:
+        """All user-retracted beliefs, regardless of confidence."""
+        result = await pg_session.execute(
+            select(UserBelief).where(
+                UserBelief.user_id == user_id,
+                UserBelief.app_id == app_id,
+                UserBelief.status == BeliefStatus.REJECTED,
+            )
         )
         return list(result.scalars().all())
 
@@ -274,6 +308,7 @@ def _build_belief_prompt(
     facts: list[FactRecord],
     events: list[Event],
     existing_beliefs: list | None = None,
+    rejected_beliefs: list | None = None,
 ) -> str:
     """Build the LLM prompt for belief inference."""
     lines = [
@@ -283,6 +318,15 @@ def _build_belief_prompt(
         "Each belief must be a concise one-sentence statement starting with "
         "a verb (believes, values, assumes, prefers, thinks).\n"
     ]
+
+    if rejected_beliefs:
+        lines.append(
+            "REJECTED BELIEFS — the user has explicitly retracted these as wrong. "
+            "NEVER return these or any rephrasing of them:"
+        )
+        for b in rejected_beliefs:
+            lines.append(f"  - [{b.category}] {b.statement}")
+        lines.append("")
 
     if existing_beliefs:
         lines.append(
@@ -325,6 +369,8 @@ async def _upsert_belief(
     On INSERT: stores event_ids as evidence sources.
     On CONFLICT: merges old and new event IDs (deduped, capped at 50) so the
     full provenance trail grows across mining cycles without unbounded growth.
+    A conflict against a REJECTED row is a no-op (WHERE guard) — a retracted
+    belief must never be reactivated or have its confidence bumped by mining.
 
     Returns True if the upsert was executed, False if validation failed.
     """
@@ -371,6 +417,7 @@ async def _upsert_belief(
                 ),
                 "last_updated_at": now,
             },
+            where=(UserBelief.status != BeliefStatus.REJECTED),
         )
     )
     await session.execute(stmt)

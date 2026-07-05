@@ -271,8 +271,13 @@ class Consolidator:
 
         # Mark all events consolidated; write per-event summaries individually
         # so each event keeps a summary of its own content, not the whole batch.
+        # The first (oldest) event is the batch's consolidation anchor: it will
+        # carry the distilled summary embedding below, and it is exempt from
+        # the E1 hybrid-search down-weight applied to superseded batch members.
         event_ids = [e.id for e in batch]
-        await self.episodic.mark_consolidated(pg_session, event_ids)
+        await self.episodic.mark_consolidated(
+            pg_session, event_ids, anchor_event_id=batch[0].id
+        )
         for i, event in enumerate(batch):
             per_summary = event_summaries[i] if i < len(event_summaries) else None
             if per_summary:

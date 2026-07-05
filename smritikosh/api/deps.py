@@ -168,6 +168,46 @@ def get_reconsolidation_engine() -> ReconsolidationEngine:
     return ReconsolidationEngine(llm=get_llm(), episodic=get_episodic(), audit=get_audit_logger())
 
 
+@lru_cache(maxsize=1)
+def get_prediction_engine():
+    """Predict-observe-learn loop over /context (E4)."""
+    from smritikosh.cognition.prediction import PredictionEngine
+    from smritikosh.config import settings
+
+    return PredictionEngine(
+        hit_bump=settings.prediction_hit_bump,
+        miss_decay=settings.prediction_miss_decay,
+    )
+
+
+@lru_cache(maxsize=1)
+def get_decision_agent():
+    """Memory-grounded decision recommendations (E4)."""
+    from smritikosh.cognition.decision import DecisionAgent
+
+    return DecisionAgent(
+        llm=get_llm(),
+        context_builder=get_context_builder(),
+        episodic=get_episodic(),
+        audit=get_audit_logger(),
+    )
+
+
+@lru_cache(maxsize=1)
+def get_reflection_agent():
+    """Periodic drift/contradiction detection (E4)."""
+    from smritikosh.cognition.reflection import ReflectionAgent
+    from smritikosh.config import settings
+
+    return ReflectionAgent(
+        llm=get_llm(),
+        semantic=get_semantic(),
+        episodic=get_episodic(),
+        audit=get_audit_logger(),
+        min_events=settings.reflection_min_events,
+    )
+
+
 def get_audit_logger():
     """
     Return an AuditLogger backed by MongoDB, or None if MongoDB is not configured.

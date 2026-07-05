@@ -116,3 +116,26 @@ TASKS = Counter(
     "(queued = durable ARQ queue | inline = in-process fallback).",
     ["task", "path"],
 )
+
+
+# ── Cognitive agent layer (E4) ────────────────────────────────────────────────
+
+PREDICTION_HIT_RATE = Histogram(
+    "smritikosh_prediction_hit_rate",
+    "Predict-observe-learn accuracy per /context call: fraction of surfaced "
+    "memories the PredictionEngine named in advance. Rising avg = retrieval "
+    "is specialising to the user; flat-zero = predictions carry no signal.",
+    buckets=(0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
+)
+
+COMPLEXITY_ROUTED = Counter(
+    "smritikosh_complexity_routed_total",
+    "Context builds by meta-cognition complexity tier (simple | moderate | complex).",
+    ["tier"],
+)
+
+AGENT_RUNS = Counter(
+    "smritikosh_agent_runs_total",
+    "Cognitive agent executions, by agent (decision | reflection) and outcome.",
+    ["agent", "outcome"],
+)

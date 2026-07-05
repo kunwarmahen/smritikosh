@@ -17,6 +17,17 @@ Hybrid search formula:
 Weights (similarity + recency + importance + frequency + contextual_match)
 must sum to 1.0 and are tunable via HybridWeights.
 contextual_match is reserved for Phase 2 intent-aware retrieval (defaults to 0.0).
+
+Consolidated-event semantics (item E1):
+    Consolidation compresses a batch of raw events into one distilled summary,
+    re-embedded onto a single ANCHOR event (Event.consolidation_anchor=True).
+    The other batch members keep their raw-text embeddings and REMAIN
+    searchable — but their hybrid score is multiplied by a penalty
+    (SEARCH_CONSOLIDATED_PENALTY, default 0.85) so the clean anchor outranks
+    the noisy sources it supersedes without hiding them entirely. Set the
+    penalty to 1.0 to disable, or lower it to approach exclusion.
+    Caveat: events consolidated before migration 0026 have no anchor marked,
+    so their whole batch (including the old representative) is penalised.
 """
 
 import uuid
@@ -55,6 +66,12 @@ class HybridWeights:
     improves recall at the cost of re-ranking more rows.
     hnsw_ef_search sets the HNSW ef_search parameter for the session, trading
     recall quality against query speed (pgvector default is 40).
+
+    consolidated_penalty multiplies the hybrid score of consolidated
+    NON-anchor events (item E1 — sources superseded by their batch's
+    distilled summary). None (default) = use SEARCH_CONSOLIDATED_PENALTY
+    from config; 1.0 disables the down-weight. Not part of the sum-to-1.0
+    weight check because it is a multiplier, not a component weight.
     """
     similarity: float = 0.40        # semantic closeness to the query
     recency: float = 0.30           # exponential decay based on event age
@@ -65,6 +82,7 @@ class HybridWeights:
     frequency_cap: int = 50         # recall_count normalisation ceiling
     ann_candidates: int = 50        # ANN oversample pool before hybrid re-rank
     hnsw_ef_search: int = 80        # HNSW ef_search quality parameter
+    consolidated_penalty: float | None = None  # E1 down-weight; None → config default
 
     def __post_init__(self) -> None:
         total = (
@@ -178,10 +196,16 @@ class EpisodicMemory:
         summary: str | None = None,
         user_id: str | None = None,
         app_id: str = "default",
+        anchor_event_id: uuid.UUID | None = None,
     ) -> None:
         """
         Flag events as consolidated after the Consolidator has processed them.
         Optionally attach the generated summary. Multi-tenant safe.
+
+        anchor_event_id marks one batch member as the consolidation anchor —
+        the event that carries the distilled summary embedding. Anchors are
+        exempt from the E1 hybrid-search down-weight; all other batch members
+        are treated as superseded sources.
         """
         values: dict = {"consolidated": True, "updated_at": datetime.now(timezone.utc)}
         if summary is not None:
@@ -193,6 +217,14 @@ class EpisodicMemory:
         await session.execute(
             query.values(**values)
         )
+
+        if anchor_event_id is not None:
+            anchor_query = update(Event).where(Event.id == anchor_event_id)
+            if user_id is not None:
+                anchor_query = anchor_query.where(
+                    Event.user_id == user_id, Event.app_id == app_id
+                )
+            await session.execute(anchor_query.values(consolidation_anchor=True))
 
     async def update_summary(
         self,
@@ -373,12 +405,18 @@ class EpisodicMemory:
 
         Full scoring formula:
             hybrid_score =
-                similarity_weight  * (1 - cosine_distance)
+              ( similarity_weight  * (1 - cosine_distance)
               + recency_weight     * exp(-age_in_days / decay_days)
               + importance_weight  * importance_score
-              + frequency_weight   * min(recall_count, freq_cap) / freq_cap
+              + frequency_weight   * min(recall_count, freq_cap) / freq_cap )
+              × consolidated_penalty   (only when consolidated AND NOT anchor — E1)
         """
         w = weights_override if weights_override is not None else self.weights
+        consolidated_penalty = (
+            w.consolidated_penalty
+            if w.consolidated_penalty is not None
+            else _settings.search_consolidated_penalty
+        )
         vec_literal = _embedding_literal(query_embedding)
 
         # Set HNSW ef_search for this session to tune recall quality.
@@ -396,6 +434,7 @@ class EpisodicMemory:
             "w_imp": w.importance,
             "w_freq": w.frequency,
             "freq_cap": w.frequency_cap,
+            "consol_penalty": consolidated_penalty,
             "top_k": top_k,
             "candidates": candidates,
         }
@@ -421,14 +460,18 @@ class EpisodicMemory:
                     / 86400.0 / :decay_days
                 )                                                            AS recency_score,
                 importance_score,
-                LEAST(recall_count, :freq_cap)::float / :freq_cap           AS frequency_score
+                LEAST(recall_count, :freq_cap)::float / :freq_cap           AS frequency_score,
+                CASE WHEN consolidated AND NOT consolidation_anchor
+                     THEN :consol_penalty ELSE 1.0 END                       AS score_multiplier
             FROM (
                 SELECT
                     id,
                     (embedding <=> '{vec_literal}')  AS cosine_dist,
                     created_at,
                     importance_score,
-                    recall_count
+                    recall_count,
+                    consolidated,
+                    consolidation_anchor
                 FROM events
                 WHERE
                     user_id = :user_id
@@ -442,7 +485,8 @@ class EpisodicMemory:
                   + :w_rec  * EXP(-EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400.0 / :decay_days)
                   + :w_imp  * importance_score
                   + :w_freq * (LEAST(recall_count, :freq_cap)::float / :freq_cap)
-                ) DESC
+                ) * CASE WHEN consolidated AND NOT consolidation_anchor
+                         THEN :consol_penalty ELSE 1.0 END DESC
             LIMIT :top_k
         """)
 
@@ -463,7 +507,7 @@ class EpisodicMemory:
                             + w.recency * float(row.recency_score)
                             + w.importance * float(row.importance_score)
                             + w.frequency * float(row.frequency_score)
-                        ),
+                        ) * float(row.score_multiplier),
                     )
                 )
         return results

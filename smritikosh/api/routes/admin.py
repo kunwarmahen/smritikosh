@@ -28,6 +28,8 @@ from smritikosh.api.schemas import (
     AdminUserPatch,
     AdminUsersResponse,
     EmbeddingHealthResponse,
+    EmbeddingMigrationItem,
+    EmbeddingMigrationStatusResponse,
     ReconsolidateRequest,
     ReconsolidateResponse,
     ReEmbedResponse,
@@ -301,6 +303,48 @@ async def trigger_synthesis(
     )
 
 
+# ── Reflection cycles (E4) ─────────────────────────────────────────────────────
+
+
+@router.post("/reflect", response_model=AdminJobResponse)
+async def trigger_reflection(
+    body: AdminJobRequest,
+    scheduler: Annotated[MemoryScheduler, Depends(_get_scheduler)],
+    _admin: Annotated[dict, Depends(require_admin)],
+) -> AdminJobResponse:
+    """
+    Run reflection cycles immediately (drift/contradiction detection).
+
+    If ``user_id`` is provided, runs for that user only.
+    If omitted, runs for all users.
+    """
+    if body.user_id:
+        result = await scheduler.run_reflection_now(
+            user_id=body.user_id, app_id=body.app_id
+        )
+        results = [result]
+    else:
+        results = await scheduler.run_reflection_for_all_users()
+
+    return AdminJobResponse(
+        job="reflection",
+        users_processed=len(results),
+        results=[
+            AdminJobResult(
+                user_id=r.user_id,
+                app_id=r.app_id,
+                skipped=r.skipped,
+                detail=(
+                    r.skip_reason
+                    if r.skipped
+                    else f"insights_found={r.insights_found} stored={r.insights_stored}"
+                ),
+            )
+            for r in results
+        ],
+    )
+
+
 # ── User management ────────────────────────────────────────────────────────────
 
 
@@ -456,6 +500,23 @@ async def embedding_health(
     )
 
 
+def _migration_item(m) -> EmbeddingMigrationItem:
+    return EmbeddingMigrationItem(
+        migration_id=str(m.id),
+        status=m.status,
+        target_model=m.target_model,
+        target_dim=m.target_dim,
+        total=m.total,
+        processed=m.processed,
+        errors=m.errors,
+        progress_pct=round(100.0 * m.processed / m.total, 2) if m.total else 100.0,
+        started_at=m.started_at.isoformat() if m.started_at else "",
+        updated_at=m.updated_at.isoformat() if m.updated_at else "",
+        finished_at=m.finished_at.isoformat() if m.finished_at else None,
+        error_message=m.error_message,
+    )
+
+
 @router.post("/re-embed", response_model=ReEmbedResponse)
 async def trigger_re_embed(
     background_tasks: BackgroundTasks,
@@ -467,14 +528,18 @@ async def trigger_re_embed(
     Re-embed all events whose embedding dimension doesn't match EMBEDDING_DIMENSIONS,
     plus any events that were stored without an embedding.
 
-    The work runs on the durable task queue (or, when no REDIS_URL is configured,
-    an in-process background task). The response returns immediately with the
-    number of events queued. Check GET /admin/embedding-health afterward to
-    confirm all stale embeddings are resolved.
+    The run is a resumable, chunked embedding migration (item H1): progress and
+    a keyset cursor are committed after every RE_EMBED_BATCH_SIZE events, so a
+    crash or deploy loses at most one chunk. If a migration is already running,
+    this call resumes it (from its cursor) instead of starting a second one.
+    Track progress with GET /admin/re-embed/status; cancel with DELETE /admin/re-embed.
     """
     from smritikosh.audit.logger import AuditEvent, EventType
     from smritikosh.tasks import enqueue
-    from smritikosh.tasks.jobs import _re_embed_stale_events
+    from smritikosh.tasks.jobs import (
+        _create_or_resume_migration,
+        _run_embedding_migration_inline,
+    )
 
     configured_dim = settings.embedding_dimensions
 
@@ -485,9 +550,9 @@ async def trigger_re_embed(
         ),
         {"dim": configured_dim},
     )
-    queued = int(row.scalar() or 0)
+    stale = int(row.scalar() or 0)
 
-    if queued == 0:
+    if stale == 0:
         if audit:
             await audit.emit(AuditEvent(
                 event_type=EventType.EMBEDDING_REEMBED_QUEUED,
@@ -497,21 +562,87 @@ async def trigger_re_embed(
             ))
         return ReEmbedResponse(status="ok", queued=0, message="No stale embeddings found.")
 
-    # Durable queue when available; in-process fallback otherwise.
-    job = await enqueue("re_embed_events")
+    migration_id, total, resumed = await _create_or_resume_migration()
+
+    # Durable queue when available; in-process chunk loop otherwise.
+    job = await enqueue("re_embed_events", migration_id)
     if job is None:
-        background_tasks.add_task(_re_embed_stale_events)
+        background_tasks.add_task(_run_embedding_migration_inline, migration_id)
 
     if audit:
         await audit.emit(AuditEvent(
             event_type=EventType.EMBEDDING_REEMBED_QUEUED,
             user_id=_admin["sub"],
             app_id="__system__",
-            payload={"queued": queued, "configured_dim": configured_dim, "triggered_by": _admin["sub"]},
+            payload={
+                "queued": stale,
+                "configured_dim": configured_dim,
+                "migration_id": migration_id,
+                "resumed": resumed,
+                "triggered_by": _admin["sub"],
+            },
         ))
 
-    logger.info("Re-embed queued: %d events", queued)
-    return ReEmbedResponse(status="started", queued=queued)
+    logger.info(
+        "Re-embed %s: %d stale events (migration %s)",
+        "resumed" if resumed else "started", stale, migration_id,
+    )
+    return ReEmbedResponse(
+        status="resumed" if resumed else "started",
+        queued=stale,
+        migration_id=migration_id,
+    )
+
+
+@router.get("/re-embed/status", response_model=EmbeddingMigrationStatusResponse)
+async def re_embed_status(
+    pg: AsyncSession = Depends(get_session),
+    _admin: dict = Depends(require_admin),
+) -> EmbeddingMigrationStatusResponse:
+    """Progress of the running embedding migration plus recent run history (H1)."""
+    from smritikosh.db.models import EmbeddingMigration, EmbeddingMigrationStatus
+
+    result = await pg.execute(
+        select(EmbeddingMigration)
+        .order_by(EmbeddingMigration.started_at.desc())
+        .limit(5)
+    )
+    migrations = list(result.scalars().all())
+    current = next(
+        (m for m in migrations if m.status == EmbeddingMigrationStatus.RUNNING), None
+    )
+    return EmbeddingMigrationStatusResponse(
+        current=_migration_item(current) if current else None,
+        history=[_migration_item(m) for m in migrations],
+    )
+
+
+@router.delete("/re-embed", response_model=EmbeddingMigrationStatusResponse)
+async def cancel_re_embed(
+    pg: AsyncSession = Depends(get_session),
+    _admin: dict = Depends(require_admin),
+) -> EmbeddingMigrationStatusResponse:
+    """Cancel the running embedding migration. The in-flight chunk finishes;
+    the next chunk sees the cancelled status and stops. Re-POST /admin/re-embed
+    to start a fresh run over whatever is still stale."""
+    from datetime import datetime, timezone
+
+    from smritikosh.db.models import EmbeddingMigration, EmbeddingMigrationStatus
+
+    result = await pg.execute(
+        select(EmbeddingMigration).where(
+            EmbeddingMigration.status == EmbeddingMigrationStatus.RUNNING
+        )
+    )
+    cancelled = 0
+    for m in result.scalars().all():
+        m.status = EmbeddingMigrationStatus.CANCELLED
+        m.finished_at = datetime.now(timezone.utc)
+        cancelled += 1
+    await pg.flush()
+    if cancelled:
+        logger.info("Cancelled %d running embedding migration(s)", cancelled)
+    return await re_embed_status(pg=pg, _admin=_admin)
 
 
 @router.get("/llm-usage", summary="LLM token/cost accounting")
