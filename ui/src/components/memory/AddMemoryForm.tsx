@@ -3,32 +3,7 @@
 import { useState } from "react";
 import { X, PenLine, Loader2, Check } from "lucide-react";
 import { useStoreFact } from "@/hooks/useMemory";
-
-const FACT_CATEGORIES = [
-  { value: "identity",     label: "Identity" },
-  { value: "location",     label: "Location" },
-  { value: "role",         label: "Role" },
-  { value: "skill",        label: "Skill" },
-  { value: "education",    label: "Education" },
-  { value: "project",      label: "Project" },
-  { value: "goal",         label: "Goal" },
-  { value: "interest",     label: "Interest" },
-  { value: "hobby",        label: "Hobby" },
-  { value: "habit",        label: "Habit" },
-  { value: "preference",   label: "Preference" },
-  { value: "personality",  label: "Personality" },
-  { value: "relationship", label: "Relationship" },
-  { value: "pet",          label: "Pet" },
-  { value: "health",       label: "Health" },
-  { value: "diet",         label: "Diet" },
-  { value: "belief",       label: "Belief" },
-  { value: "value",        label: "Value" },
-  { value: "religion",     label: "Religion" },
-  { value: "finance",      label: "Finance" },
-  { value: "lifestyle",    label: "Lifestyle" },
-  { value: "event",        label: "Event" },
-  { value: "tool",         label: "Tool" },
-];
+import { FACT_CATEGORIES } from "@/lib/fact-categories";
 
 interface Props {
   onClose: () => void;

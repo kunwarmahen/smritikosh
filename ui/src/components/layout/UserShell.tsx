@@ -12,6 +12,7 @@ import {
   Zap,
   Key,
   Mic,
+  Share2,
   ShieldCheck,
   LogOut,
   ChevronLeft,
@@ -36,8 +37,9 @@ const USER_NAV = [
 ];
 
 const SETTINGS_NAV = [
-  { href: "/dashboard/settings/api-keys",         icon: Key, label: "API Keys" },
-  { href: "/dashboard/settings/voice-enrollment", icon: Mic, label: "Voice" },
+  { href: "/dashboard/settings/api-keys",         icon: Key,    label: "API Keys" },
+  { href: "/dashboard/settings/sharing",          icon: Share2, label: "Sharing" },
+  { href: "/dashboard/settings/voice-enrollment", icon: Mic,    label: "Voice" },
 ];
 
 const ADMIN_NAV = [

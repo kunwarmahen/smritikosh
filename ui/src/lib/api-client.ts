@@ -257,6 +257,23 @@ export function createApiClient(token?: string) {
     resolveContradiction: (contradictionId: string, body: { keep: string; merged_value?: string }) =>
       request(`/facts/contradictions/${contradictionId}`, opts({ method: "PATCH", body: JSON.stringify(body) })),
 
+    // ── Consents (cross-app sharing) ──────────────────────────────────────
+    listConsents: (userId: string, includeRevoked = false) =>
+      request(`/consents/${userId}?include_revoked=${includeRevoked}`, opts()),
+
+    grantConsent: (body: {
+      user_id: string;
+      source_app_id: string;
+      target_app_id: string;
+      categories?: string[];
+    }) => request(`/consents`, opts({ method: "POST", body: JSON.stringify(body) })),
+
+    revokeConsent: (body: {
+      user_id: string;
+      source_app_id: string;
+      target_app_id: string;
+    }) => request(`/consents`, opts({ method: "DELETE", body: JSON.stringify(body) })),
+
     // ── API keys ──────────────────────────────────────────────────────────
     listApiKeys: () =>
       request(`/keys`, opts()),

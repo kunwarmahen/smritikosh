@@ -53,6 +53,7 @@ Smritikosh gives any LLM application persistent, user-specific memory modelled o
   - [External ingest](#external-ingest)
   - [Passive Memory Extraction](#passive-memory-extraction)
   - [Facts QC](#facts-qc-api)
+  - [Consents (cross-app sharing)](#consents-api-cross-app-sharing)
   - [Audit trail](#audit-trail-api)
 - [Audit trail](#audit-trail)
 - [Authentication & API keys](#authentication--api-keys)
@@ -1141,6 +1142,7 @@ smritikosh/
 │       ├── session_ingest.py # POST /ingest/session, POST /ingest/transcript
 │       ├── facts.py         # GET /facts/{user_id}, PATCH /facts/.../status,
 │       │                    #   GET /facts/contradictions/{user_id}, PATCH /facts/contradictions/{id}
+│       ├── consents.py      # POST/DELETE /consents, GET /consents/{user_id} — cross-app sharing grants
 │       ├── media_ingest.py  # POST /ingest/media, GET /ingest/media/{id}/status,
 │       │                    #   POST /ingest/media/{id}/confirm
 │       └── voice_enrollment.py # POST/GET/DELETE /user/{user_id}/voice-enrollment
@@ -1238,6 +1240,7 @@ ui/                          # Next.js 16 dashboard (App Router)
 │   │   │   ├── procedures/         # Procedural rules CRUD
 │   │   │   └── settings/
 │   │   │       ├── api-keys/       # Generate and revoke API keys
+│   │   │       ├── sharing/        # Cross-app sharing grants: view, grant, revoke (consent layer)
 │   │   │       └── voice-enrollment/  # 30-sec voice sample recording, waveform, enrollment status
 │   │   └── (admin)/admin/
 │   │       ├── page.tsx            # Redirect → /admin/users
@@ -1797,6 +1800,7 @@ npm start        # serve the production build
 | `/admin/users` | Admin | Paginated user list — create, activate/deactivate, change role |
 | `/admin/users/[userId]` | Admin | Per-user detail, role toggle, memory wipe |
 | `/dashboard/settings/api-keys` | User | Generate and revoke long-lived API keys |
+| `/dashboard/settings/sharing` | User | Cross-app sharing grants — give one app read access to facts learned in another, per category; revoke anytime, revoked grants kept for history |
 | `/dashboard/settings/voice-enrollment` | User | Record a 30-second voice sample for speaker diarization; waveform visualiser, re-record, delete enrollment |
 
 ### Authentication
@@ -3316,6 +3320,81 @@ curl -X PATCH "http://localhost:8080/facts/contradictions/b2c3d4e5-..." \
 
 ---
 
+## Consents API (cross-app sharing)
+
+By default, app namespaces are fully isolated — an app only sees facts learned under its own
+`app_id`. The consent layer is the controlled inverse: a user grants app B read access to facts
+learned in app A, per fact category, revocable at any time. Grants are enforced at read time in
+the `/context` builder — consented facts from source apps are merged into the target app's
+context, tagged with their provenance in `source_meta["shared_from_app"]`. If both apps know the
+same `(category, key)`, the target app's own fact wins. Revoking takes effect on the next read;
+nothing is ever copied between namespaces.
+
+Authorization: the caller must be the user themself or an admin, and (for grant/revoke) must
+have token access to the **source** app — the one whose facts are being shared out.
+
+Users can manage grants from the dashboard under **Settings → Sharing**.
+
+### `POST /consents`
+
+Grant (or reactivate) a sharing grant. An empty `categories` list shares **all** categories.
+
+```bash
+curl -X POST http://localhost:8080/consents \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "alice",
+    "source_app_id": "chat-app",
+    "target_app_id": "fitness-app",
+    "categories": ["diet", "health"]
+  }'
+```
+
+Response `201`:
+
+```json
+{
+  "consent_id": "f8d83a4d-…",
+  "user_id": "alice",
+  "source_app_id": "chat-app",
+  "target_app_id": "fitness-app",
+  "categories": ["diet", "health"],
+  "active": true,
+  "granted_at": "2026-07-05T10:53:00+00:00",
+  "revoked_at": null,
+  "created_by": "alice"
+}
+```
+
+Re-granting an existing (user, source, target) pair reactivates it with the new categories.
+Invalid category names return `422`.
+
+### `DELETE /consents`
+
+Revoke a grant. The row is kept (with `revoked_at` set) for grant history; `404` if no active
+grant matches.
+
+```bash
+curl -X DELETE http://localhost:8080/consents \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "alice", "source_app_id": "chat-app", "target_app_id": "fitness-app"}'
+```
+
+### `GET /consents/{user_id}`
+
+List a user's grants — active only by default, `?include_revoked=true` for full history.
+
+```bash
+curl "http://localhost:8080/consents/alice?include_revoked=true" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Every grant, revocation, and cross-app read is recorded in the audit trail
+(`consent.granted`, `consent.revoked`, `consent.cross_app_read` — see
+[Event types](#event-types)).
+
 ## Audit trail API
 
 These endpoints are available only when `MONGODB_URL` is configured. All return `503 Service Unavailable` if MongoDB is not set up.
@@ -3482,6 +3561,9 @@ POST /memory/search
 | `feedback.submitted` | `POST /feedback` route | `feedback_type`, `comment`, `new_importance_score` |
 | `context.built` | `ContextBuilder.build()` | `query_preview`, `intent`, `similar_events_count`, `recent_events_count`, `facts_count` |
 | `search.performed` | `POST /memory/search` route | `query_preview`, `results_count`, `embedding_failed`, `limit` |
+| `consent.granted` | `ConsentService.grant()` | `source_app_id`, `target_app_id`, `categories`, `created_by` |
+| `consent.revoked` | `ConsentService.revoke()` | `source_app_id`, `target_app_id`, `revoked_by` |
+| `consent.cross_app_read` | `ConsentService.consented_facts()` (per source app, on `/context` reads) | `source_app_id`, `target_app_id`, `categories`, `facts_returned` |
 
 ### Session grouping
 
@@ -3718,6 +3800,12 @@ curl -X POST /context -d '{"user_id": "alice", "query": "...", "app_ids": ["chat
 ```
 
 Generate API keys scoped to specific app namespaces from the dashboard under **Settings → API Keys**.
+
+To *selectively* share across namespaces without widening token scope, use the consent layer
+instead — see [Consents API (cross-app sharing)](#consents-api-cross-app-sharing). A user grants
+app B read access to facts learned in app A (per category, revocable); consented facts then show
+up in app B's `/context` reads tagged with `source_meta["shared_from_app"]`. Manageable from the
+dashboard under **Settings → Sharing**.
 
 ### Error handling
 
