@@ -180,6 +180,18 @@ class Settings(BaseSettings):
     scheduler_reflection_cron: str = "0 5 * * *"       # daily at 05:00 UTC
     # Minimum recent events before a reflection cycle runs for a user.
     reflection_min_events: int = 5
+    # Proactive Life OS (FUTURE.md #5): bundles fresh reflection insights into
+    # one digest per user and delivers it. LLM-free — safe to run daily.
+    # Schedule AFTER the reflection cron so each cycle has fresh insights.
+    scheduler_lifeos_cron: str = "0 7 * * *"           # daily at 07:00 UTC
+    # Optional webhook: nudge digests are POSTed here as JSON (payload carries
+    # user_id/app_id for routing). Unset = in-app feed only
+    # (GET /cognition/nudges/{user_id}).
+    lifeos_webhook_url: str | None = None
+    # Only insights at/above this severity are nudged: info | notice | warning.
+    lifeos_min_severity: str = "notice"
+    # At most one nudge per user per cooldown window.
+    lifeos_cooldown_hours: int = 24
 
     # ── Bulk re-embedding (H1) ──────────────────────────────────────────────
     # Events re-embedded per chunk of a resumable embedding migration. Each

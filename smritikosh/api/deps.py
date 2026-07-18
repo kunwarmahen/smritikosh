@@ -194,6 +194,33 @@ def get_decision_agent():
 
 
 @lru_cache(maxsize=1)
+def get_council_agent():
+    """Multi-agent deliberation for high-stakes decisions (E4)."""
+    from smritikosh.cognition.council import CouncilAgent
+
+    return CouncilAgent(
+        llm=get_llm(),
+        context_builder=get_context_builder(),
+        episodic=get_episodic(),
+        audit=get_audit_logger(),
+    )
+
+
+@lru_cache(maxsize=1)
+def get_meeting_prep_agent():
+    """Pre-meeting briefs + post-meeting debrief ingestion (E4)."""
+    from smritikosh.cognition.meeting_prep import MeetingPrepAgent
+
+    return MeetingPrepAgent(
+        llm=get_llm(),
+        episodic=get_episodic(),
+        semantic=get_semantic(),
+        hippocampus=get_hippocampus(),
+        audit=get_audit_logger(),
+    )
+
+
+@lru_cache(maxsize=1)
 def get_reflection_agent():
     """Periodic drift/contradiction detection (E4)."""
     from smritikosh.cognition.reflection import ReflectionAgent
@@ -205,6 +232,20 @@ def get_reflection_agent():
         episodic=get_episodic(),
         audit=get_audit_logger(),
         min_events=settings.reflection_min_events,
+    )
+
+
+@lru_cache(maxsize=1)
+def get_lifeos_agent():
+    """Proactive nudge delivery over reflection insights (E4). LLM-free."""
+    from smritikosh.cognition.lifeos import LifeOSAgent
+    from smritikosh.config import settings
+
+    return LifeOSAgent(
+        webhook_url=settings.lifeos_webhook_url,
+        min_severity=settings.lifeos_min_severity,
+        cooldown_hours=settings.lifeos_cooldown_hours,
+        audit=get_audit_logger(),
     )
 
 

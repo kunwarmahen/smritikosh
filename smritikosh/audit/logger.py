@@ -51,6 +51,9 @@ class EventType:
     BELIEF_RETRACTED       = "belief.retracted"          # user rejected an inferred belief (E2)
     AGENT_DECISION         = "agent.decision"            # DecisionAgent recommendation issued (E4)
     AGENT_REFLECTION       = "agent.reflection"          # ReflectionAgent cycle stored insights (E4)
+    AGENT_COUNCIL          = "agent.council"             # CouncilAgent deliberation verdict issued (E4)
+    AGENT_MEETING_PREP     = "agent.meeting_prep"        # MeetingPrepAgent brief issued (E4)
+    AGENT_NUDGE            = "agent.nudge"               # LifeOS nudge composed/delivered (E4)
     FEEDBACK_SUBMITTED     = "feedback.submitted"
     CONTEXT_BUILT          = "context.built"
     SEARCH_PERFORMED       = "search.performed"

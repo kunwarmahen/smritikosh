@@ -136,6 +136,7 @@ COMPLEXITY_ROUTED = Counter(
 
 AGENT_RUNS = Counter(
     "smritikosh_agent_runs_total",
-    "Cognitive agent executions, by agent (decision | reflection) and outcome.",
+    "Cognitive agent executions, by agent (decision | council | meeting_prep "
+    "| meeting_debrief | reflection | lifeos) and outcome.",
     ["agent", "outcome"],
 )

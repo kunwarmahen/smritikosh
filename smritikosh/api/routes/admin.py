@@ -345,6 +345,48 @@ async def trigger_reflection(
     )
 
 
+@router.post("/nudge", response_model=AdminJobResponse)
+async def trigger_nudge(
+    body: AdminJobRequest,
+    scheduler: Annotated[MemoryScheduler, Depends(_get_scheduler)],
+    _admin: Annotated[dict, Depends(require_admin)],
+) -> AdminJobResponse:
+    """
+    Run Life OS nudge cycles immediately (digest fresh reflection insights).
+
+    If ``user_id`` is provided, runs for that user only.
+    If omitted, runs for all users. LLM-free.
+    """
+    if body.user_id:
+        result = await scheduler.run_lifeos_now(
+            user_id=body.user_id, app_id=body.app_id
+        )
+        results = [result]
+    else:
+        results = await scheduler.run_lifeos_for_all_users()
+
+    return AdminJobResponse(
+        job="lifeos",
+        users_processed=len(results),
+        results=[
+            AdminJobResult(
+                user_id=r.user_id,
+                app_id=r.app_id,
+                skipped=r.skipped,
+                detail=(
+                    r.skip_reason
+                    if r.skipped
+                    else (
+                        f"insights={r.insights_included} channel={r.channel} "
+                        f"delivered={r.delivered}"
+                    )
+                ),
+            )
+            for r in results
+        ],
+    )
+
+
 # ── User management ────────────────────────────────────────────────────────────
 
 

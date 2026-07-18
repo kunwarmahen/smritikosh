@@ -3,12 +3,21 @@ Cognitive agent layer routes (item E4).
 
 POST /agent/decision                        Memory-grounded decision recommendation
                                             with cited evidence (DecisionAgent).
+POST /agent/council                         Multi-agent deliberation: four specialist
+                                            opinions + a judge verdict (CouncilAgent).
+POST /agent/meeting-prep                    Pre-meeting brief: attendees, history,
+                                            open commitments (MeetingPrepAgent).
+POST /agent/meeting-debrief                 Feed post-meeting notes back through the
+                                            full encoding pipeline (closes the loop).
 GET  /cognition/predictions/{user_id}       Recent predict-observe-learn cycles +
                                             rolling accuracy (PredictionEngine).
 GET  /cognition/reflections/{user_id}       Insights from reflection cycles
                                             (drift, contradictions, stale beliefs).
 POST /cognition/reflections/{user_id}/{id}/ack   Acknowledge an insight so it
                                             stops surfacing as a nudge.
+GET  /cognition/nudges/{user_id}            Proactive Life OS nudge feed
+                                            (digests of reflection insights).
+POST /cognition/nudges/{user_id}/{id}/ack   Dismiss a nudge from the feed.
 """
 
 import logging
@@ -20,17 +29,31 @@ from neo4j import AsyncSession as NeoSession
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from smritikosh.api.deps import (
+    get_council_agent,
     get_decision_agent,
+    get_lifeos_agent,
+    get_meeting_prep_agent,
     get_neo4j_session,
     get_prediction_engine,
     get_reflection_agent,
 )
-from smritikosh.api.quotas import enforce_token_quota
+from smritikosh.api.quotas import enforce_event_quota, enforce_token_quota
 from smritikosh.api.ratelimit import limiter
 from smritikosh.api.schemas import (
     BeliefAlignmentItem,
+    AttendeeBriefItem,
+    CouncilOpinionItem,
+    CouncilRequest,
+    CouncilResponse,
     DecisionRequest,
     DecisionResponse,
+    MeetingDebriefRequest,
+    MeetingDebriefResponse,
+    MeetingPrepRequest,
+    MeetingPrepResponse,
+    NudgeAckResponse,
+    NudgeItem,
+    NudgeListResponse,
     PredictionItem,
     PredictionListResponse,
     ReflectionAckResponse,
@@ -102,6 +125,180 @@ async def agent_decision(
         logged_event_id=result.logged_event_id,
         skipped=result.skipped,
         skip_reason=result.skip_reason,
+    )
+
+
+# ── Deliberation council ───────────────────────────────────────────────────────
+
+
+@router.post("/agent/council", response_model=CouncilResponse)
+@limiter.limit(lambda: settings.rate_limit_context or "10000/minute")
+async def agent_council(
+    request: Request,
+    body: CouncilRequest,
+    pg: Annotated[AsyncSession, Depends(get_session)],
+    neo: Annotated[NeoSession, Depends(get_neo4j_session)],
+    current_user: Annotated[dict, Depends(get_current_user)],
+) -> CouncilResponse:
+    """
+    Convene the deliberation council for a high-stakes decision: risk, values,
+    pattern, and devil's-advocate specialists argue over the user's memory
+    concurrently, then a judge synthesises a verdict — with the full reasoning
+    chain (every opinion, its position, and its cited evidence) returned.
+    Costs ~5 LLM calls; use POST /agent/decision for everyday decisions.
+    """
+    assert_self_or_admin(current_user, body.user_id)
+    resolved_app_ids = body.app_ids or current_user.get("app_ids")
+    app_id = resolved_app_ids[0] if resolved_app_ids else "default"
+    await enforce_token_quota(pg, body.user_id, app_id)
+
+    agent = get_council_agent()
+    try:
+        with llm_context(user_id=body.user_id, app_id=app_id, source="council_agent"):
+            result = await agent.deliberate(
+                pg,
+                neo,
+                user_id=body.user_id,
+                decision=body.decision,
+                options=body.options,
+                app_ids=resolved_app_ids,
+            )
+    except Exception as exc:
+        logger.exception("CouncilAgent failed", extra={"user_id": body.user_id})
+        raise HTTPException(status_code=500, detail=f"Deliberation failed: {exc}") from exc
+
+    return CouncilResponse(
+        user_id=result.user_id,
+        app_id=result.app_id,
+        decision=result.decision,
+        opinions=[
+            CouncilOpinionItem(
+                role=op.role,
+                position=op.position,
+                argument=op.argument,
+                confidence=op.confidence,
+                cited_event_ids=op.cited_event_ids,
+            )
+            for op in result.opinions
+        ],
+        recommendation=result.recommendation,
+        reasoning=result.reasoning,
+        confidence=result.confidence,
+        dissent=result.dissent,
+        cited_event_ids=result.cited_event_ids,
+        open_questions=result.open_questions,
+        memories_considered=result.memories_considered,
+        logged_event_id=result.logged_event_id,
+        skipped=result.skipped,
+        skip_reason=result.skip_reason,
+    )
+
+
+# ── Meeting prep / debrief ─────────────────────────────────────────────────────
+
+
+@router.post("/agent/meeting-prep", response_model=MeetingPrepResponse)
+@limiter.limit(lambda: settings.rate_limit_context or "10000/minute")
+async def agent_meeting_prep(
+    request: Request,
+    body: MeetingPrepRequest,
+    pg: Annotated[AsyncSession, Depends(get_session)],
+    neo: Annotated[NeoSession, Depends(get_neo4j_session)],
+    current_user: Annotated[dict, Depends(get_current_user)],
+) -> MeetingPrepResponse:
+    """
+    Produce a one-page meeting brief from the user's memory: what they know
+    about each attendee, prior interactions, open commitments, talking points,
+    and questions worth asking — with cited evidence. The brief is also logged
+    back as an episodic event.
+    """
+    assert_self_or_admin(current_user, body.user_id)
+    resolved_app_ids = body.app_ids or current_user.get("app_ids")
+    app_id = resolved_app_ids[0] if resolved_app_ids else "default"
+    await enforce_token_quota(pg, body.user_id, app_id)
+
+    agent = get_meeting_prep_agent()
+    try:
+        with llm_context(user_id=body.user_id, app_id=app_id, source="meeting_prep_agent"):
+            result = await agent.prepare(
+                pg,
+                neo,
+                user_id=body.user_id,
+                attendees=body.attendees,
+                topic=body.topic,
+                goal=body.goal,
+                app_ids=resolved_app_ids,
+            )
+    except Exception as exc:
+        logger.exception("MeetingPrepAgent failed", extra={"user_id": body.user_id})
+        raise HTTPException(status_code=500, detail=f"Meeting prep failed: {exc}") from exc
+
+    return MeetingPrepResponse(
+        user_id=result.user_id,
+        app_id=result.app_id,
+        attendees=result.attendees,
+        topic=result.topic,
+        attendee_briefs=[
+            AttendeeBriefItem(
+                name=b.name,
+                known_facts=b.known_facts,
+                history=b.history,
+                open_commitments=b.open_commitments,
+            )
+            for b in result.attendee_briefs
+        ],
+        talking_points=result.talking_points,
+        questions_to_ask=result.questions_to_ask,
+        watch_outs=result.watch_outs,
+        cited_event_ids=result.cited_event_ids,
+        memories_considered=result.memories_considered,
+        logged_event_id=result.logged_event_id,
+        skipped=result.skipped,
+        skip_reason=result.skip_reason,
+    )
+
+
+@router.post("/agent/meeting-debrief", response_model=MeetingDebriefResponse)
+@limiter.limit(lambda: settings.rate_limit_encode or "10000/minute")
+async def agent_meeting_debrief(
+    request: Request,
+    body: MeetingDebriefRequest,
+    pg: Annotated[AsyncSession, Depends(get_session)],
+    neo: Annotated[NeoSession, Depends(get_neo4j_session)],
+    current_user: Annotated[dict, Depends(get_current_user)],
+) -> MeetingDebriefResponse:
+    """
+    Feed post-meeting notes back through the full encoding pipeline
+    (importance scoring, embedding, fact extraction) — closing the loop:
+    memory in → agent action → new memory out.
+    """
+    assert_self_or_admin(current_user, body.user_id)
+    resolved_app_ids = body.app_ids or current_user.get("app_ids")
+    app_id = resolved_app_ids[0] if resolved_app_ids else "default"
+    await enforce_event_quota(pg, body.user_id, app_id)
+    await enforce_token_quota(pg, body.user_id, app_id)
+
+    agent = get_meeting_prep_agent()
+    try:
+        with llm_context(user_id=body.user_id, app_id=app_id, source="meeting_debrief"):
+            result = await agent.debrief(
+                pg,
+                neo,
+                user_id=body.user_id,
+                notes=body.notes,
+                attendees=body.attendees,
+                app_ids=resolved_app_ids,
+            )
+    except Exception as exc:
+        logger.exception("Meeting debrief failed", extra={"user_id": body.user_id})
+        raise HTTPException(status_code=500, detail=f"Debrief failed: {exc}") from exc
+
+    return MeetingDebriefResponse(
+        user_id=result.user_id,
+        app_id=result.app_id,
+        event_id=result.event_id,
+        facts_extracted=result.facts_extracted,
+        extraction_failed=result.extraction_failed,
     )
 
 
@@ -182,6 +379,70 @@ async def list_reflections(
             for r in rows
         ],
     )
+
+
+# ── Nudges (Proactive Life OS feed) ────────────────────────────────────────────
+
+
+@router.get("/cognition/nudges/{user_id}", response_model=NudgeListResponse)
+async def list_nudges(
+    user_id: str,
+    app_id: Annotated[str, Query()] = "default",
+    include_acknowledged: Annotated[bool, Query()] = False,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    pg: AsyncSession = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+) -> NudgeListResponse:
+    """The proactive nudge feed: digests of fresh reflection insights."""
+    assert_self_or_admin(current_user, user_id)
+    assert_app_access(current_user, app_id)
+
+    agent = get_lifeos_agent()
+    rows = await agent.list_nudges(
+        pg, user_id, app_id, include_acknowledged=include_acknowledged, limit=limit
+    )
+    return NudgeListResponse(
+        user_id=user_id,
+        app_id=app_id,
+        nudges=[
+            NudgeItem(
+                nudge_id=str(n.id),
+                digest=n.digest,
+                severity=n.severity,
+                channel=n.channel,
+                status=n.status,
+                reflection_ids=[str(i) for i in (n.reflection_ids or [])],
+                acknowledged=n.acknowledged,
+                created_at=n.created_at.isoformat() if n.created_at else "",
+                delivered_at=n.delivered_at.isoformat() if n.delivered_at else None,
+            )
+            for n in rows
+        ],
+    )
+
+
+@router.post(
+    "/cognition/nudges/{user_id}/{nudge_id}/ack",
+    response_model=NudgeAckResponse,
+)
+async def acknowledge_nudge(
+    user_id: str,
+    nudge_id: str,
+    pg: AsyncSession = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+) -> NudgeAckResponse:
+    """Dismiss a nudge from the feed."""
+    assert_self_or_admin(current_user, user_id)
+    try:
+        nid = uuid.UUID(nudge_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="nudge_id must be a UUID.")
+
+    agent = get_lifeos_agent()
+    ok = await agent.acknowledge(pg, user_id, nid)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Nudge not found.")
+    return NudgeAckResponse(nudge_id=nudge_id, acknowledged=True)
 
 
 @router.post(

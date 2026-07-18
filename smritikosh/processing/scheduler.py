@@ -67,6 +67,9 @@ class MemoryScheduler:
         synthesis_cron:          Cron expression for cross-system synthesis (default: daily 01:00 UTC).
         reflection_agent:        Optional ReflectionAgent instance (E4).
         reflection_cron:         Cron expression for reflection cycles (default: daily 05:00 UTC).
+        lifeos_agent:            Optional LifeOSAgent instance (E4 — proactive nudges).
+        lifeos_cron:             Cron expression for nudge cycles (default: daily 07:00 UTC,
+                                 after reflection so each cycle has fresh insights).
 
     Cron format: standard 5-field UTC — "minute hour day-of-month month day-of-week"
     Examples:
@@ -92,6 +95,8 @@ class MemoryScheduler:
         synthesis_cron: str = "0 1 * * *",
         reflection_agent=None,   # cognition.reflection.ReflectionAgent | None
         reflection_cron: str = "0 5 * * *",
+        lifeos_agent=None,       # cognition.lifeos.LifeOSAgent | None
+        lifeos_cron: str = "0 7 * * *",
     ) -> None:
         self.consolidator = consolidator
         self.pruner = pruner
@@ -101,6 +106,7 @@ class MemoryScheduler:
         self.fact_decayer = fact_decayer
         self.synthesizer = synthesizer
         self.reflection_agent = reflection_agent
+        self.lifeos_agent = lifeos_agent
         self._scheduler = AsyncIOScheduler()
 
         self._scheduler.add_job(
@@ -155,6 +161,14 @@ class MemoryScheduler:
                 trigger=CronTrigger.from_crontab(reflection_cron),
                 id="reflection_job",
                 name="Reflection Cycles",
+                max_instances=1,
+            )
+        if self.lifeos_agent is not None:
+            self._scheduler.add_job(
+                self.run_lifeos_for_all_users,
+                trigger=CronTrigger.from_crontab(lifeos_cron),
+                id="lifeos_job",
+                name="Life OS Nudges",
                 max_instances=1,
             )
 
@@ -488,6 +502,54 @@ class MemoryScheduler:
             result.skip_reason = str(exc)
             return result
 
+    async def run_lifeos_for_all_users(self) -> list:
+        """Run Life OS nudge cycles for all users, stalest first (E4)."""
+        if self.lifeos_agent is None:
+            return []
+        with track_job("lifeos"):
+            user_app_pairs = await self._get_all_users("last_nudged_at")
+            logger.info(
+                "Life OS nudge job triggered — %d user(s) found",
+                len(user_app_pairs),
+            )
+            results = await self._run_for_users(
+                user_app_pairs, self.run_lifeos_now
+            )
+            skipped = sum(1 for r in results if r.skipped)
+            logger.info(
+                "Life OS nudge job complete — nudged=%d skipped=%d",
+                len(results) - skipped,
+                skipped,
+            )
+            return results
+
+    async def run_lifeos_now(
+        self, *, user_id: str, app_id: str = "default"
+    ):
+        """Run one nudge cycle immediately for a specific user (no LLM calls)."""
+        from smritikosh.cognition.lifeos import NudgeResult
+
+        if self.lifeos_agent is None:
+            result = NudgeResult(user_id=user_id, app_id=app_id, skipped=True)
+            result.skip_reason = "No lifeos_agent configured."
+            return result
+        try:
+            async with db_session() as pg:
+                result = await self.lifeos_agent.nudge_cycle(
+                    pg, user_id=user_id, app_id=app_id
+                )
+                await mark_job_done(pg, user_id, app_id, "nudged")
+                return result
+        except Exception as exc:
+            JOB_USER_ERRORS.labels(job="lifeos").inc()
+            logger.error(
+                "Life OS nudge failed",
+                extra={"user_id": user_id, "error": str(exc)},
+            )
+            result = NudgeResult(user_id=user_id, app_id=app_id, skipped=True)
+            result.skip_reason = str(exc)
+            return result
+
     # ── User discovery ─────────────────────────────────────────────────────
 
     async def _get_active_users(self) -> list[tuple[str, str]]:
@@ -606,6 +668,7 @@ def build_scheduler() -> "MemoryScheduler":
         get_consolidator,
         get_episodic,
         get_fact_decayer,
+        get_lifeos_agent,
         get_pruner,
         get_reflection_agent,
         get_synthesizer,
@@ -621,12 +684,14 @@ def build_scheduler() -> "MemoryScheduler":
         fact_decayer=get_fact_decayer(),
         synthesizer=get_synthesizer(),
         reflection_agent=get_reflection_agent(),
+        lifeos_agent=get_lifeos_agent(),
         consolidation_cron=settings.scheduler_consolidation_cron,
         pruning_cron=settings.scheduler_pruning_cron,
         clustering_cron=settings.scheduler_clustering_cron,
         belief_mining_cron=settings.scheduler_belief_mining_cron,
         fact_decay_cron=settings.scheduler_fact_decay_cron,
         reflection_cron=settings.scheduler_reflection_cron,
+        lifeos_cron=settings.scheduler_lifeos_cron,
     )
 
 

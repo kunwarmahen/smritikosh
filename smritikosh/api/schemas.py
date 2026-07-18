@@ -306,6 +306,84 @@ class DecisionResponse(BaseModel):
     skip_reason: str = ""
 
 
+class CouncilRequest(BaseModel):
+    user_id: str
+    decision: str = Field(..., min_length=3, description="The decision to deliberate")
+    options: list[str] | None = Field(None, description="Optional explicit options")
+    app_ids: list[str] | None = None
+
+
+class CouncilOpinionItem(BaseModel):
+    role: str                   # risk | values | pattern | devils_advocate
+    position: str               # support | oppose | conditional
+    argument: str
+    confidence: float
+    cited_event_ids: list[str] = []
+
+
+class CouncilResponse(BaseModel):
+    user_id: str
+    app_id: str
+    decision: str
+    opinions: list[CouncilOpinionItem] = []
+    recommendation: str
+    reasoning: str
+    confidence: float
+    dissent: str = ""
+    cited_event_ids: list[str] = []
+    open_questions: list[str] = []
+    memories_considered: int = 0
+    logged_event_id: str | None = None
+    skipped: bool = False
+    skip_reason: str = ""
+
+
+class MeetingPrepRequest(BaseModel):
+    user_id: str
+    attendees: list[str] = Field(..., min_length=1, max_length=10)
+    topic: str = ""
+    goal: str = Field("", description="What the user wants out of the meeting")
+    app_ids: list[str] | None = None
+
+
+class AttendeeBriefItem(BaseModel):
+    name: str
+    known_facts: list[str] = []
+    history: list[str] = []
+    open_commitments: list[str] = []
+
+
+class MeetingPrepResponse(BaseModel):
+    user_id: str
+    app_id: str
+    attendees: list[str]
+    topic: str = ""
+    attendee_briefs: list[AttendeeBriefItem] = []
+    talking_points: list[str] = []
+    questions_to_ask: list[str] = []
+    watch_outs: list[str] = []
+    cited_event_ids: list[str] = []
+    memories_considered: int = 0
+    logged_event_id: str | None = None
+    skipped: bool = False
+    skip_reason: str = ""
+
+
+class MeetingDebriefRequest(BaseModel):
+    user_id: str
+    notes: str = Field(..., min_length=10, description="Post-meeting notes to remember")
+    attendees: list[str] | None = None
+    app_ids: list[str] | None = None
+
+
+class MeetingDebriefResponse(BaseModel):
+    user_id: str
+    app_id: str
+    event_id: str | None = None
+    facts_extracted: int = 0
+    extraction_failed: bool = False
+
+
 class PredictionItem(BaseModel):
     prediction_id: str
     query_preview: str
@@ -343,6 +421,29 @@ class ReflectionListResponse(BaseModel):
 
 class ReflectionAckResponse(BaseModel):
     reflection_id: str
+    acknowledged: bool
+
+
+class NudgeItem(BaseModel):
+    nudge_id: str
+    digest: str
+    severity: str               # info | notice | warning
+    channel: str                # feed | webhook
+    status: str                 # delivered | failed
+    reflection_ids: list[str] = []
+    acknowledged: bool = False
+    created_at: str
+    delivered_at: str | None = None
+
+
+class NudgeListResponse(BaseModel):
+    user_id: str
+    app_id: str
+    nudges: list[NudgeItem]
+
+
+class NudgeAckResponse(BaseModel):
+    nudge_id: str
     acknowledged: bool
 
 

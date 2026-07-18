@@ -128,6 +128,9 @@ class SourceType(StrEnum):
     CROSS_SYSTEM        = "cross_system"        # Synthesized from correlated cross-integration signals
     AGENT_DECISION      = "agent_decision"      # DecisionAgent recommendation logged as memory (E4)
     AGENT_REFLECTION    = "agent_reflection"    # ReflectionAgent cycle summary logged as memory (E4)
+    AGENT_COUNCIL       = "agent_council"       # CouncilAgent deliberation verdict logged as memory (E4)
+    AGENT_MEETING_PREP  = "agent_meeting_prep"  # MeetingPrepAgent brief logged as memory (E4)
+    MEETING_DEBRIEF     = "meeting_debrief"     # Post-meeting notes fed back via /agent/meeting-debrief (E4)
     MEDIA_VOICE         = "media_voice"         # Extracted from a voice note
     MEDIA_AUDIO         = "media_audio"         # Extracted from a meeting/call recording
     MEDIA_IMAGE         = "media_image"         # Extracted from an image
@@ -147,6 +150,9 @@ SOURCE_CONFIDENCE_DEFAULTS: dict[str, float] = {
     SourceType.CROSS_SYSTEM:         0.65,
     SourceType.AGENT_DECISION:       0.80,
     SourceType.AGENT_REFLECTION:     0.70,
+    SourceType.AGENT_COUNCIL:        0.80,
+    SourceType.AGENT_MEETING_PREP:   0.70,
+    SourceType.MEETING_DEBRIEF:      0.85,   # user-authored notes — near UI_MANUAL trust
     SourceType.MEDIA_VOICE:          0.85,
     SourceType.MEDIA_AUDIO:          0.75,
     SourceType.MEDIA_IMAGE:          0.70,
@@ -1036,6 +1042,9 @@ class UserActivity(Base):
     last_reflected_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True, default=None
     )
+    last_nudged_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
 
     def __repr__(self) -> str:
         return (
@@ -1186,3 +1195,41 @@ class Reflection(Base):
 
     def __repr__(self) -> str:
         return f"<Reflection {self.kind}/{self.severity}: {self.insight[:60]!r}>"
+
+
+class Nudge(Base):
+    """
+    One delivered (or attempted) proactive digest of reflection insights
+    (E4, FUTURE.md #5 — Proactive Life OS).
+
+    The LifeOS nudge cycle bundles fresh unacknowledged reflections into one
+    digest per user, persists it here (the in-app feed), and optionally POSTs
+    it to LIFEOS_WEBHOOK_URL. `reflection_ids` guarantees each insight is
+    nudged at most once; `acknowledged` dismisses it from the feed.
+    """
+
+    __tablename__ = "nudges"
+    __table_args__ = (
+        Index("ix_nudges_user_app_created", "user_id", "app_id", "created_at"),
+        Index("ix_nudges_acknowledged", "acknowledged"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    user_id: Mapped[str] = mapped_column(String(255))
+    app_id: Mapped[str] = mapped_column(String(255), default="default")
+    digest: Mapped[str] = mapped_column(Text)
+    # Reflection UUIDs (as strings) bundled into this digest
+    reflection_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    severity: Mapped[str] = mapped_column(String(10), default="notice")  # max of the bundle
+    channel: Mapped[str] = mapped_column(String(16), default="feed")     # feed | webhook
+    status: Mapped[str] = mapped_column(String(12), default="delivered") # delivered | failed
+    acknowledged: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    delivered_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+
+    def __repr__(self) -> str:
+        return f"<Nudge {self.channel}/{self.status} sev={self.severity} user={self.user_id}>"

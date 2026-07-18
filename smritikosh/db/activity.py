@@ -31,6 +31,7 @@ JOB_WATERMARKS = {
     "belief_mined": "last_belief_mined_at",
     "synthesized": "last_synthesized_at",
     "reflected": "last_reflected_at",
+    "nudged": "last_nudged_at",
 }
 
 

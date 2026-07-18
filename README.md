@@ -145,9 +145,18 @@ ContextBuilder                  (retrieval effort routed by complexity tier)
 ```
 POST /agent/decision            memory-grounded recommendation with cited events,
                                 belief alignment, risks (DecisionAgent)
+POST /agent/council             high-stakes deliberation: risk / values / pattern /
+                                devil's-advocate specialists + judge verdict with
+                                preserved dissent (CouncilAgent, ~5 LLM calls)
+POST /agent/meeting-prep        per-attendee brief: known facts, history, open
+                                commitments, talking points (MeetingPrepAgent)
+POST /agent/meeting-debrief     post-meeting notes re-enter the full encoding
+                                pipeline — facts retrievable immediately
 GET  /cognition/predictions/…   predict-observe-learn accuracy per user
 GET  /cognition/reflections/…   drift / contradiction / stale-belief insights
                                 (ReflectionAgent — scheduled daily; POST /admin/reflect)
+GET  /cognition/nudges/…        proactive Life OS feed: LLM-free digests of fresh
+                                reflection insights (daily cycle, optional webhook)
 ```
 Every `/context` call runs a zero-cost prediction of which memories will surface;
 the outcome is scored on the task queue and nudges `importance_score`, so retrieval
@@ -1152,12 +1161,13 @@ smritikosh/
 │       ├── identity.py      # GET /identity/{user_id}
 │       ├── feedback.py      # POST /feedback
 │       ├── procedures.py    # CRUD /procedures + DELETE /procedures/user/{id}
-│       ├── admin.py         # POST /admin/{consolidate,prune,cluster,mine-beliefs,reconsolidate,synthesize,reflect}
+│       ├── admin.py         # POST /admin/{consolidate,prune,cluster,mine-beliefs,reconsolidate,synthesize,reflect,nudge}
 │       │                    #   GET /admin/embedding-health, POST/GET/DELETE /admin/re-embed[/status]
 │       │                    #   GET /admin/users, GET /admin/users/{username},
 │       │                    #   PATCH /admin/users/{username}
 │       ├── beliefs.py       # GET /beliefs/{user_id}[/{id}/evidence], DELETE /beliefs/{user_id}/{id}
-│       ├── cognition.py     # POST /agent/decision, GET /cognition/{predictions,reflections}/{user_id}
+│       ├── cognition.py     # POST /agent/{decision,council,meeting-prep,meeting-debrief},
+│       │                    #   GET /cognition/{predictions,reflections,nudges}/{user_id}
 │       ├── batch.py         # POST /batch (array of encode operations → ordered results)
 │       ├── ingest.py        # POST /ingest/{push,file,slack/events,email/sync,calendar}
 │       ├── session_ingest.py # POST /ingest/session, POST /ingest/transcript
@@ -1211,11 +1221,15 @@ smritikosh/
 │   ├── media_processor.py   # MediaProcessor: transcription, text extraction, vision, relevance routing
 │   ├── leader.py            # Postgres advisory-lock leader election for the scheduler
 │   └── scheduler.py         # APScheduler background jobs (consolidation, pruning, clustering,
-│                             #   belief mining, fact decay, cross-system synthesis, reflection)
+│                             #   belief mining, fact decay, cross-system synthesis, reflection,
+│                             #   Life OS nudges)
 ├── cognition/
 │   ├── prediction.py        # PredictionEngine: predict-observe-learn loop over /context
 │   ├── decision.py          # DecisionAgent: memory-grounded recommendations with citations
-│   └── reflection.py        # ReflectionAgent: identity-vs-behaviour drift detection
+│   ├── council.py           # CouncilAgent: 4 specialists + judge for high-stakes decisions
+│   ├── meeting_prep.py      # MeetingPrepAgent: pre-meeting briefs + debrief re-ingestion
+│   ├── reflection.py        # ReflectionAgent: identity-vs-behaviour drift detection
+│   └── lifeos.py            # LifeOSAgent: proactive nudge digests (feed + webhook, LLM-free)
 ├── worker/
 │   └── main.py              # Standalone scheduler worker (python -m smritikosh.worker.main)
 ├── tasks/
