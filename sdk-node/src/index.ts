@@ -1,4 +1,15 @@
 export { SmritikoshClient } from "./client.js";
+export {
+  SmritikoshMiddleware,
+  withMemory,
+  blocksToAnthropicContent,
+  REMEMBER_TOOL_OPENAI,
+  REMEMBER_TOOL_ANTHROPIC,
+} from "./middleware.js";
+export type {
+  SmritikoshMiddlewareOptions,
+  BufferedTurn,
+} from "./middleware.js";
 export type {
   SmritikoshClientOptions,
   // encode

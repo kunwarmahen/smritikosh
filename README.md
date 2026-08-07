@@ -189,6 +189,7 @@ Your application
       │         ▼
       ├── SmritikoshClient (Python)   smritikosh.sdk   ← async API client
       ├── SmritikoshClient (Node.js)  sdk-node/
+      ├── withMemory() (Node.js)      ← wraps OpenAI / Anthropic client (middleware parity)
       └── smritikosh-mcp (MCP server) smritikosh.mcp   ← store_memory / recall /
                 │                                        get_context for any MCP client
                 │
@@ -231,6 +232,7 @@ Your application
 | **SmritikoshClient (Python)** | Async Python SDK wrapping the REST API | — |
 | **SmritikoshClient (Node.js)** | TypeScript/ESM SDK with identical surface to the Python SDK | — |
 | **SmritikoshMiddleware** | Sync wrapper for OpenAI/Anthropic clients; auto-injects `remember()` tool, intercepts tool calls transparently, buffers turns, fires `POST /ingest/session` in background, optionally auto-injects context | — |
+| **withMemory (Node.js)** | Node port of SmritikoshMiddleware — same interception, `remember()` handling, windowed flushes and auto-inject, via a JS `Proxy` so unintercepted properties pass through | — |
 | **LiteLLMMiddleware** | Subclass of SmritikoshMiddleware wrapping `litellm.completion()`; covers Gemini, Ollama, vLLM, llama.cpp, OpenAI, Claude through a single interface | — |
 | **TriggerDetector** | Regex pre-filter (30 patterns) — skips LLM extraction when no high-signal phrases detected | — |
 | **QualityControlLayer** | Confidence threshold gate (active/pending/rejected); contradiction detection on fact upsert; auto-promotes or flags conflicts for user review | Neo4j + PostgreSQL |
@@ -1254,9 +1256,13 @@ smritikosh/
 sdk-node/                    # TypeScript / Node.js SDK
 ├── src/
 │   ├── client.ts            # SmritikoshClient (native fetch, ESM)
+│   ├── middleware.ts        # SmritikoshMiddleware / withMemory() — OpenAI+Anthropic
+│   │                        #   interception, remember() tool, auto-inject (F1)
 │   ├── types.ts             # Branded types, request/response shapes
 │   ├── errors.ts            # SmritikoshError
-│   └── client.test.ts       # 41 Vitest tests (all methods, error paths)
+│   ├── client.test.ts       # 41 Vitest tests (all methods, error paths)
+│   └── middleware.test.ts   # 44 Vitest tests (buffering, remember(), auto-inject)
+├── README.md
 ├── package.json
 └── tsconfig*.json
 
@@ -3993,7 +3999,7 @@ jupyter notebook sample/litellm_middleware_notebook.ipynb
 
 ## Node.js SDK
 
-A native TypeScript SDK is available in `sdk-node/`. It targets Node.js ≥ 18 and uses the built-in `fetch` — no extra HTTP dependencies.
+A native TypeScript SDK is available in `sdk-node/`. It targets Node.js ≥ 18 and uses the built-in `fetch` — no extra HTTP dependencies. It ships both an explicit client (`SmritikoshClient`) and the transparent middleware (`withMemory`), at parity with the Python SDK.
 
 ### Installation
 
@@ -4002,6 +4008,42 @@ cd sdk-node
 npm install
 npm run build          # emits dist/esm/ + dist/cjs/ + dist/types/
 ```
+
+### Transparent middleware (`withMemory`)
+
+The Node counterpart of `SmritikoshMiddleware`. Wrap the LLM client you already
+have; turn buffering, windowed partial flushes, the `remember()` tool, and
+optional context injection all happen invisibly.
+
+```typescript
+import OpenAI from 'openai';
+import { withMemory } from 'smritikosh';
+
+const client = withMemory(new OpenAI(), {
+  smritikoshUrl: 'http://localhost:8080',
+  smritikoshApiKey: 'sk-smriti-...',
+  userId: 'alice',
+  appId: 'my-app',
+  autoInject: true,        // prepend retrieved memory to the system prompt
+});
+
+// Use it exactly like the OpenAI client.
+const res = await client.chat.completions.create({
+  model: 'gpt-4o',
+  messages: [{ role: 'user', content: 'I always deploy on Kubernetes.' }],
+});
+
+await client.close();      // flushes any unsent turns
+```
+
+Anthropic is wrapped the same way (`client.messages.create(...)`); anything not
+intercepted proxies straight through to the wrapped client. Extraction is
+best-effort — if Smritikosh is unreachable the LLM call still succeeds.
+
+Options mirror the Python middleware (`extractEveryNTurns`, `useTriggerFilter`,
+`autoInject`, `enableRememberTool`, `sessionId`), plus `contextTimeoutMs` for
+raising the auto-inject fetch timeout on slow local models. Full reference:
+[`sdk-node/README.md`](sdk-node/README.md).
 
 ### Basic usage
 
