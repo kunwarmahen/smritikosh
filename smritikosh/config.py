@@ -166,6 +166,32 @@ class Settings(BaseSettings):
     quota_default_daily_tokens: int = 0
     quota_default_monthly_tokens: int = 0
 
+    # ── Request size & upload abuse controls (C4) ───────────────────────────
+    # Rate limits cap request *frequency* and quotas cap *totals*; neither
+    # stops one enormous request. These cap the size of a single request.
+    # All are 0 = unlimited.
+    #
+    # Session ingest: every user turn in the payload is fed to the extraction
+    # LLM, so an unbounded transcript is unbounded spend. Both limits apply
+    # per request (a streaming partial window counts on its own).
+    max_session_turns: int = 500
+    max_session_chars: int = 200_000
+    # Concurrent media uploads still being processed per (user_id, app_id).
+    # Media processing is the most expensive path in the system
+    # (transcription/vision), so this bounds the damage one tenant can do.
+    max_concurrent_media_uploads: int = 3
+    # A 'processing' row older than this is presumed dead (crashed worker)
+    # and no longer counted as in-flight — otherwise one crash would lock a
+    # user out of uploads permanently.
+    media_processing_stale_minutes: int = 60
+    # Global cap on a single request body, enforced from Content-Length before
+    # the body is read. Media uploads are exempt — they carry their own
+    # per-content-type limits (25 MB audio … 500 MB meeting recording).
+    # Note: requests using chunked transfer-encoding send no Content-Length
+    # and cannot be checked up front; put a hard limit in the reverse proxy
+    # if you accept those from untrusted clients.
+    max_request_body_bytes: int = 10 * 1024 * 1024   # 10 MB
+
     # ── Cognitive agent layer (E4) ──────────────────────────────────────────
     # Predict-observe-learn loop on /context: before retrieval the engine
     # predicts which memories will surface (two indexed PG queries, no LLM);

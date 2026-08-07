@@ -57,6 +57,9 @@ def mock_pg():
     pg.commit = AsyncMock()
     pg.add = MagicMock()
     pg.get = AsyncMock(return_value=None)
+    # Scalar count queries return a number on a real session — the C4
+    # concurrency check reads this. 0 = nothing in flight for this user.
+    pg.scalar = AsyncMock(return_value=0)
     return pg
 
 

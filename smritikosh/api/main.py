@@ -32,6 +32,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
+from smritikosh.api.limits import body_size_limit_middleware
 from smritikosh.api.ratelimit import limiter, using_persistent_storage
 from smritikosh.api.routes import admin, audit, auth, context, facts, feedback, graph, health, identity, ingest, keys, memory, procedures
 from smritikosh.api.routes import session_ingest, media_ingest, voice_enrollment, connectors, consents
@@ -182,6 +183,10 @@ def configure_cors(app: FastAPI, origins: list[str]) -> bool:
 
 
 configure_cors(app, settings.cors_origin_list)
+
+# Global request-body cap (C4) — rejects oversized bodies from Content-Length
+# before they are read. Media uploads are exempt (own per-type limits).
+app.middleware("http")(body_size_limit_middleware)
 
 # Prometheus metrics — exposes GET /metrics with per-route latency, throughput, error rates.
 # Disable by setting ENABLE_METRICS=false in your environment.

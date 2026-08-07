@@ -3036,6 +3036,31 @@ Each image subtype receives a targeted prompt to guide the vision model:
 | Image file | 20 MB | `MEDIA_MAX_IMAGE_MB` |
 | Meeting recording | 500 MB | `MEDIA_MAX_MEETING_MB` |
 
+### Request-size & abuse controls (C4)
+
+Rate limits cap request *frequency* and quotas cap *totals over a window* — neither stops one
+enormous request. These cap a **single** request. All are `0` = unlimited.
+
+| Control | Default | Env variable | Response |
+|---|---|---|---|
+| Turns per session ingest | 500 | `MAX_SESSION_TURNS` | `413` |
+| Characters per session ingest | 200,000 | `MAX_SESSION_CHARS` | `413` |
+| Concurrent uploads processing, per user | 3 | `MAX_CONCURRENT_MEDIA_UPLOADS` | `429` + `Retry-After` |
+| Age after which a stuck upload stops counting | 60 min | `MEDIA_PROCESSING_STALE_MINUTES` | — |
+| Global request body | 10 MB | `MAX_REQUEST_BODY_BYTES` | `413` |
+
+Notes worth knowing:
+
+- Session ingest **rejects rather than truncates** — silently dropping turns would corrupt a
+  transcript you believe was stored. Split large transcripts across several `partial=true`
+  windows.
+- The body cap is checked from `Content-Length` **before the body is read**, and
+  `POST /ingest/media` is exempt (it enforces the per-content-type limits above instead).
+  Requests using chunked transfer-encoding send no `Content-Length` and cannot be checked
+  here — cap those at your reverse proxy.
+- The staleness window exists so a crashed worker leaving rows in `processing` cannot lock a
+  user out of uploading permanently.
+
 ### Source badges
 
 Media facts appear in the dashboard with source badges:
@@ -4234,6 +4259,8 @@ pytest tests/test_amygdala.py::TestAmygdala::test_scores_decision_text -v
 | `test_leader.py` | 10 | Advisory-lock leader election, `elect_and_start_scheduler`, `build_scheduler` |
 | `test_config_security.py` | 25 | Production secret enforcement, `is_production`, connector encryption key |
 | `test_ratelimit.py` | 10 | Redis vs. in-memory limiter selection, rate-limit key extraction |
+| `test_limits.py` | 19 | Session turn/char guards, media concurrency + staleness cutoff, body-size middleware (C4) |
+| `test_subsystems.py` | 21 | Degraded registry, non-fatal Neo4j startup, `/health` status contract, encode degradation (B3) |
 | `test_tasks.py` | 12 | ARQ queue gating, `enqueue` fallback, media/re-embed task wrappers |
 | `test_identity.py` | 26 | Dimension grouping, dominant value, LLM summary, empty profile |
 | `test_memory_clusterer.py` | 29 | Cosine sim, greedy clustering, LLM labelling, skip guards |

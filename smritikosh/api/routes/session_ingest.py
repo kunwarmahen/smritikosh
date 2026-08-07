@@ -27,6 +27,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from smritikosh.api.deps import get_hippocampus, get_llm, get_semantic
+from smritikosh.api.limits import enforce_session_size
 from smritikosh.api.quotas import enforce_event_quota, enforce_token_quota
 from smritikosh.auth.deps import assert_self_or_admin, require_write_scope
 from smritikosh.db.models import ProcessedSession, SourceType
@@ -105,6 +106,9 @@ async def ingest_session(
     - Optional trigger-word pre-filter skips the LLM entirely for low-signal windows
     """
     assert_self_or_admin(current_user, request.user_id)
+    # Size first (C4): free to check, and rejects the payloads that would be
+    # most expensive to extract before any DB work happens.
+    enforce_session_size(request.turns, user_id=request.user_id)
     await enforce_event_quota(pg, request.user_id, request.app_id)
     await enforce_token_quota(pg, request.user_id, request.app_id)
 
