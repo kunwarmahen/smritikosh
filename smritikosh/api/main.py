@@ -2,8 +2,11 @@
 Smritikosh FastAPI application.
 
 Startup sequence (lifespan):
-    1. Enable pgvector extension + create Postgres tables.
-    2. Apply Neo4j schema constraints and indexes.
+    1. Enable pgvector extension + create Postgres tables. REQUIRED — a failure
+       here aborts startup (see smritikosh/subsystems.py).
+    2. Apply Neo4j schema constraints and indexes. Optional (item B3): an
+       unreachable Neo4j is recorded as degraded and startup continues, since
+       everything Postgres backs still works.
     3. Start background scheduler (consolidation + pruning jobs).
 
 Shutdown sequence:
@@ -37,6 +40,7 @@ from smritikosh.audit.mongodb import close_audit, init_audit_indexes
 from smritikosh.db.neo4j import close_neo4j, init_neo4j
 from smritikosh.db.postgres import close_db, init_db
 from smritikosh.config import enforce_runtime_security, is_production, settings
+from smritikosh import subsystems
 from smritikosh.processing.leader import LeaderLock
 from smritikosh.processing.scheduler import build_scheduler, elect_and_start_scheduler
 from smritikosh.tasks import close_pool as close_task_pool
@@ -86,8 +90,17 @@ async def lifespan(app: FastAPI):
     _enforce_runtime_security()
     _warn_runtime_topology()
     logger.info("Smritikosh starting — initialising databases …")
+    # Postgres is required: let a failure propagate and abort startup.
     await init_db()
-    await init_neo4j()
+    subsystems.mark_healthy("postgres")
+    # Neo4j is optional (B3): degrade rather than refuse to boot. Encode still
+    # stores events (fact upserts are skipped) and retrieval falls back to
+    # episodic-only, so a Neo4j outage costs semantic memory, not the service.
+    try:
+        await init_neo4j()
+        subsystems.mark_healthy("neo4j")
+    except Exception as exc:
+        subsystems.mark_degraded("neo4j", f"init failed: {exc}")
     await init_audit_indexes()   # no-op if MONGODB_URL is not set
 
     # Background scheduler.

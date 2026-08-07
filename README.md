@@ -478,8 +478,22 @@ curl http://localhost:8080/health
 ```
 
 ```json
-{"status": "ok", "postgres": "ok", "neo4j": "ok", "mongodb": "not_configured", "llm_model": "...", "llm_status": "ok"}
+{"status": "ok", "postgres": "ok", "neo4j": "ok", "mongodb": "not_configured", "llm_model": "...", "llm_status": "ok", "degraded_subsystems": {}}
 ```
+
+**Status contract** (item B3). Only Postgres is required — it backs episodic memory, auth,
+quotas and jobs. Neo4j, MongoDB and Redis are optional: the API boots and serves without
+them, at reduced capability.
+
+| `status` | Meaning | What to do |
+|---|---|---|
+| `ok` | Every configured subsystem answered | — |
+| `degraded` | An **optional** subsystem is unreachable — check `degraded_subsystems` for which and why. Neo4j down costs semantic facts (events are still stored, retrieval falls back to episodic-only); Mongo down costs the audit trail | Keep serving traffic; fix the subsystem |
+| `error` | **Postgres** is unreachable | Pull this instance from the load balancer |
+
+Recovery is automatic: the next `/health` probe that succeeds clears the degraded flag, no
+restart required. The `smritikosh_subsystem_degraded{subsystem}` gauge exposes the same state
+to Prometheus.
 
 ---
 
@@ -1186,6 +1200,8 @@ smritikosh/
 │   ├── routes.py            # POST /auth/token, POST /auth/register, GET /auth/me
 │   └── utils.py             # hash_password, verify_password, create_access_token
 ├── config.py                # Pydantic Settings (reads .env)
+├── subsystems.py            # Required vs optional stores + degraded registry (B3);
+│                            #   smritikosh_subsystem_degraded gauge
 ├── connectors/
 │   ├── __init__.py          # Re-exports ConnectorEvent, SourceConnector
 │   ├── base.py              # ConnectorEvent dataclass + SourceConnector ABC

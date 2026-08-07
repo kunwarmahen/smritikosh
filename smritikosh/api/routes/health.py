@@ -3,6 +3,7 @@ import logging
 from fastapi import APIRouter
 from sqlalchemy import text
 
+from smritikosh import subsystems
 from smritikosh.api.schemas import HealthResponse
 from smritikosh.config import settings
 from smritikosh.db.neo4j import get_driver
@@ -20,28 +21,41 @@ async def health() -> HealthResponse:
     """
     Check server health including database connectivity.
 
-    Returns ``status="ok"`` only when both required services are reachable.
-    Returns ``status="degraded"`` when one or more services are unavailable
-    but the server is still running.
+    Status contract (item B3 — see ``smritikosh/subsystems.py``):
+
+    ``ok``        every configured subsystem answered.
+    ``degraded``  an OPTIONAL subsystem (Neo4j, Mongo) is unreachable, or the
+                  LLM is misconfigured. The API still serves: Neo4j down costs
+                  semantic facts, Mongo down costs the audit trail.
+    ``error``     a REQUIRED subsystem (Postgres) is unreachable — this
+                  instance cannot serve meaningfully; pull it from the pool.
+
+    Each probe also refreshes the process's degraded registry, so recovery is
+    picked up automatically without a restart.
     """
     pg_status = "ok"
     neo_status = "ok"
 
-    # Ping PostgreSQL
+    # Ping PostgreSQL (required)
     try:
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
+        subsystems.mark_healthy("postgres")
     except Exception as exc:
         logger.warning("PostgreSQL health check failed: %s", exc)
         pg_status = "error"
+        subsystems.mark_degraded("postgres", f"unreachable: {exc}")
 
-    # Ping Neo4j
+    # Ping Neo4j (optional — a failure degrades, it does not take the API down)
     try:
         async with get_driver().session() as session:
             await session.run("RETURN 1")
+        neo_status = "ok"
+        subsystems.mark_healthy("neo4j")
     except Exception as exc:
         logger.warning("Neo4j health check failed: %s", exc)
         neo_status = "error"
+        subsystems.mark_degraded("neo4j", f"unreachable: {exc}")
 
     # MongoDB (optional — not_configured if MONGODB_URL is unset)
     if not settings.mongodb_url:
@@ -52,12 +66,15 @@ async def health() -> HealthResponse:
             col = get_audit_collection()
             if col is None:
                 mongo_status = "error"
+                subsystems.mark_degraded("mongodb", "audit collection unavailable")
             else:
                 await col.database.client.admin.command("ping")
                 mongo_status = "ok"
+                subsystems.mark_healthy("mongodb")
         except Exception as exc:
             logger.warning("MongoDB health check failed: %s", exc)
             mongo_status = "error"
+            subsystems.mark_degraded("mongodb", f"unreachable: {exc}")
 
     # LLM — verify API key is present for cloud providers; local providers assumed ok
     adapter = LLMAdapter()
@@ -69,8 +86,14 @@ async def health() -> HealthResponse:
         # Local providers (ollama, vllm) — assume reachable if base URL is set
         llm_status = "ok" if settings.llm_base_url else "ok"
 
-    critical_ok = pg_status == "ok" and neo_status == "ok" and llm_status == "ok"
-    overall = "ok" if critical_ok else "degraded"
+    # Required subsystem down → error; optional down → degraded (B3).
+    if pg_status != "ok":
+        overall = "error"
+    elif neo_status != "ok" or mongo_status == "error" or llm_status != "ok":
+        overall = "degraded"
+    else:
+        overall = "ok"
+
     return HealthResponse(
         status=overall,
         postgres=pg_status,
@@ -79,6 +102,7 @@ async def health() -> HealthResponse:
         llm_model=llm_model,
         llm_status=llm_status,
         pg_pool=_pg_pool_status(),
+        degraded_subsystems=subsystems.degraded_subsystems(),
     )
 
 

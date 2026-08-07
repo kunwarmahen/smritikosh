@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from sqlalchemy.ext.asyncio import AsyncSession
 from neo4j import AsyncSession as NeoSession
 
+from smritikosh import subsystems
 from smritikosh.db.models import Event, FactContradiction, FactStatus, SOURCE_CONFIDENCE_DEFAULTS, SourceType
 from smritikosh.llm.adapter import LLMAdapter
 from smritikosh.memory.episodic import EpisodicMemory
@@ -196,9 +197,19 @@ class Hippocampus:
         )
 
         # ── 2. Fetch existing facts to guide consistent key naming ────────
-        profile = await self.semantic.get_user_profile(
-            neo_session, user_id, app_id, min_confidence=0.5
-        )
+        # Only a naming hint — if the semantic store is unreachable (B3),
+        # extraction proceeds without it rather than failing the encode.
+        try:
+            profile = await self.semantic.get_user_profile(
+                neo_session, user_id, app_id, min_confidence=0.5
+            )
+        except Exception as exc:
+            subsystems.mark_degraded("neo4j", f"profile fetch failed: {exc}")
+            logger.warning(
+                "Semantic memory unavailable — encoding without existing-fact hints",
+                extra={"user_id": user_id, "error": str(exc)},
+            )
+            profile = None
         existing_facts = (profile.facts if profile else [])[:20]
 
         # ── 3. Embed + extract in parallel ────────────────────────────────
@@ -469,9 +480,23 @@ class Hippocampus:
                     status=status,
                 )
                 stored.append(fact)
+                subsystems.mark_healthy("neo4j")
             except (KeyError, ValueError) as exc:
+                # Malformed extraction output — skip this fact, keep going.
                 logger.warning(
                     "Skipping invalid fact dict",
                     extra={"fact": fd, "error": str(exc)},
                 )
+            except Exception as exc:
+                # Semantic store unreachable (B3): the episodic event is already
+                # stored, so keep it and drop the facts. Break rather than
+                # continue — retrying each remaining fact would multiply the
+                # connection timeout by the number of facts.
+                subsystems.mark_degraded("neo4j", f"fact upsert failed: {exc}")
+                logger.warning(
+                    "Semantic memory unavailable — %d fact(s) not stored",
+                    len(fact_dicts) - len(stored),
+                    extra={"user_id": user_id, "error": str(exc)},
+                )
+                break
         return stored

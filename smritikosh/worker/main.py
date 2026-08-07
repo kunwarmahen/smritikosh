@@ -22,6 +22,7 @@ import signal
 
 from smritikosh.audit.mongodb import close_audit, init_audit_indexes
 from smritikosh.config import enforce_runtime_security, settings
+from smritikosh import subsystems
 from smritikosh.db.neo4j import close_neo4j, init_neo4j
 from smritikosh.db.postgres import close_db, init_db
 from smritikosh.processing.leader import LeaderLock
@@ -53,8 +54,17 @@ async def run_worker() -> None:
             "Worker metrics exposed on :%d/metrics", settings.worker_metrics_port
         )
     logger.info("Smritikosh worker starting — initialising databases …")
+    # Postgres is required; Neo4j is optional (B3) — a worker that can still
+    # consolidate, prune and reflect is worth more than one that refuses to
+    # start. Jobs that need semantic memory fail per-user and are counted by
+    # smritikosh_job_user_errors_total.
     await init_db()
-    await init_neo4j()
+    subsystems.mark_healthy("postgres")
+    try:
+        await init_neo4j()
+        subsystems.mark_healthy("neo4j")
+    except Exception as exc:
+        subsystems.mark_degraded("neo4j", f"init failed: {exc}")
     await init_audit_indexes()   # no-op if MONGODB_URL is not set
 
     scheduler = build_scheduler()

@@ -52,7 +52,10 @@ async def init_audit_indexes() -> None:
     Create MongoDB indexes for common query patterns.
     Idempotent — safe to call on every startup.
     """
+    from smritikosh import subsystems
+
     col = get_audit_collection()
+    # Not configured is not degraded — the audit trail is opt-in.
     if col is None:
         return
     try:
@@ -62,8 +65,11 @@ async def init_audit_indexes() -> None:
         await col.create_index([("event_type", ASCENDING), ("timestamp", DESCENDING)])
         await col.create_index([("user_id", ASCENDING), ("app_id", ASCENDING), ("event_type", ASCENDING)])
         logger.info("MongoDB audit indexes ensured.")
+        subsystems.mark_healthy("mongodb")
     except Exception as exc:
+        # Already non-fatal; B3 additionally surfaces it on /health.
         logger.warning("MongoDB index creation failed (non-fatal): %s", exc)
+        subsystems.mark_degraded("mongodb", f"index creation failed: {exc}")
 
 
 async def close_audit() -> None:

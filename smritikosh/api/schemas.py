@@ -654,6 +654,11 @@ class HealthResponse(BaseModel):
     mongodb: str = "unknown"     # "ok" | "error" | "not_configured"
     llm_model: str = "unknown"
     llm_status: str = "unknown"  # "ok" | "error"
+    # Optional subsystems currently unreachable from THIS process, mapped to
+    # the reason (item B3). Empty when everything configured is healthy. The
+    # API keeps serving while these are down — Neo4j missing costs semantic
+    # facts, Mongo the audit trail, Redis shared rate limits + the durable queue.
+    degraded_subsystems: dict[str, str] = {}
     # Live Postgres pool utilisation for THIS process (item A4):
     # {size, checked_in, checked_out, overflow, max}. checked_out
     # approaching max means requests will start waiting PG_POOL_TIMEOUT
