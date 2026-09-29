@@ -46,6 +46,7 @@ from smritikosh.sdk.types import (
     DeleteUserMemoryResult,
     DeleteUserProceduresResult,
     EncodedEvent,
+    EventDetail,
     FeedbackRecord,
     HealthStatus,
     IdentityDimensionItem,
@@ -134,6 +135,7 @@ class SmritikoshClient:
         content: str,
         app_id: str | None = None,
         metadata: dict | None = None,
+        extract: bool = True,
     ) -> EncodedEvent:
         """
         Store a user interaction in episodic memory.
@@ -146,6 +148,8 @@ class SmritikoshClient:
             content:  Raw interaction text (conversation turn, note, etc.).
             app_id:   Application namespace. Defaults to the client-level app_id.
             metadata: Optional extra context (``{"source": "slack", "channel": "#general"}``).
+            extract:  False stores ``content`` as-is — embedded for search, no
+                      LLM fact extraction. For a statement that is already final.
 
         Returns:
             :class:`EncodedEvent` with the stored event ID and extraction summary.
@@ -155,6 +159,7 @@ class SmritikoshClient:
             "content": content,
             "app_id": app_id or self._app_id,
             "metadata": metadata or {},
+            "extract": extract,
         }
         data = await self._post("/memory/event", payload)
         return EncodedEvent(
@@ -225,13 +230,13 @@ class SmritikoshClient:
         Args:
             user_id: User whose events to retrieve.
             app_id:  Application namespace. Defaults to the client-level app_id.
-            limit:   Maximum events to return (1–50).
+            limit:   Maximum events to return (1–500).
 
         Returns:
             List of :class:`RecentEvent`, newest first.
         """
         params = {
-            "app_id": app_id or self._app_id,
+            "app_ids": [app_id or self._app_id],
             "limit": limit,
         }
         data = await self._get(f"/memory/{user_id}", params=params)
@@ -443,6 +448,25 @@ class SmritikoshClient:
             procedures_deleted=data["procedures_deleted"],
             user_id=data["user_id"],
             app_id=data["app_id"],
+        )
+
+    async def get_event(
+        self,
+        *,
+        event_id: str,
+    ) -> EventDetail:
+        """
+        Fetch one memory event by ID.
+
+        Raises :class:`SmritikoshError` (404) when no such event exists.
+        """
+        data = await self._get(f"/memory/event/{event_id}")
+        return EventDetail(
+            event_id=data["event_id"],
+            user_id=data["user_id"],
+            app_id=data["app_id"],
+            raw_text=data["raw_text"],
+            created_at=data["created_at"],
         )
 
     async def delete_event(

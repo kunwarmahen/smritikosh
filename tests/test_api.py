@@ -273,6 +273,37 @@ class TestCaptureEvent:
 
         assert mock_hippocampus.encode.call_args.kwargs["app_id"] == "default"
 
+    @pytest.mark.asyncio
+    async def test_extract_false_stores_as_is(self, client, mock_hippocampus):
+        mock_hippocampus.encode = AsyncMock()
+        mock_hippocampus.encode_preextracted = AsyncMock(
+            return_value=make_encoded_memory(facts_count=0))
+
+        response = await client.post("/memory/event", json={
+            "user_id": "u1", "content": "Lives near RDU.", "extract": False,
+        })
+
+        assert response.status_code == 201
+        assert response.json()["facts_extracted"] == 0
+        mock_hippocampus.encode.assert_not_called()
+        kwargs = mock_hippocampus.encode_preextracted.call_args.kwargs
+        assert kwargs["raw_text"] == "Lives near RDU."
+        assert kwargs["extracted_facts"] == []
+
+    @pytest.mark.asyncio
+    async def test_extraction_setting_off_overrides_request(
+            self, client, mock_hippocampus, monkeypatch):
+        from smritikosh.config import settings
+        monkeypatch.setattr(settings, "encode_extract", False)
+        mock_hippocampus.encode = AsyncMock()
+        mock_hippocampus.encode_preextracted = AsyncMock(
+            return_value=make_encoded_memory(facts_count=0))
+
+        await client.post("/memory/event", json={"user_id": "u1", "content": "hi"})
+
+        mock_hippocampus.encode.assert_not_called()
+        mock_hippocampus.encode_preextracted.assert_called_once()
+
 
 # ── POST /context ─────────────────────────────────────────────────────────────
 

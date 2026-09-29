@@ -139,6 +139,16 @@ class DeleteUserProceduresResult:
 
 
 @dataclass
+class EventDetail:
+    """One event, from SmritikoshClient.get_event()."""
+    event_id: str
+    user_id: str
+    app_id: str
+    raw_text: str
+    created_at: str
+
+
+@dataclass
 class DeleteEventResult:
     """Returned by SmritikoshClient.delete_event()."""
     deleted: bool

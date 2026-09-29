@@ -303,7 +303,8 @@ class TestGetRecent:
             return_value=Response(200, json=RECENT_RESPONSE)
         )
         await client.get_recent(user_id="alice", app_id="myapp")
-        assert "app_id=myapp" in str(route.calls[0].request.url)
+        # the route reads app_ids (a list); a bare app_id was silently ignored
+        assert route.calls[0].request.url.params.get_list("app_ids") == ["myapp"]
 
     @respx.mock
     async def test_returns_empty_list(self, client):

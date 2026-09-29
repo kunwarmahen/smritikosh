@@ -56,6 +56,14 @@ class EventRequest(BaseModel):
     app_id: str = Field("default", description="Application namespace (for multi-app isolation)")
     metadata: dict = Field(default_factory=dict, description="Optional extra context (source, channel, etc.)")
     source_type: str = Field("api_explicit", description="How this memory was created. See SourceType enum.")
+    extract: bool = Field(
+        True,
+        description=(
+            "Run LLM fact extraction over the content. False stores the content "
+            "as-is: embedded for search, no LLM call — for callers that already "
+            "hand over a finished statement."
+        ),
+    )
 
 
 class EventResponse(BaseModel):

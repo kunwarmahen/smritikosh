@@ -190,8 +190,8 @@ Your application
       ├── SmritikoshClient (Python)   smritikosh.sdk   ← async API client
       ├── SmritikoshClient (Node.js)  sdk-node/
       ├── withMemory() (Node.js)      ← wraps OpenAI / Anthropic client (middleware parity)
-      └── smritikosh-mcp (MCP server) smritikosh.mcp   ← store_memory / recall /
-                │                                        get_context for any MCP client
+      └── smritikosh-mcp (MCP server) smritikosh.mcp   ← store_memory / remember / recall /
+                │                                        get_context / list_memories / forget
                 │
                 ▼  REST API (FastAPI)
         ┌───────────────────────────────────────┐
@@ -1777,6 +1777,7 @@ All backend settings are read from the environment (or `.env`). Every field has 
 | `JWT_EXPIRE_DAYS` | `30` | Token lifetime in days |
 | `CONNECTOR_ENCRYPTION_KEY` | — | Key for encrypting connector OAuth tokens at rest. If unset, derived from `JWT_SECRET`. Set it to rotate the JWT secret and connector key independently. Changing it invalidates existing connector tokens (re-auth required). |
 | `REDIS_URL` | — | Shared Redis store for the rate limiter **and** the durable task queue (ARQ). If unset, the limiter uses per-process in-memory storage and queued work (media processing, re-embed) runs in-process. **Required when running more than one API replica.** Example: `redis://localhost:6379/0` |
+| `ENCODE_EXTRACT` | `true` | Run LLM fact extraction on `POST /memory/event`. `false` stores every event as-is (embedded, no LLM), whatever the request asks. |
 | `RATE_LIMIT_ENCODE` | `60/minute` | Per-user rate limit for `POST /memory/event`. Set to `""` to disable. |
 | `RATE_LIMIT_CONTEXT` | `60/minute` | Per-user rate limit for `POST /context`. Set to `""` to disable. |
 | `RATE_LIMIT_SEARCH` | `120/minute` | Per-user rate limit for `POST /memory/search`. Set to `""` to disable. |
@@ -2172,6 +2173,17 @@ curl -X POST http://localhost:8080/memory/event \
 ```
 
 The optional `source_type` field defaults to `"api_explicit"`. You can pass any valid `SourceType` value.
+
+**Storing a statement as-is.** When the caller's own model has already decided what is worth keeping and phrased it as one sentence, pass `"extract": false`. The content is embedded for search and stored as one event; no LLM runs, and `facts_extracted` is `0`.
+
+```bash
+curl -X POST http://localhost:8080/memory/event \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "alice", "content": "Lives near RDU (Raleigh-Durham airport).", "extract": false}'
+```
+
+To turn extraction off for every request on a server, set `ENCODE_EXTRACT=false`.
 
 ---
 

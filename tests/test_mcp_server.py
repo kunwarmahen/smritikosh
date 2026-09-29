@@ -15,9 +15,12 @@ from httpx import Response
 from smritikosh.mcp import server as mcp_server
 from smritikosh.mcp.server import (
     config_from_env,
+    forget,
     get_context,
+    list_memories,
     mcp,
     recall,
+    remember,
     store_memory,
 )
 from smritikosh.sdk.client import SmritikoshError
@@ -134,9 +137,10 @@ async def test_tools_fail_without_lifespan():
 # ── Tool registration ─────────────────────────────────────────────────────────
 
 
-async def test_three_tools_registered():
+async def test_tools_registered():
     tools = {t.name for t in await mcp.list_tools()}
-    assert tools == {"store_memory", "recall", "get_context"}
+    assert tools == {"store_memory", "remember", "recall", "get_context",
+                     "list_memories", "forget"}
 
 
 # ── store_memory ──────────────────────────────────────────────────────────────
@@ -218,3 +222,104 @@ async def test_get_context(mcp_state):
     payload = json.loads(route.calls.last.request.content)
     assert payload["user_id"] == "alice"
     assert payload["query"] == "What editor does Alice use?"
+
+
+# ── remember (store as-is, no extraction) ─────────────────────────────────────
+
+
+@respx.mock
+async def test_remember_stores_without_extraction(mcp_state):
+    route = respx.post(f"{BASE_URL}/memory/event").mock(
+        return_value=Response(201, json={**ENCODE_RESPONSE, "facts_extracted": 0})
+    )
+
+    result = await remember(statement="Lives near RDU.", metadata={"kind": "fact"})
+
+    assert result == {"id": "evt-001", "statement": "Lives near RDU."}
+    payload = json.loads(route.calls.last.request.content)
+    assert payload["extract"] is False
+    assert payload["content"] == "Lives near RDU."
+    assert payload["user_id"] == "alice"
+    assert payload["metadata"] == {"kind": "fact"}
+
+
+@respx.mock
+async def test_store_memory_still_extracts(mcp_state):
+    route = respx.post(f"{BASE_URL}/memory/event").mock(
+        return_value=Response(200, json=ENCODE_RESPONSE)
+    )
+    await store_memory(content="I prefer dark mode.")
+    assert json.loads(route.calls.last.request.content)["extract"] is True
+
+
+# ── list_memories ─────────────────────────────────────────────────────────────
+
+
+@respx.mock
+async def test_list_memories(mcp_state):
+    route = respx.get(f"{BASE_URL}/memory/alice").mock(
+        return_value=Response(200, json={
+            "user_id": "alice",
+            "app_ids": ["default"],
+            "events": [{
+                "event_id": "evt-002",
+                "raw_text": "Uses uv, not pip.",
+                "importance_score": 0.5,
+                "consolidated": False,
+                "created_at": "2026-09-29T10:00:00+00:00",
+            }],
+        })
+    )
+
+    result = await list_memories(limit=20)
+
+    assert result == {"memories": [{"id": "evt-002", "statement": "Uses uv, not pip.",
+                                    "created_at": "2026-09-29T10:00:00+00:00"}]}
+    params = route.calls.last.request.url.params
+    assert params["limit"] == "20"
+    assert params.get_list("app_ids") == ["default"]
+
+
+# ── forget ────────────────────────────────────────────────────────────────────
+
+EVENT_DETAIL = {
+    "event_id": "evt-003",
+    "user_id": "alice",
+    "app_id": "default",
+    "raw_text": "Lives near RDU.",
+    "created_at": "2026-09-29T10:00:00+00:00",
+}
+
+
+@respx.mock
+async def test_forget_deletes_own_memory(mcp_state):
+    respx.get(f"{BASE_URL}/memory/event/evt-003").mock(
+        return_value=Response(200, json=EVENT_DETAIL)
+    )
+    deleted = respx.delete(f"{BASE_URL}/memory/event/evt-003").mock(
+        return_value=Response(200, json={"deleted": True, "event_id": "evt-003"})
+    )
+
+    assert await forget(memory_id="evt-003") == {"forgotten": True, "id": "evt-003"}
+    assert deleted.called
+
+
+@respx.mock
+async def test_forget_refuses_someone_elses(mcp_state):
+    respx.get(f"{BASE_URL}/memory/event/evt-003").mock(
+        return_value=Response(200, json=EVENT_DETAIL)
+    )
+    deleted = respx.delete(f"{BASE_URL}/memory/event/evt-003")
+
+    result = await forget(memory_id="evt-003", user_id="bob")
+
+    assert result == {"forgotten": False, "id": "evt-003"}
+    assert not deleted.called
+
+
+@respx.mock
+async def test_forget_unknown_id(mcp_state):
+    respx.get(f"{BASE_URL}/memory/event/nope").mock(
+        return_value=Response(422, json={"detail": "Invalid event_id UUID format."})
+    )
+    assert await forget(memory_id="nope") == {"forgotten": False, "id": "nope"}

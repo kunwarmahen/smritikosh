@@ -1,7 +1,8 @@
 """
 Memory routes — capture and retrieve episodic events.
 
-POST /memory/event      Encode a raw interaction into memory (Hippocampus.encode)
+POST /memory/event      Encode a raw interaction into memory (Hippocampus.encode),
+                        or store a finished statement as-is (extract=false)
 POST /memory/search     Hybrid search — returns raw scored events
 GET  /memory/{user_id}  Return recent events for a user
 """
@@ -73,22 +74,40 @@ async def capture_event(
 
     Returns immediately with the stored event ID and extraction summary.
     If fact extraction fails the event is still stored (extraction_failed=True).
+
+    With ``extract=false`` (or the ``encode_extract`` setting off) step 2's
+    extraction is skipped: the content is stored as-is, embedded for search,
+    and no LLM runs. For callers whose own model already decided what to keep
+    and phrased it as a finished statement.
     """
     assert_self_or_admin(current_user, body.user_id)
     assert_app_access(current_user, body.app_id)
     await enforce_event_quota(pg, body.user_id, body.app_id)
     await enforce_token_quota(pg, body.user_id, body.app_id)
+    extract = body.extract and settings.encode_extract
     try:
         with llm_context(user_id=body.user_id, app_id=body.app_id, source="encode"):
-            result = await hippocampus.encode(
-                pg,
-                neo,
-                user_id=body.user_id,
-                raw_text=body.content,
-                app_id=body.app_id,
-                metadata=body.metadata,
-                source_type=body.source_type,
-            )
+            if extract:
+                result = await hippocampus.encode(
+                    pg,
+                    neo,
+                    user_id=body.user_id,
+                    raw_text=body.content,
+                    app_id=body.app_id,
+                    metadata=body.metadata,
+                    source_type=body.source_type,
+                )
+            else:
+                result = await hippocampus.encode_preextracted(
+                    pg,
+                    neo,
+                    user_id=body.user_id,
+                    raw_text=body.content,
+                    extracted_facts=[],
+                    app_id=body.app_id,
+                    metadata=body.metadata,
+                    source_type=body.source_type,
+                )
     except Exception as exc:
         logger.exception("Hippocampus encode failed", extra={"user_id": body.user_id})
         raise HTTPException(status_code=500, detail=f"Memory encoding failed: {exc}") from exc

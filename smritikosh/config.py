@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     llm_fallback_api_key: str | None = None    # if the fallback uses a different key
     llm_fallback_base_url: str | None = None   # for local fallback providers
 
+    # When False, POST /memory/event never runs LLM fact extraction: every
+    # event is stored as-is (embedded for search), whatever the request asks.
+    encode_extract: bool = True
+
     # ── Embeddings ─────────────────────────────────────────────────────────
     embedding_provider: str = "openai"
     embedding_model: str = "text-embedding-3-small"

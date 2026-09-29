@@ -2,11 +2,20 @@
 Smritikosh MCP server.
 
 A thin Model Context Protocol wrapper over the Python SDK
-(:class:`smritikosh.sdk.client.SmritikoshClient`). Exposes three tools:
+(:class:`smritikosh.sdk.client.SmritikoshClient`). Exposes six tools:
 
-    store_memory  — save a fact/preference/event to episodic memory
+    store_memory  — save text to episodic memory; the server's LLM extracts facts
+    remember      — save one finished statement as-is: embedded, no LLM
     recall        — hybrid search over a user's memories
     get_context   — build a ready-to-inject memory context block for a query
+    list_memories — the user's most recent memories, newest first
+    forget        — delete one memory by id
+
+``store_memory`` is for a client that hands over raw text and lets Smritikosh
+decide what is worth keeping. ``remember`` is for a client whose own model has
+already decided and phrased it ("Lives near RDU"): nothing is re-read or
+re-judged. ``list_memories`` and ``forget`` let a client show a person what is
+kept about them and remove what stopped being true.
 
 Configuration (environment variables):
 
@@ -44,7 +53,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from smritikosh.sdk.client import SmritikoshClient
+from smritikosh.sdk.client import SmritikoshClient, SmritikoshError
 
 _DEFAULT_BASE_URL = "http://localhost:8080"
 
@@ -126,7 +135,9 @@ mcp = FastMCP(
         "Smritikosh is a persistent memory layer. Use get_context at the start of "
         "a task to load what is already known about the user, recall to search for "
         "specific memories, and store_memory whenever the user shares durable "
-        "information worth remembering across sessions."
+        "information worth remembering across sessions (remember instead when "
+        "you already have it as one finished sentence). list_memories and "
+        "forget show and remove what is kept."
     ),
     lifespan=_lifespan,
 )
@@ -160,6 +171,93 @@ async def store_memory(
         metadata=metadata,
     )
     return asdict(event)
+
+
+@mcp.tool()
+async def remember(
+    statement: str,
+    metadata: dict[str, Any] | None = None,
+    user_id: str | None = None,
+) -> dict[str, Any]:
+    """Save one finished statement about the user, exactly as given.
+
+    Unlike ``store_memory``, no LLM reads it: the statement is embedded for
+    search and stored. Use it when you have already decided the fact is worth
+    keeping and phrased it as one self-contained sentence
+    (e.g. "Lives near RDU (Raleigh-Durham airport)").
+
+    Args:
+        statement: The fact, as one standalone sentence.
+        metadata:  Optional extra context, e.g. {"kind": "preference"}.
+        user_id:   Override the default user (admin API keys only).
+
+    Returns the stored memory's ``id`` and the ``statement``.
+    """
+    state = _require_state()
+    event = await state.client.encode(
+        user_id=user_id or state.config.user_id,
+        content=statement,
+        metadata=metadata,
+        extract=False,
+    )
+    return {"id": event.event_id, "statement": statement}
+
+
+@mcp.tool()
+async def list_memories(
+    limit: int = 50,
+    user_id: str | None = None,
+) -> dict[str, Any]:
+    """List the user's most recent memories, newest first.
+
+    Call this to show the user what is remembered about them, or to find the
+    id of one to ``forget``.
+
+    Args:
+        limit:   Maximum memories to return (1-500, default 50).
+        user_id: Override the default user (admin API keys only).
+
+    Returns ``memories``: each with ``id``, ``statement`` and ``created_at``.
+    """
+    state = _require_state()
+    events = await state.client.get_recent(
+        user_id=user_id or state.config.user_id,
+        limit=max(1, min(limit, 500)),
+    )
+    return {"memories": [
+        {"id": e.event_id, "statement": e.raw_text, "created_at": e.created_at}
+        for e in events
+    ]}
+
+
+@mcp.tool()
+async def forget(
+    memory_id: str,
+    user_id: str | None = None,
+) -> dict[str, Any]:
+    """Delete one memory by id — a fact that stopped being true.
+
+    Args:
+        memory_id: The id from ``remember``, ``recall`` or ``list_memories``.
+        user_id:   Override the default user (admin API keys only).
+
+    Returns ``forgotten``: true if it was the user's and is now gone; false if
+    there was no such memory for this user.
+    """
+    state = _require_state()
+    owner = user_id or state.config.user_id
+    try:
+        event = await state.client.get_event(event_id=memory_id)
+    except SmritikoshError as exc:
+        if exc.status_code in (404, 422):   # no such event / not an id
+            return {"forgotten": False, "id": memory_id}
+        raise
+    # An admin key can reach anyone's events; forgetting on behalf of one
+    # user must never delete another's, so ownership is checked here too.
+    if event.user_id != owner:
+        return {"forgotten": False, "id": memory_id}
+    result = await state.client.delete_event(event_id=memory_id)
+    return {"forgotten": result.deleted, "id": memory_id}
 
 
 @mcp.tool()
