@@ -29,6 +29,12 @@ Configuration (environment variables):
     SMRITIKOSH_BASE_URL       default ``http://localhost:8080``
     SMRITIKOSH_APP_ID         default ``default``
     SMRITIKOSH_MCP_TRANSPORT  default ``stdio`` (also: ``sse``, ``streamable-http``)
+    SMRITIKOSH_MCP_LOG_LEVEL  default ``WARNING`` (also: ``DEBUG``, ``INFO``,
+                              ``ERROR``, ``CRITICAL``). A stdio server's log
+                              lines land in the client's own terminal, so
+                              one line per tool call and per HTTP request
+                              (``INFO``) is noise there; set ``INFO`` to see
+                              them while debugging.
 
 Run directly::
 
@@ -129,6 +135,20 @@ def _require_state() -> MCPState:
     return _state
 
 
+_LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
+
+def log_level_from_env(env: dict[str, str] | None = None) -> str:
+    """The server's log level: ``SMRITIKOSH_MCP_LOG_LEVEL``, else ``WARNING``.
+
+    An unknown value falls back to ``WARNING`` rather than stopping the
+    server: a typo in a logging knob should not cost the client its memory.
+    """
+    env = os.environ if env is None else env
+    level = env.get("SMRITIKOSH_MCP_LOG_LEVEL", "").strip().upper()
+    return level if level in _LOG_LEVELS else "WARNING"
+
+
 mcp = FastMCP(
     "smritikosh",
     instructions=(
@@ -140,6 +160,7 @@ mcp = FastMCP(
         "forget show and remove what is kept."
     ),
     lifespan=_lifespan,
+    log_level=log_level_from_env(),  # type: ignore[arg-type]
 )
 
 

@@ -17,6 +17,7 @@ from smritikosh.mcp.server import (
     config_from_env,
     forget,
     get_context,
+    log_level_from_env,
     list_memories,
     mcp,
     recall,
@@ -323,3 +324,21 @@ async def test_forget_unknown_id(mcp_state):
         return_value=Response(422, json={"detail": "Invalid event_id UUID format."})
     )
     assert await forget(memory_id="nope") == {"forgotten": False, "id": "nope"}
+
+
+# ── Logging ─────────────────────────────────────────────────────────────────
+
+
+class TestLogLevel:
+    """A stdio server's log lines print in the client's terminal: one INFO
+    line per tool call and per HTTP request buried the client's own output."""
+
+    def test_quiet_by_default(self):
+        assert log_level_from_env({}) == "WARNING"
+        assert mcp.settings.log_level in ("WARNING", log_level_from_env())
+
+    def test_the_level_can_be_turned_up_for_debugging(self):
+        assert log_level_from_env({"SMRITIKOSH_MCP_LOG_LEVEL": "info"}) == "INFO"
+
+    def test_an_unknown_level_falls_back_rather_than_failing(self):
+        assert log_level_from_env({"SMRITIKOSH_MCP_LOG_LEVEL": "loud"}) == "WARNING"
