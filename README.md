@@ -1284,11 +1284,12 @@ sdk-node/                    # TypeScript / Node.js SDK
 
 ui/                          # Next.js 16 dashboard (App Router)
 ├── auth.ts                  # NextAuth v5 config (CredentialsProvider → /auth/token)
-├── middleware.ts             # Route protection: auth → /dashboard, admin → /admin
+├── middleware.ts             # Route protection: auth → /dashboard, admin → /admin (the tab icon passes signed out)
 ├── next.config.ts
 ├── tailwind.config.ts       # class-based dark mode; theme toggle reads/writes localStorage
 ├── src/
 │   ├── app/
+│   │   ├── icon.svg         # The tab's icon: a chest (kosh) for memories, in the dashboard's violet
 │   │   ├── (auth)/login/    # Sign-in page with error handling
 │   │   ├── (dashboard)/dashboard/
 │   │   │   ├── page.tsx            # Redirect → /dashboard/memories

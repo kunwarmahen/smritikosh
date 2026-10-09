@@ -23,6 +23,6 @@ export default auth((req: NextRequest & { auth: { user?: { role?: string } } | n
 
 export const config = {
   matcher: [
-    "/((?!api|_next/static|_next/image|favicon.ico).*)",
+    "/((?!api|_next/static|_next/image|favicon.ico|icon.svg).*)",
   ],
 };
