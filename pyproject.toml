@@ -24,6 +24,7 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0.36",
     "asyncpg>=0.30.0",          # async postgres driver
     "pgvector>=0.3.5",          # vector column support
+    "numpy>=1.26.0",            # vector maths (memory clustering), imported directly
     "alembic>=1.14.0",
     "neo4j>=5.27.0",            # Neo4j async driver
     # Background jobs
@@ -52,7 +53,7 @@ smritikosh-mcp = "smritikosh.mcp.server:main"
 # recall / get_context tools to MCP clients (Claude Code, Claude Desktop, …).
 # Install: pip install smritikosh[mcp]
 mcp = [
-    "mcp>=1.10.0",
+    "mcp>=1.10.0,<2",           # 2.x renamed FastMCP, which the server is built on
 ]
 dev = [
     "pytest>=8.3.0",
