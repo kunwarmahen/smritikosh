@@ -102,7 +102,8 @@ export function useUploadMedia() {
   const qc = useQueryClient();
 
   return useMutation<MediaUploadResponse, Error, FormData>({
-    mutationFn: (formData) => createApiClient(token).uploadMedia(formData),
+    mutationFn: (formData) =>
+      createApiClient(token).uploadMedia(formData) as Promise<MediaUploadResponse>,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["memory"] });
     },
@@ -115,7 +116,8 @@ export function useMediaStatus(mediaId: string | null) {
 
   return useQuery<MediaStatusResponse>({
     queryKey: ["media", "status", mediaId],
-    queryFn: () => createApiClient(token).getMediaStatus(mediaId!),
+    queryFn: () =>
+      createApiClient(token).getMediaStatus(mediaId!) as Promise<MediaStatusResponse>,
     enabled: !!mediaId && !!token,
     refetchInterval: (query) => (query.state.data?.status === "processing" ? 2000 : false),
   });
@@ -136,7 +138,7 @@ export function useConfirmMediaFacts() {
         user_id: user_id || session!.user.id,
         app_id: app_id || "default",
         confirmed_indices,
-      }),
+      }) as Promise<MediaUploadResponse>,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["memory"] });
       qc.invalidateQueries({ queryKey: ["identity"] });

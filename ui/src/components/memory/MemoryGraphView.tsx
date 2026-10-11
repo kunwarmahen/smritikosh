@@ -228,7 +228,7 @@ export function MemoryGraphView({ eventId }: { eventId: string }) {
       if (src.x == null || tgt.x == null) return;
 
       const mx    = (src.x + tgt.x) / 2;
-      const my    = (src.y + tgt.y) / 2;
+      const my    = ((src.y ?? 0) + (tgt.y ?? 0)) / 2;
       const label = RELATION_LABELS[link.relation] ?? link.relation;
       const color = RELATION_COLORS[link.relation] ?? "#475569";
       const s     = 1 / globalScale;

@@ -136,7 +136,7 @@ function UserRow({ user }: { user: AdminUser }) {
         </span>
       </td>
       <td className="px-4 py-3">
-        <span className="mono text-zinc-600">{user.app_id}</span>
+        <span className="mono text-zinc-600">{user.app_ids.join(", ")}</span>
       </td>
       <td className="px-4 py-3">
         <span className="text-xs text-zinc-600">{user.email ?? "—"}</span>
