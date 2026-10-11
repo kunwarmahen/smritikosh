@@ -1282,7 +1282,7 @@ sdk-node/                    # TypeScript / Node.js SDK
 ├── package.json
 └── tsconfig*.json
 
-ui/                          # Next.js 16 dashboard (App Router)
+ui/                          # Next.js 15 dashboard (App Router)
 ├── auth.ts                  # NextAuth v5 config (CredentialsProvider → /auth/token)
 ├── middleware.ts             # Route protection: auth → /dashboard, admin → /admin (the tab icon passes signed out)
 ├── next.config.ts
@@ -1403,7 +1403,7 @@ alembic/
 | Tool | Version | Purpose |
 |---|---|---|
 | Python | ≥ 3.11 | StrEnum, `match`, type syntax |
-| Node.js | ≥ 18 | Dashboard UI (Next.js 16) |
+| Node.js | ≥ 18 | Dashboard UI (Next.js 15) |
 | Docker + Compose | any recent | PostgreSQL + Neo4j + MongoDB (recommended) |
 | An LLM API key | — | Claude / OpenAI / Gemini (or Ollama locally) |
 | MongoDB 6+ | optional | Audit trail / provenance log (disabled if `MONGODB_URL` unset) |
@@ -1700,7 +1700,7 @@ curl -X POST http://localhost:8080/auth/register \
 
 ### Dashboard UI setup
 
-The UI is a standalone Next.js 16 application in the `ui/` directory.
+The UI is a standalone Next.js 15 application in the `ui/` directory.
 
 #### 1. Install dependencies
 
@@ -1837,7 +1837,7 @@ Interactive API docs are available at `http://localhost:8080/docs`.
 
 ## Dashboard UI
 
-The dashboard is a standalone Next.js 16 application that connects to the FastAPI backend.
+The dashboard is a standalone Next.js 15 application that connects to the FastAPI backend.
 
 ```bash
 cd ui
@@ -1845,6 +1845,14 @@ npm run dev      # development (http://localhost:3000)
 npm run build    # production build
 npm start        # serve the production build
 ```
+
+`npm run build` checks types where `npm run dev` doesn't, so run it
+before relying on a production start. Open the dashboard as
+`http://localhost:3000`, not `127.0.0.1:3000`: sign-in sends the browser
+to `localhost`, and a cookie set for one name isn't sent to the other.
+With [Yantra](https://github.com/kunwarmahen/yantra) run through
+[Sarathi](https://github.com/kunwarmahen/sarathi), `sarathi smritikosh`
+builds it and `sarathi up` starts it.
 
 ### Pages
 
