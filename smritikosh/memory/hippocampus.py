@@ -251,44 +251,15 @@ class Hippocampus:
         )
 
         # ── 5. Audit ──────────────────────────────────────────────────────
-        if self.audit:
-            from smritikosh.audit.logger import AuditEvent, EventType
-            eid = str(event.id)
-            await self.audit.emit(AuditEvent(
-                event_type=EventType.MEMORY_ENCODED,
-                user_id=user_id,
-                app_id=app_id,
-                event_id=eid,
-                session_id=session_id,
-                payload={
-                    "raw_text_preview": raw_text[:300],
-                    "importance_score": importance_score,
-                    "embedding_success": embedding is not None,
-                    "extraction_failed": extraction_failed,
-                    "source": (metadata or {}).get("source", "api"),
-                    "metadata": metadata or {},
-                },
-            ))
-            if stored_facts:
-                await self.audit.emit(AuditEvent(
-                    event_type=EventType.MEMORY_FACTS_EXTRACTED,
-                    user_id=user_id,
-                    app_id=app_id,
-                    event_id=eid,
-                    session_id=session_id,
-                    payload={
-                        "facts": [
-                            {
-                                "category": f.category,
-                                "key": f.key,
-                                "value": f.value,
-                                "confidence": f.confidence,
-                            }
-                            for f in stored_facts
-                        ],
-                        "facts_count": len(stored_facts),
-                    },
-                ))
+        await self._audit_encoded(
+            result,
+            user_id=user_id,
+            app_id=app_id,
+            session_id=session_id,
+            raw_text=raw_text,
+            embedded=embedding is not None,
+            metadata=metadata,
+        )
 
         return result
 
@@ -346,13 +317,77 @@ class Hippocampus:
             pg_session=pg_session,
         )
 
-        return EncodedMemory(
+        result = EncodedMemory(
             event=event,
             facts=stored_facts,
             importance_score=importance_score,
         )
+        await self._audit_encoded(
+            result,
+            user_id=user_id,
+            app_id=app_id,
+            session_id=None,
+            raw_text=raw_text,
+            embedded=embedding is not None,
+            metadata=metadata,
+        )
+        return result
 
     # ── Helpers ────────────────────────────────────────────────────────────
+
+    async def _audit_encoded(
+        self,
+        result: EncodedMemory,
+        *,
+        user_id: str,
+        app_id: str,
+        session_id: str | None,
+        raw_text: str,
+        embedded: bool,
+        metadata: dict | None,
+    ) -> None:
+        """Emit memory.encoded (and memory.facts_extracted when facts were
+        stored). Shared by encode() and encode_preextracted() so a memory
+        written either way shows on the audit timeline."""
+        if not self.audit:
+            return
+        from smritikosh.audit.logger import AuditEvent, EventType
+        eid = str(result.event.id)
+        await self.audit.emit(AuditEvent(
+            event_type=EventType.MEMORY_ENCODED,
+            user_id=user_id,
+            app_id=app_id,
+            event_id=eid,
+            session_id=session_id,
+            payload={
+                "raw_text_preview": raw_text[:300],
+                "importance_score": result.importance_score,
+                "embedding_success": embedded,
+                "extraction_failed": result.extraction_failed,
+                "source": (metadata or {}).get("source", "api"),
+                "metadata": metadata or {},
+            },
+        ))
+        if result.facts:
+            await self.audit.emit(AuditEvent(
+                event_type=EventType.MEMORY_FACTS_EXTRACTED,
+                user_id=user_id,
+                app_id=app_id,
+                event_id=eid,
+                session_id=session_id,
+                payload={
+                    "facts": [
+                        {
+                            "category": f.category,
+                            "key": f.key,
+                            "value": f.value,
+                            "confidence": f.confidence,
+                        }
+                        for f in result.facts
+                    ],
+                    "facts_count": len(result.facts),
+                },
+            ))
 
     async def _embed_and_extract(
         self, raw_text: str, user_id: str, existing_facts: list | None = None

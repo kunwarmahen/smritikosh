@@ -11,6 +11,7 @@ export function useAuditTimeline(params?: {
   offset?: number;
   from_ts?: string;
   to_ts?: string;
+  hide_noop?: boolean;
   userId?: string; // admin: override user; regular: uses session user
 }) {
   const { data: session } = useSession();

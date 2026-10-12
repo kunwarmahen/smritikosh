@@ -99,6 +99,9 @@ export function AuditTimeline() {
 
   const { data, isLoading, isError, refetch, isFetching } = useAuditTimeline({
     event_type: eventType || undefined,
+    // "All events" leaves out job runs that changed nothing; picking
+    // "Pruning run" or "Reconsolidation run" shows every one.
+    hide_noop: !eventType,
     limit,
   });
 

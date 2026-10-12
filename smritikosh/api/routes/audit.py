@@ -52,6 +52,7 @@ async def get_user_timeline(
     to_ts: Annotated[Optional[datetime], Query(description="End of time range (ISO 8601)")] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
+    hide_noop: Annotated[bool, Query(description="Leave out job-run summaries that changed nothing")] = False,
     current_user: dict = Depends(get_current_user),
 ) -> dict:
     """
@@ -69,6 +70,7 @@ async def get_user_timeline(
         to_ts=to_ts,
         limit=limit,
         offset=offset,
+        hide_noop=hide_noop,
     )
     return {
         "user_id": user_id,

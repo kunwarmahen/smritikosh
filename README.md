@@ -3559,6 +3559,9 @@ curl "http://localhost:8080/audit/alice?app_id=myapp&limit=20"
 | `offset` | `0` | Pagination offset |
 | `from_ts` | — | Only events on or after this ISO 8601 timestamp |
 | `to_ts` | — | Only events on or before this ISO 8601 timestamp |
+| `hide_noop` | `false` | Leave out job-run summaries that changed nothing (`memory.prune_run` that deleted nothing, `memory.reconsolidate_run` that updated nothing) |
+
+The pruning job writes a `memory.prune_run` record for every user on every run, even when nothing was pruned — it is the proof the job ran. With many users or a frequent `SCHEDULER_PRUNING_CRON` those records bury everything else, so the dashboard's audit timeline sends `hide_noop=true` while "All events" is selected. Pick "Pruning run" in its filter to see every run.
 
 ---
 
@@ -3620,7 +3623,7 @@ Every pipeline component emits a structured `AuditEvent` document to MongoDB aft
 POST /memory/event
       │
       ▼
-  Hippocampus.encode()
+  Hippocampus.encode()  (or encode_preextracted() when extract=false)
       ├─► emit: memory.encoded          (importance score, embedding success, metadata)
       └─► emit: memory.facts_extracted  (facts list with categories + confidence)
                                                 │
@@ -3634,8 +3637,9 @@ POST /memory/event
                                                         (old summary, new summary, recall context)
 
                                      SynapticPruner.prune()
-                                             └─► emit: memory.pruned
-                                                        (importance, recall count, age, thresholds)
+                                             ├─► emit: memory.pruned
+                                             │          (importance, recall count, age, thresholds)
+                                             └─► emit: memory.prune_run   (every run, per user)
 
                                      MemoryClusterer.run()
                                              └─► emit: memory.clustered
@@ -3659,11 +3663,13 @@ POST /memory/search
 
 | Event type | Emitted by | Key payload fields |
 |---|---|---|
-| `memory.encoded` | `Hippocampus.encode()` | `raw_text_preview`, `importance_score`, `embedding_success`, `extraction_failed` |
-| `memory.facts_extracted` | `Hippocampus.encode()` | `facts` (list with category/key/value/confidence), `facts_count` |
+| `memory.encoded` | `Hippocampus.encode()`, `Hippocampus.encode_preextracted()` | `raw_text_preview`, `importance_score`, `embedding_success`, `extraction_failed` |
+| `memory.facts_extracted` | `Hippocampus.encode()`, `Hippocampus.encode_preextracted()` | `facts` (list with category/key/value/confidence), `facts_count` |
 | `memory.consolidated` | `Consolidator._consolidate_batch()` | `event_ids`, `summary`, `facts_distilled`, `links_created`, `facts` |
 | `memory.reconsolidated` | `ReconsolidationEngine._reconsolidate_one()` | `old_summary`, `new_summary`, `recall_context`, `reconsolidation_count` |
 | `memory.pruned` | `SynapticPruner.prune()` | `importance_score`, `recall_count`, `age_days`, `thresholds`, `raw_text_preview` |
+| `memory.prune_run` | `SynapticPruner.prune()` (every run, even with nothing to prune) | `events_evaluated`, `events_pruned`, `facts_purged`, `skipped`, thresholds |
+| `memory.reconsolidate_run` | `ReconsolidationEngine` (every run, even when gated) | `events_evaluated`, `events_updated`, `events_skipped`, `skip_reasons` |
 | `memory.clustered` | `MemoryClusterer.run()` | `clusters_found`, `events_clustered`, `clusters` (label + event count per cluster) |
 | `belief.mined` | `BeliefMiner.mine()` | `beliefs_found`, `beliefs_upserted`, `beliefs` (statement/category/confidence list) |
 | `feedback.submitted` | `POST /feedback` route | `feedback_type`, `comment`, `new_importance_score` |
@@ -3672,6 +3678,8 @@ POST /memory/search
 | `consent.granted` | `ConsentService.grant()` | `source_app_id`, `target_app_id`, `categories`, `created_by` |
 | `consent.revoked` | `ConsentService.revoke()` | `source_app_id`, `target_app_id`, `revoked_by` |
 | `consent.cross_app_read` | `ConsentService.consented_facts()` (per source app, on `/context` reads) | `source_app_id`, `target_app_id`, `categories`, `facts_returned` |
+
+Only the pruning and reconsolidation jobs write a record on every run. Consolidation, clustering, belief mining and reflection write one only when they produced something, so a user with too little memory to work on (consolidation waits for 5 unconsolidated events) shows nothing from them. To see whether those jobs ran, look at the `last_*_at` columns of the `user_activity` table or the scheduler's log lines (`Clustering job complete — processed=… skipped=…`).
 
 ### Session grouping
 

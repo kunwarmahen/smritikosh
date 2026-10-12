@@ -321,6 +321,52 @@ class TestGracefulDegradation:
         assert episodic.store.call_args.kwargs["embedding"] is None
 
 
+# ── Audit trail ───────────────────────────────────────────────────────────────
+
+
+class TestEncodeAudit:
+    """Both write paths leave memory.encoded on the audit timeline."""
+
+    @staticmethod
+    def _wired():
+        hippo, llm, episodic, semantic, amygdala = make_hippocampus()
+        hippo.audit = AsyncMock()
+        amygdala.score.return_value = 0.7
+        llm.embed = AsyncMock(return_value=[0.1] * 1536)
+        llm.extract_structured = AsyncMock(return_value={"facts": [
+            {"category": "interest", "key": "domain", "value": "AI agents", "confidence": 0.9}
+        ]})
+        episodic.store = AsyncMock(return_value=make_event())
+        semantic.upsert_fact = AsyncMock(return_value=make_fact_record())
+        return hippo
+
+    @staticmethod
+    def _types(hippo):
+        return [c.args[0].event_type for c in hippo.audit.emit.call_args_list]
+
+    @pytest.mark.asyncio
+    async def test_encode_emits_encoded_and_facts(self):
+        hippo = self._wired()
+        pg, neo = make_mock_sessions()
+        await hippo.encode(pg, neo, user_id="u1", raw_text="I love building AI agents")
+        assert self._types(hippo) == ["memory.encoded", "memory.facts_extracted"]
+
+    @pytest.mark.asyncio
+    async def test_encode_preextracted_emits_encoded_and_facts(self):
+        hippo = self._wired()
+        pg, neo = make_mock_sessions()
+        await hippo.encode_preextracted(
+            pg, neo, user_id="u1", raw_text="Uses Home Assistant",
+            extracted_facts=[{"category": "interest", "key": "domain",
+                              "value": "AI agents", "confidence": 0.9}],
+            metadata={"source": "yantra"},
+        )
+        assert self._types(hippo) == ["memory.encoded", "memory.facts_extracted"]
+        encoded = hippo.audit.emit.call_args_list[0].args[0]
+        assert encoded.payload["raw_text_preview"] == "Uses Home Assistant"
+        assert encoded.payload["source"] == "yantra"
+
+
 # ── Default Amygdala wiring ───────────────────────────────────────────────────
 
 

@@ -135,9 +135,11 @@ export function createApiClient(token?: string) {
         offset?: number;
         from_ts?: string;
         to_ts?: string;
+        hide_noop?: boolean;
       },
     ) => {
       const q = new URLSearchParams({ app_id: params?.app_id ?? "default" });
+      if (params?.hide_noop) q.set("hide_noop", "true");
       if (params?.event_type) q.set("event_type", params.event_type);
       if (params?.limit) q.set("limit", String(params.limit));
       if (params?.offset) q.set("offset", String(params.offset));

@@ -176,6 +176,26 @@ class TestAuditLoggerQueries:
         assert filt["timestamp"] == {"$gte": from_ts, "$lte": to_ts}
 
     @pytest.mark.asyncio
+    async def test_get_timeline_hide_noop_leaves_out_empty_runs(self):
+        col = make_find_collection([])
+        audit = AuditLogger(col)
+
+        await audit.get_timeline("u1")
+        assert "$nor" not in col.find.call_args.args[0]
+
+        await audit.get_timeline("u1", hide_noop=True)
+        nor = col.find.call_args.args[0]["$nor"]
+        assert {
+            "event_type": EventType.MEMORY_PRUNE_RUN,
+            "payload.events_pruned": 0,
+            "payload.facts_purged": 0,
+        } in nor
+        assert {
+            "event_type": EventType.MEMORY_RECONSOLIDATE_RUN,
+            "payload.events_updated": 0,
+        } in nor
+
+    @pytest.mark.asyncio
     async def test_get_timeline_renames_id_and_normalises_timestamp(self):
         doc = _stored_doc()
         original_id = doc["_id"]

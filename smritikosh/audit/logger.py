@@ -64,6 +64,20 @@ class EventType:
     CONSENT_CROSS_APP_READ = "consent.cross_app_read"   # facts read across apps under a grant (S4)
 
 
+# Job-run summaries that changed nothing — left out by get_timeline(hide_noop=True).
+NOOP_RUN_FILTERS: list[dict] = [
+    {
+        "event_type": EventType.MEMORY_PRUNE_RUN,
+        "payload.events_pruned": 0,
+        "payload.facts_purged": 0,
+    },
+    {
+        "event_type": EventType.MEMORY_RECONSOLIDATE_RUN,
+        "payload.events_updated": 0,
+    },
+]
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _normalize_record(record: dict) -> dict:
@@ -188,11 +202,20 @@ class AuditLogger:
         to_ts: datetime | None = None,
         limit: int = 50,
         offset: int = 0,
+        hide_noop: bool = False,
     ) -> list[dict]:
-        """Return audit records for a user, newest first."""
+        """Return audit records for a user, newest first.
+
+        hide_noop leaves out job-run summaries that changed nothing (a
+        pruning run that deleted nothing, a reconsolidation run that updated
+        nothing). They are still written — they prove the job ran — but a
+        frequent schedule would otherwise fill the timeline with them.
+        """
         filt: dict[str, Any] = {"user_id": user_id, "app_id": app_id}
         if event_type:
             filt["event_type"] = event_type
+        if hide_noop:
+            filt["$nor"] = NOOP_RUN_FILTERS
         if event_id:
             filt["event_id"] = event_id
         ts_clause: dict[str, Any] = {}
