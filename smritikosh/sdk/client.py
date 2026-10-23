@@ -223,6 +223,7 @@ class SmritikoshClient:
         user_id: str,
         app_id: str | None = None,
         limit: int = 10,
+        order: str = "created",
     ) -> list[RecentEvent]:
         """
         Fetch the most recent memory events for a user.
@@ -231,6 +232,8 @@ class SmritikoshClient:
             user_id: User whose events to retrieve.
             app_id:  Application namespace. Defaults to the client-level app_id.
             limit:   Maximum events to return (1–500).
+            order:   ``created`` (newest written first) or ``active`` (most
+                     recently used or written first).
 
         Returns:
             List of :class:`RecentEvent`, newest first.
@@ -239,6 +242,8 @@ class SmritikoshClient:
             "app_ids": [app_id or self._app_id],
             "limit": limit,
         }
+        if order != "created":
+            params["order"] = order
         data = await self._get(f"/memory/{user_id}", params=params)
         return [
             RecentEvent(
@@ -247,9 +252,28 @@ class SmritikoshClient:
                 importance_score=item["importance_score"],
                 consolidated=item["consolidated"],
                 created_at=item["created_at"],
+                last_used_at=item.get("last_used_at"),
             )
             for item in data["events"]
         ]
+
+    async def mark_used(
+        self,
+        *,
+        user_id: str,
+        event_ids: list[str],
+    ) -> int:
+        """
+        Say an answer drew on these memories, so they stop ageing.
+
+        Returns how many were marked (ids that are not this user's are
+        skipped by the server).
+        """
+        if not event_ids:
+            return 0
+        data = await self._post("/memory/used",
+                                {"user_id": user_id, "event_ids": list(event_ids)})
+        return int(data.get("marked", 0))
 
     async def submit_feedback(
         self,

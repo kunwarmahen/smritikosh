@@ -140,6 +140,7 @@ class RecentEventItem(BaseModel):
     cluster_id: Optional[int] = None
     cluster_label: Optional[str] = None
     source_type: str = "api_explicit"
+    last_used_at: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -148,6 +149,20 @@ class RecentEventsResponse(BaseModel):
     user_id: str
     app_ids: list[str]
     events: list[RecentEventItem]
+
+
+# ── POST /memory/used ────────────────────────────────────────────────────────
+
+
+class MarkUsedRequest(BaseModel):
+    user_id: str = Field(..., description="Whose memories were used")
+    event_ids: list[str] = Field(..., min_length=1, max_length=100,
+                                 description="Events an answer drew on")
+
+
+class MarkUsedResponse(BaseModel):
+    user_id: str
+    marked: int
 
 
 # ── GET /memory/event/{event_id}  GET /memory/event/{event_id}/links ──────────

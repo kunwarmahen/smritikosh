@@ -10,6 +10,10 @@ Prune condition (all three must be true):
     recall_count     < min_recall_count       (never or rarely retrieved)
     age              > min_age_days           (old enough to safely drop)
 
+Age counts from the event's last activity: the later of created_at and
+last_used_at. A memory a client said an answer drew on (POST /memory/used)
+is not old, whatever year it was written.
+
 Design decisions:
   - Only consolidated events are pruned — raw unconsolidated events are
     preserved until the Consolidator has processed them.
@@ -335,7 +339,10 @@ class SynapticPruner:
                 Event.user_id == user_id,
                 Event.app_id == app_id,
                 Event.consolidated.is_(True),
-                Event.created_at < cutoff_sql,
+                func.greatest(
+                    Event.created_at,
+                    func.coalesce(Event.last_used_at, Event.created_at),
+                ) < cutoff_sql,
                 Event.importance_score < thresholds.importance_threshold,
                 Event.recall_count < thresholds.min_recall_count,
             )
@@ -356,6 +363,11 @@ class SynapticPruner:
             return False
         if created.tzinfo is None:
             created = created.replace(tzinfo=timezone.utc)
+        used = getattr(event, "last_used_at", None)
+        if isinstance(used, datetime):
+            if used.tzinfo is None:
+                used = used.replace(tzinfo=timezone.utc)
+            created = max(created, used)
         age_days = (now - created).total_seconds() / 86400.0
         return (
             (event.importance_score or 0.0) < thresholds.importance_threshold

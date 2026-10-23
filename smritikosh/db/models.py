@@ -216,6 +216,9 @@ class Event(Base):
         embedding       Vector for semantic similarity search (pgvector).
         importance_score Amygdala-assigned score: recency × frequency × relevance.
         consolidated    True once the Consolidator has processed this event.
+        last_used_at    When a client last said an answer drew on this event
+                        (POST /memory/used). Recency counts from the later of
+                        this and created_at: a memory in use does not age.
         event_metadata  Flexible JSONB for extra context (source, tags, etc.).
     """
 
@@ -243,6 +246,9 @@ class Event(Base):
     recall_count: Mapped[int] = mapped_column(Integer, default=0)
     reconsolidation_count: Mapped[int] = mapped_column(Integer, default=0)
     last_reconsolidated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True, default=None
     )
     consolidated: Mapped[bool] = mapped_column(Boolean, default=False)

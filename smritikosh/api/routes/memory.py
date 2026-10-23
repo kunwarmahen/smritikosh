@@ -4,7 +4,9 @@ Memory routes — capture and retrieve episodic events.
 POST /memory/event      Encode a raw interaction into memory (Hippocampus.encode),
                         or store a finished statement as-is (extract=false)
 POST /memory/search     Hybrid search — returns raw scored events
-GET  /memory/{user_id}  Return recent events for a user
+POST /memory/used       Say an answer drew on these events (they stop ageing)
+GET  /memory/{user_id}  Return recent events for a user (?order=active: most
+                        recently used or written first)
 """
 
 import logging
@@ -31,6 +33,8 @@ from smritikosh.api.schemas import (
     ExportEventItem,
     FactRequest,
     FactResponse,
+    MarkUsedRequest,
+    MarkUsedResponse,
     MemoryEventDetail,
     MemoryLinkItem,
     MemoryLinksResponse,
@@ -229,6 +233,33 @@ async def store_fact(
         first_seen_at=fact.first_seen_at,
         last_seen_at=fact.last_seen_at,
     )
+
+
+@router.post("/used", response_model=MarkUsedResponse)
+async def mark_used(
+    body: MarkUsedRequest,
+    episodic: Annotated[EpisodicMemory, Depends(get_episodic)],
+    pg: Annotated[AsyncSession, Depends(get_session)],
+    current_user: Annotated[dict, Depends(get_current_user)],
+) -> MarkUsedResponse:
+    """
+    Record that an answer drew on these memories.
+
+    A search only SHOWS a memory; this says it MATTERED. Recency in hybrid
+    search, ``?order=active`` and the pruner's age count from the latest
+    use, so a statement leaned on every week does not sink with the date
+    it was written. Ids that are not UUIDs, or not this user's, are
+    skipped: ``marked`` counts the ones that were.
+    """
+    assert_self_or_admin(current_user, body.user_id)
+    ids = []
+    for raw in body.event_ids:
+        try:
+            ids.append(uuid.UUID(raw))
+        except ValueError:
+            continue
+    marked = await episodic.mark_used(pg, body.user_id, ids)
+    return MarkUsedResponse(user_id=body.user_id, marked=marked)
 
 
 @router.delete("/event/{event_id}", response_model=DeleteEventResponse)
@@ -538,6 +569,9 @@ async def get_recent_events(
     user_id: str,
     app_ids: Annotated[list[str] | None, Query(description="App namespaces to filter by")] = None,
     limit: Annotated[int, Query(ge=1, le=500, description="Number of events to return")] = 10,
+    order: Annotated[str, Query(pattern="^(created|active)$",
+                                description="created: newest written first; "
+                                            "active: most recently used or written first")] = "created",
     episodic: Annotated[EpisodicMemory, Depends(get_episodic)] = None,
     pg: Annotated[AsyncSession, Depends(get_session)] = None,
     current_user: Annotated[dict, Depends(get_current_user)] = None,
@@ -545,7 +579,7 @@ async def get_recent_events(
     """Return the most recent memory events for a user, newest first."""
     assert_self_or_admin(current_user, user_id)
     resolved_app_ids = app_ids or current_user.get("app_ids")
-    events = await episodic.get_recent(pg, user_id, resolved_app_ids, limit=limit)
+    events = await episodic.get_recent(pg, user_id, resolved_app_ids, limit=limit, order=order)
 
     return RecentEventsResponse(
         user_id=user_id,
@@ -559,6 +593,7 @@ async def get_recent_events(
                 created_at=e.created_at.isoformat() if e.created_at else "",
                 cluster_id=e.cluster_id,
                 cluster_label=e.cluster_label,
+                last_used_at=e.last_used_at.isoformat() if e.last_used_at else None,
             )
             for e in events
         ],

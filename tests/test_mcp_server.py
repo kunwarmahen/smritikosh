@@ -23,6 +23,7 @@ from smritikosh.mcp.server import (
     recall,
     remember,
     store_memory,
+    used,
 )
 from smritikosh.sdk.client import SmritikoshError
 
@@ -141,7 +142,7 @@ async def test_tools_fail_without_lifespan():
 async def test_tools_registered():
     tools = {t.name for t in await mcp.list_tools()}
     assert tools == {"store_memory", "remember", "recall", "get_context",
-                     "list_memories", "forget"}
+                     "list_memories", "forget", "used"}
 
 
 # ── store_memory ──────────────────────────────────────────────────────────────
@@ -275,10 +276,57 @@ async def test_list_memories(mcp_state):
     result = await list_memories(limit=20)
 
     assert result == {"memories": [{"id": "evt-002", "statement": "Uses uv, not pip.",
-                                    "created_at": "2026-09-29T10:00:00+00:00"}]}
+                                    "created_at": "2026-09-29T10:00:00+00:00",
+                                    "last_used_at": None}]}
     params = route.calls.last.request.url.params
     assert params["limit"] == "20"
     assert params.get_list("app_ids") == ["default"]
+
+
+@respx.mock
+async def test_list_memories_puts_the_ones_in_use_first(mcp_state):
+    # A client tops its prompt up from this list; an old memory still in
+    # use must not fall off the end of it behind newer, unused ones.
+    route = respx.get(f"{BASE_URL}/memory/alice").mock(
+        return_value=Response(200, json={
+            "user_id": "alice", "app_ids": ["default"],
+            "events": [{
+                "event_id": "evt-009", "raw_text": "Lives near RDU.",
+                "importance_score": 0.5, "consolidated": False,
+                "created_at": "2025-01-02T10:00:00+00:00",
+                "last_used_at": "2026-10-20T08:00:00+00:00",
+            }],
+        })
+    )
+
+    result = await list_memories()
+
+    assert route.calls.last.request.url.params["order"] == "active"
+    assert result["memories"][0]["last_used_at"] == "2026-10-20T08:00:00+00:00"
+
+
+# ── used ──────────────────────────────────────────────────────────────────────
+
+
+@respx.mock
+async def test_used_marks_the_memories_an_answer_drew_on(mcp_state):
+    route = respx.post(f"{BASE_URL}/memory/used").mock(
+        return_value=Response(200, json={"user_id": "alice", "marked": 2})
+    )
+
+    result = await used(memory_ids=["evt-001", " evt-002 ", ""])
+
+    assert result == {"marked": 2}
+    payload = json.loads(route.calls.last.request.content)
+    assert payload == {"user_id": "alice", "event_ids": ["evt-001", "evt-002"]}
+
+
+@respx.mock
+async def test_used_with_nothing_to_mark_makes_no_call(mcp_state):
+    route = respx.post(f"{BASE_URL}/memory/used")
+
+    assert await used(memory_ids=[]) == {"marked": 0}
+    assert not route.called
 
 
 # ── forget ────────────────────────────────────────────────────────────────────

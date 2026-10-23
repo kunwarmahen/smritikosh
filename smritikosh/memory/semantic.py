@@ -461,6 +461,13 @@ class SemanticMemory:
         Formula: new_confidence = confidence × exp(−ln(2) × age_days / decay_half_life_days)
         This halves confidence every `decay_half_life_days` days without reinforcement.
 
+        age_days is the time since this relationship was last DECAYED or last
+        seen, whichever is later -- not since it was last seen. Each pass
+        stamps ``decayed_at``. Counting from last_seen_at on every weekly
+        pass multiplied the same weeks in again and again. Days are counted
+        with ``duration.inDays``: ``duration.between(...).days`` is only the
+        days left over after whole months, so 56 days read as 25.
+
         Source-type rules applied:
           - ui_manual facts are NEVER decayed (user explicitly stated them).
           - cross_system facts decay at 2× the normal rate (behavioral patterns shift fast).
@@ -483,10 +490,15 @@ class SemanticMemory:
             WHERE r.last_seen_at IS NOT NULL
               AND r.source_type <> 'ui_manual'
             WITH r,
-                 duration.between(datetime(r.last_seen_at), datetime()).days AS age_days,
+                 CASE WHEN r.decayed_at IS NOT NULL
+                           AND datetime(r.decayed_at) > datetime(r.last_seen_at)
+                      THEN r.decayed_at ELSE r.last_seen_at END AS since,
                  CASE WHEN r.source_type = 'cross_system' THEN $decay_days / 2.0
                       ELSE $decay_days END AS effective_half_life
-            SET r.confidence = r.confidence * exp(-$ln2 * toFloat(age_days) / effective_half_life)
+            WITH r, effective_half_life,
+                 duration.inDays(datetime(since), datetime()).days AS age_days
+            SET r.confidence = r.confidence * exp(-$ln2 * toFloat(age_days) / effective_half_life),
+                r.decayed_at = toString(datetime())
             RETURN count(r) AS decayed_count
             """,
             ln2=LN2,
@@ -560,7 +572,7 @@ class SemanticMemory:
             """
             MATCH (u:User {id: $user_id})-[r]->(f:Fact)
             WHERE r.last_seen_at IS NOT NULL
-              AND duration.between(datetime(r.last_seen_at), datetime()).days > $cutoff_days
+              AND duration.inDays(datetime(r.last_seen_at), datetime()).days > $cutoff_days
             DELETE r
             RETURN count(*) AS deleted_count
             """,

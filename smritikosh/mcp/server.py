@@ -2,20 +2,28 @@
 Smritikosh MCP server.
 
 A thin Model Context Protocol wrapper over the Python SDK
-(:class:`smritikosh.sdk.client.SmritikoshClient`). Exposes six tools:
+(:class:`smritikosh.sdk.client.SmritikoshClient`). Exposes seven tools:
 
     store_memory  — save text to episodic memory; the server's LLM extracts facts
     remember      — save one finished statement as-is: embedded, no LLM
     recall        — hybrid search over a user's memories
     get_context   — build a ready-to-inject memory context block for a query
-    list_memories — the user's most recent memories, newest first
+    list_memories — the user's memories, most recently used or written first
     forget        — delete one memory by id
+    used          — say an answer drew on these memories, so they stop ageing
 
 ``store_memory`` is for a client that hands over raw text and lets Smritikosh
 decide what is worth keeping. ``remember`` is for a client whose own model has
 already decided and phrased it ("Lives near RDU"): nothing is re-read or
 re-judged. ``list_memories`` and ``forget`` let a client show a person what is
 kept about them and remove what stopped being true.
+
+``used`` is the other half of ``recall``. Search ranks by recency, and a
+memory written a year ago and leaned on every week would otherwise rank
+like one nobody needs. Being SHOWN is not being used -- every result of
+every search would count -- so the client, which saw the answer, says
+which memories it drew on. Recency and ``list_memories``' order count from
+the latest use.
 
 Configuration (environment variables):
 
@@ -157,7 +165,8 @@ mcp = FastMCP(
         "specific memories, and store_memory whenever the user shares durable "
         "information worth remembering across sessions (remember instead when "
         "you already have it as one finished sentence). list_memories and "
-        "forget show and remove what is kept."
+        "forget show and remove what is kept. After answering with a "
+        "recalled memory, call used with its id so it does not age."
     ),
     lifespan=_lifespan,
     log_level=log_level_from_env(),  # type: ignore[arg-type]
@@ -229,24 +238,28 @@ async def list_memories(
     limit: int = 50,
     user_id: str | None = None,
 ) -> dict[str, Any]:
-    """List the user's most recent memories, newest first.
+    """List the user's memories, most recently used or written first.
 
     Call this to show the user what is remembered about them, or to find the
-    id of one to ``forget``.
+    id of one to ``forget``. A memory an answer drew on (``used``) keeps its
+    place near the top however long ago it was written.
 
     Args:
         limit:   Maximum memories to return (1-500, default 50).
         user_id: Override the default user (admin API keys only).
 
-    Returns ``memories``: each with ``id``, ``statement`` and ``created_at``.
+    Returns ``memories``: each with ``id``, ``statement``, ``created_at`` and
+    ``last_used_at`` (null when never used).
     """
     state = _require_state()
     events = await state.client.get_recent(
         user_id=user_id or state.config.user_id,
         limit=max(1, min(limit, 500)),
+        order="active",
     )
     return {"memories": [
-        {"id": e.event_id, "statement": e.raw_text, "created_at": e.created_at}
+        {"id": e.event_id, "statement": e.raw_text, "created_at": e.created_at,
+         "last_used_at": e.last_used_at}
         for e in events
     ]}
 
@@ -279,6 +292,32 @@ async def forget(
         return {"forgotten": False, "id": memory_id}
     result = await state.client.delete_event(event_id=memory_id)
     return {"forgotten": result.deleted, "id": memory_id}
+
+
+@mcp.tool()
+async def used(
+    memory_ids: list[str],
+    user_id: str | None = None,
+) -> dict[str, Any]:
+    """Say an answer drew on these memories, so they do not age.
+
+    Call this after answering with something ``recall`` or ``list_memories``
+    gave you -- only the ones the answer actually leaned on, not everything
+    that was shown.
+
+    Args:
+        memory_ids: Ids from ``recall`` or ``list_memories`` (at most 100).
+        user_id:    Override the default user (admin API keys only).
+
+    Returns ``marked``: how many were this user's and are now marked.
+    """
+    state = _require_state()
+    ids = [str(i).strip() for i in memory_ids if str(i).strip()][:100]
+    marked = await state.client.mark_used(
+        user_id=user_id or state.config.user_id,
+        event_ids=ids,
+    )
+    return {"marked": marked}
 
 
 @mcp.tool()

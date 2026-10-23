@@ -26,6 +26,7 @@ class RecentEvent:
     importance_score: float
     consolidated: bool
     created_at: str
+    last_used_at: str | None = None
 
 
 @dataclass

@@ -497,6 +497,63 @@ class TestGetRecentEvents:
         assert response.json()["events"] == []
 
 
+class TestMemoryInUse:
+    """A memory an answer drew on must not age; a client that is not the
+    owner must not be able to keep someone else's memories fresh."""
+
+    @pytest.mark.asyncio
+    async def test_order_active_is_forwarded(self, client, mock_episodic):
+        mock_episodic.get_recent = AsyncMock(return_value=[])
+
+        await client.get("/memory/u1?order=active")
+
+        assert mock_episodic.get_recent.call_args.kwargs["order"] == "active"
+
+    @pytest.mark.asyncio
+    async def test_an_unknown_order_is_refused(self, client):
+        response = await client.get("/memory/u1?order=oldest")
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_recent_events_carry_last_used_at(self, client, mock_episodic):
+        event = make_event("u1")
+        event.last_used_at = datetime(2026, 10, 20, 8, 0, tzinfo=timezone.utc)
+        mock_episodic.get_recent = AsyncMock(return_value=[event])
+
+        body = (await client.get("/memory/u1")).json()
+
+        assert body["events"][0]["last_used_at"].startswith("2026-10-20T08:00")
+
+    @pytest.mark.asyncio
+    async def test_used_marks_and_counts(self, client, mock_episodic):
+        mock_episodic.mark_used = AsyncMock(return_value=1)
+        good = str(uuid.uuid4())
+
+        response = await client.post("/memory/used", json={
+            "user_id": "u1", "event_ids": [good, "not-a-uuid"]})
+
+        assert response.status_code == 200
+        assert response.json() == {"user_id": "u1", "marked": 1}
+        args = mock_episodic.mark_used.call_args.args
+        assert args[1] == "u1"
+        assert args[2] == [uuid.UUID(good)]      # the bad id never reaches the store
+
+    @pytest.mark.asyncio
+    async def test_used_for_someone_else_is_forbidden(self, client, mock_current_user):
+        mock_current_user["role"] = "user"
+        mock_current_user["sub"] = "u1"
+
+        response = await client.post("/memory/used", json={
+            "user_id": "u2", "event_ids": [str(uuid.uuid4())]})
+
+        assert response.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_used_needs_at_least_one_id(self, client):
+        response = await client.post("/memory/used", json={"user_id": "u1", "event_ids": []})
+        assert response.status_code == 422
+
+
 # ── GET /identity/{user_id} ───────────────────────────────────────────────────
 
 

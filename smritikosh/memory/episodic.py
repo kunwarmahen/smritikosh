@@ -14,6 +14,11 @@ Hybrid search formula:
           + importance_weight  * event.importance_score
           + frequency_weight   * min(recall_count, freq_cap) / freq_cap
 
+days_since_event counts from the event's LAST ACTIVITY: the later of
+created_at and last_used_at. Surfacing in a search is not use (every
+result of every search would count); a client says an answer drew on a
+memory with mark_used, and from then on it ranks like a new one.
+
 Weights (similarity + recency + importance + frequency + contextual_match)
 must sum to 1.0 and are tunable via HybridWeights.
 contextual_match is reserved for Phase 2 intent-aware retrieval (defaults to 0.0).
@@ -35,7 +40,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import delete as sql_delete, select, text, update
+from sqlalchemy import delete as sql_delete, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from smritikosh.config import settings as _settings
@@ -280,6 +285,31 @@ class EpisodicMemory:
             )
         )
 
+    async def mark_used(
+        self,
+        session: AsyncSession,
+        user_id: str,
+        event_ids: list[uuid.UUID],
+    ) -> int:
+        """
+        Record that an answer drew on these events: last_used_at = now.
+
+        Unlike increment_recall, this is the CLIENT's word that the memory
+        mattered, not the server's note that it was shown. Recency, the
+        "active" recent order and the pruner's age then count from now.
+        Scoped to ``user_id``: an id that is someone else's is skipped,
+        never touched. Returns how many events were marked.
+        """
+        if not event_ids:
+            return 0
+        now = datetime.now(timezone.utc)
+        result = await session.execute(
+            update(Event)
+            .where(Event.id.in_(event_ids), Event.user_id == user_id)
+            .values(last_used_at=now, updated_at=now)
+        )
+        return int(result.rowcount or 0)
+
     # ── Read ───────────────────────────────────────────────────────────────
 
     async def get_recent(
@@ -291,10 +321,15 @@ class EpisodicMemory:
         include_consolidated: bool = True,
         from_date: Optional[datetime] = None,
         to_date: Optional[datetime] = None,
+        order: str = "created",
     ) -> list[Event]:
         """Return the most recent events for a user, newest first.
 
         Args:
+            order:     ``created`` (newest written first) or ``active``
+                       (most recently used or written first) -- what a
+                       client topping up a prompt wants, so a memory in use
+                       keeps its place among the newest.
             app_ids:   If provided, restrict to events in these app namespaces.
             from_date: If provided, only return events created on or after this datetime.
             to_date:   If provided, only return events created on or before this datetime.
@@ -302,7 +337,14 @@ class EpisodicMemory:
         q = select(Event).where(Event.user_id == user_id)
         if app_ids is not None:
             q = q.where(Event.app_id.in_(app_ids))
-        q = q.order_by(Event.created_at.desc()).limit(limit)
+        if order == "active":
+            q = q.order_by(
+                func.greatest(Event.created_at,
+                              func.coalesce(Event.last_used_at, Event.created_at)).desc()
+            )
+        else:
+            q = q.order_by(Event.created_at.desc())
+        q = q.limit(limit)
         if not include_consolidated:
             q = q.where(Event.consolidated.is_(False))
         if from_date is not None:
@@ -406,7 +448,7 @@ class EpisodicMemory:
         Full scoring formula:
             hybrid_score =
               ( similarity_weight  * (1 - cosine_distance)
-              + recency_weight     * exp(-age_in_days / decay_days)
+              + recency_weight     * exp(-days_since_last_activity / decay_days)
               + importance_weight  * importance_score
               + frequency_weight   * min(recall_count, freq_cap) / freq_cap )
               × consolidated_penalty   (only when consolidated AND NOT anchor — E1)
@@ -456,7 +498,7 @@ class EpisodicMemory:
                 id,
                 (1.0 - cosine_dist)                                          AS similarity_score,
                 EXP(
-                    -EXTRACT(EPOCH FROM (NOW() - created_at))
+                    -EXTRACT(EPOCH FROM (NOW() - active_at))
                     / 86400.0 / :decay_days
                 )                                                            AS recency_score,
                 importance_score,
@@ -467,7 +509,7 @@ class EpisodicMemory:
                 SELECT
                     id,
                     (embedding <=> '{vec_literal}')  AS cosine_dist,
-                    created_at,
+                    GREATEST(created_at, COALESCE(last_used_at, created_at)) AS active_at,
                     importance_score,
                     recall_count,
                     consolidated,
@@ -482,7 +524,7 @@ class EpisodicMemory:
             ORDER BY
                 (
                     :w_sim  * (1.0 - cosine_dist)
-                  + :w_rec  * EXP(-EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400.0 / :decay_days)
+                  + :w_rec  * EXP(-EXTRACT(EPOCH FROM (NOW() - active_at)) / 86400.0 / :decay_days)
                   + :w_imp  * importance_score
                   + :w_freq * (LEAST(recall_count, :freq_cap)::float / :freq_cap)
                 ) * CASE WHEN consolidated AND NOT consolidation_anchor

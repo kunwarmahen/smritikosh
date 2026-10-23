@@ -8,7 +8,9 @@ they're eventually discarded, keeping the knowledge graph up-to-date.
 Decay formula (applied to every User→Fact relationship):
     new_confidence = confidence × exp(−ln(2) × age_days / half_life_days)
 
-This halves confidence every `half_life_days` without reinforcement.
+This halves confidence every `half_life_days` without reinforcement. age_days
+counts from the later of the last pass (``decayed_at``) and the last time the
+fact was seen, so weekly passes add up to the half-life instead of compounding.
 Any relationship that falls below `confidence_floor` is deleted. Fact nodes
 left with no User relationships are also deleted (orphan cleanup).
 

@@ -129,7 +129,7 @@ Query + ProceduralMemory lookup
       ▼
 ContextBuilder                  (retrieval effort routed by complexity tier)
       │
-      ├── hybrid_search()      (vector + recency + importance; consolidated
+      ├── hybrid_search()      (vector + recency from last use + importance; consolidated
       │                         non-anchor events down-weighted)
       ├── get_user_profile()   (Neo4j semantic facts)
       ├── get_recent()         (last N raw events)
@@ -191,7 +191,8 @@ Your application
       ├── SmritikoshClient (Node.js)  sdk-node/
       ├── withMemory() (Node.js)      ← wraps OpenAI / Anthropic client (middleware parity)
       └── smritikosh-mcp (MCP server) smritikosh.mcp   ← store_memory / remember / recall /
-                │                                        get_context / list_memories / forget
+                │                                        get_context / list_memories / forget /
+                │                                        used
                 │
                 ▼  REST API (FastAPI)
         ┌───────────────────────────────────────┐
@@ -2144,6 +2145,30 @@ curl -X POST http://localhost:8080/memory/search \
 | `limit` | int | Maximum results (1–50, default: 10) |
 | `from_date` | datetime | Only include events on or after this datetime (ISO 8601) |
 | `to_date` | datetime | Only include events on or before this datetime (ISO 8601) |
+
+---
+
+### `POST /memory/used`
+
+Say that an answer drew on these memories. A search only SHOWS a memory (that is what `recall_count` counts); the client that saw the answer says which ones MATTERED. Each is stamped `last_used_at = now`, and from then on hybrid search's recency, `GET /memory/{user_id}?order=active` and the pruner's age count from that time. A memory written a year ago and leaned on every week ranks like one written yesterday.
+
+```bash
+curl -X POST http://localhost:8080/memory/used \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "alice", "event_ids": ["a3f1c2d4-..."]}'
+```
+
+```json
+{"user_id": "alice", "marked": 1}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `user_id` | string | **Required.** Whose memories (self or admin) |
+| `event_ids` | list[string] | **Required.** 1–100 event ids. Ids that are not UUIDs, or not this user's, are skipped and not counted in `marked` |
+
+`GET /memory/{user_id}` takes `order=created` (default, newest written first) or `order=active` (most recently used or written first), and each event carries `last_used_at` (null until used).
 
 ---
 
@@ -4304,6 +4329,7 @@ pytest tests/test_amygdala.py::TestAmygdala::test_scores_decision_text -v
 | `test_sdk_client.py` | 40 | HTTP mocking via respx, error handling, type checks |
 | `test_intent_classifier.py` | 32 | Weight table, keyword detection, confidence, two-tier classify_async, LLM fallback |
 | `test_fact_decayer.py` | 11 | Decay Cypher execution, count forwarding, config defaults, error skip |
+| `test_memory_in_use.py` | 11 | `mark_used` scoped to its user, the `active` order, recency and pruning from last use, decay that adds up to its half-life in whole days |
 | `test_e2e_pipeline.py` | 17 | Full encode → consolidate → context pipeline; embedding failure survival |
 | `test_trigger_detector.py` | 33 | TriggerDetector patterns, filter_turns, any_triggered, collect_all_phrases; transcript_utils sentinel stripping and delta prompt |
 | `test_session_ingest.py` | 21 | POST /ingest/session (201, shape, idempotency, trigger filter, partial flag, assistant-only → 0 turns); POST /memory/fact (ui_manual defaults, confidence, status, low-confidence → pending) |
@@ -4490,7 +4516,7 @@ Scores consolidated events older than 7 days:
 prune_score = importance_score × exp(−age_days / 30)
 ```
 
-Events scoring below `0.15` are deleted. High-importance or recently-accessed memories are preserved.
+Events scoring below `0.15` are deleted. High-importance or recently-accessed memories are preserved. Age counts from an event's last activity: the later of `created_at` and `last_used_at` (`POST /memory/used`), so a memory a client still uses is never pruned for being old.
 
 After each pruning run, **fact garbage collection** removes Neo4j facts for that user whose `last_seen_at` timestamp falls within the same age window as the deleted events. These facts were only reinforced by the pruned events and will never be re-confirmed by future consolidation — removing them immediately avoids waiting for the weekly confidence-decay cycle.
 
@@ -4514,6 +4540,8 @@ Facts in Neo4j persist indefinitely by default. The `FactDecayer` applies expone
 ```
 new_confidence = confidence × exp(−ln2 × age_days / half_life_days)
 ```
+
+`age_days` is the time since the later of the fact's last pass (`decayed_at`, stamped by each run) and its `last_seen_at`, counted in whole days with `duration.inDays`. Weekly passes therefore add up to the half-life: a fact unseen for 63 days sits at 2^(−63/60) ≈ 0.48, however many passes it took to get there.
 
 The default half-life is **60 days** (`FACT_DECAY_HALF_LIFE_DAYS`). Facts whose confidence drops below `0.1` (`FACT_DECAY_FLOOR`) are deleted. Orphaned `Fact` nodes with no remaining user relationship are also cleaned up in a third pass.
 
