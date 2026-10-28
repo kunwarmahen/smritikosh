@@ -337,18 +337,23 @@ cd smritikosh
 A virtual environment keeps Smritikosh's dependencies isolated from the rest of your system.
 
 ```bash
+# macOS / Linux
 python3 -m venv .venv
+source .venv/bin/activate
+```
 
-# Activate it — you must do this every time you open a new terminal:
-source .venv/bin/activate          # macOS / Linux
-# or on Windows:
-# .venv\Scripts\activate
+```powershell
+# Windows — run these instead of the block above.
+# If activation is blocked:
+#   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+py -3.11 -m venv .venv
+.venv\Scripts\Activate.ps1
 ```
 
 When the environment is active your prompt will show `(.venv)`.
 
 ```bash
-# Install Smritikosh and all its dependencies:
+# Either OS, with the virtual environment active
 pip install -e ".[dev]"
 ```
 
@@ -359,7 +364,12 @@ This will take a minute or two on first run.
 ### Step 5 — Configure the backend
 
 ```bash
+# macOS / Linux. Windows: Copy-Item .env.example .env
 cp .env.example .env
+
+# Either OS. Copies .env and ui/.env.local when they are missing, and replaces
+# a still-default JWT_SECRET / AUTH_SECRET (no openssl). You still set the API keys below.
+python scripts/dev_setup.py
 ```
 
 Open `.env` in any text editor and fill in **at minimum** these four lines (everything else can stay as the default for local development):
@@ -424,8 +434,13 @@ INFO  [alembic.runtime.migration] Running upgrade 0017 -> 0018, add user_voice_p
 On a fresh install there are no users, so you need to bootstrap the first admin account. Set `BOOTSTRAP_ADMIN=1` in your `.env` to allow the first registration without needing an existing token:
 
 ```bash
-# Add this line to .env temporarily:
+# Add this line to .env temporarily (macOS / Linux):
 echo "BOOTSTRAP_ADMIN=1" >> .env
+```
+
+```powershell
+# Windows — from the repository root, instead of the echo above
+python scripts/dev_setup.py --bootstrap-admin
 ```
 
 Now start the server (in a separate terminal, with your venv active):
@@ -441,12 +456,18 @@ INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8080
 ```
 
-Register the admin account:
+Register the admin account. On Windows PowerShell, `curl` is an alias of `Invoke-WebRequest` — call `curl.exe`, and use `python` if `python3` is not on PATH.
 
 ```bash
 curl -s -X POST http://localhost:8080/auth/register \
   -H "Content-Type: application/json" \
   -d '{"username": "admin", "password": "changeme123", "role": "admin"}' | python3 -m json.tool
+```
+
+```powershell
+curl.exe -s -X POST http://localhost:8080/auth/register `
+  -H "Content-Type: application/json" `
+  -d "{\"username\": \"admin\", \"password\": \"changeme123\", \"role\": \"admin\"}"
 ```
 
 Expected response:
@@ -465,10 +486,18 @@ Expected response:
 **Important:** remove `BOOTSTRAP_ADMIN=1` from `.env` now, then restart the server.
 
 ```bash
-# Remove the line from .env (Linux/macOS):
+# Remove the line from .env (macOS / Linux):
 sed -i '/BOOTSTRAP_ADMIN/d' .env
+```
 
-# Or just open .env and delete that line manually, then Ctrl+C the server and restart:
+```powershell
+# Windows
+python scripts/dev_setup.py --clear-bootstrap-admin
+```
+
+Or open `.env` and delete that line manually, then Ctrl+C the server and restart:
+
+```bash
 uvicorn smritikosh.api.main:app --reload --port 8080
 ```
 
@@ -476,6 +505,10 @@ Verify everything is working:
 
 ```bash
 curl http://localhost:8080/health
+```
+
+```powershell
+curl.exe http://localhost:8080/health
 ```
 
 ```json
@@ -510,8 +543,14 @@ npm install          # downloads all frontend dependencies (~1–2 minutes)
 Create the UI config file:
 
 ```bash
+# macOS / Linux — run from the ui/ directory
 cp .env.local.example .env.local 2>/dev/null || \
   printf "SMRITIKOSH_API_URL=http://localhost:8080\nAUTH_SECRET=$(openssl rand -hex 32)\n" > .env.local
+```
+
+```powershell
+# Windows — from the repository root, instead of cp / openssl above
+python scripts/dev_setup.py
 ```
 
 Start the dashboard:
@@ -531,16 +570,28 @@ From the dashboard, go to **Admin → Users → New user** and create a test acc
 Or via the API:
 
 ```bash
-# First, get an admin token:
+# macOS / Linux — get an admin token, then create alice
 TOKEN=$(curl -s -X POST http://localhost:8080/auth/token \
   -H "Content-Type: application/json" \
   -d '{"username": "admin", "password": "changeme123"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
 
-# Create alice:
 curl -s -X POST http://localhost:8080/auth/register \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d '{"username": "alice", "password": "alicepass", "role": "user"}' | python3 -m json.tool
+```
+
+```powershell
+# Windows PowerShell — curl.exe, not the curl alias
+$TOKEN = curl.exe -s -X POST http://localhost:8080/auth/token `
+  -H "Content-Type: application/json" `
+  -d "{\"username\": \"admin\", \"password\": \"changeme123\"}" `
+  | python -c "import sys,json; print(json.load(sys.stdin)['access_token'])"
+
+curl.exe -s -X POST http://localhost:8080/auth/register `
+  -H "Content-Type: application/json" `
+  -H "Authorization: Bearer $TOKEN" `
+  -d "{\"username\": \"alice\", \"password\": \"alicepass\", \"role\": \"user\"}"
 ```
 
 You are now fully set up. Continue to the [Sample project](#sample-project) to see Smritikosh in action.

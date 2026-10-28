@@ -25,6 +25,7 @@ from smritikosh.config import enforce_runtime_security, settings
 from smritikosh import subsystems
 from smritikosh.db.neo4j import close_neo4j, init_neo4j
 from smritikosh.db.postgres import close_db, init_db
+from smritikosh.platform import install_selector_event_loop
 from smritikosh.processing.leader import LeaderLock
 from smritikosh.processing.scheduler import build_scheduler, elect_and_start_scheduler
 
@@ -100,6 +101,7 @@ async def run_worker() -> None:
 
 
 def main() -> None:
+    install_selector_event_loop()
     asyncio.run(run_worker())
 
 

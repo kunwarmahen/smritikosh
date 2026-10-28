@@ -67,6 +67,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Running {len(cases)} cases against {model} "
           f"(concurrency={args.concurrency}, judge={args.judge}) …\n")
 
+    from smritikosh.platform import install_selector_event_loop
+
+    install_selector_event_loop()
     start = time.monotonic()
     agg = asyncio.run(run_eval(cases, llm=llm, concurrency=args.concurrency, judge=args.judge))
     duration = time.monotonic() - start

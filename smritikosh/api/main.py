@@ -42,9 +42,13 @@ from smritikosh.db.neo4j import close_neo4j, init_neo4j
 from smritikosh.db.postgres import close_db, init_db
 from smritikosh.config import enforce_runtime_security, is_production, settings
 from smritikosh import subsystems
+from smritikosh.platform import install_selector_event_loop
 from smritikosh.processing.leader import LeaderLock
 from smritikosh.processing.scheduler import build_scheduler, elect_and_start_scheduler
 from smritikosh.tasks import close_pool as close_task_pool
+
+# Before any loop exists. uvicorn sets this itself; other launchers do not.
+install_selector_event_loop()
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),

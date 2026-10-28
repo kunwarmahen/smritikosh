@@ -81,13 +81,21 @@ cd smritikosh
 ## Step 4 — Create a Python virtual environment
 
 ```bash
+# macOS / Linux
 python3 -m venv .venv
+source .venv/bin/activate
+```
 
-# Activate — run this every time you open a new terminal
-source .venv/bin/activate        # macOS / Linux
-# .venv\Scripts\activate         # Windows
+```powershell
+# Windows — run these instead of the block above.
+# If activation is blocked:
+#   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+py -3.11 -m venv .venv
+.venv\Scripts\Activate.ps1
+```
 
-# Install all dependencies
+```bash
+# Either OS, with the virtual environment active
 pip install -e ".[dev]"
 ```
 
@@ -98,7 +106,12 @@ Your prompt will show `(.venv)` when the environment is active.
 ## Step 5 — Configure the backend
 
 ```bash
+# macOS / Linux. Windows: Copy-Item .env.example .env
 cp .env.example .env
+
+# Either OS. Copies .env and ui/.env.local when they are missing, and replaces
+# a still-default JWT_SECRET / AUTH_SECRET (no openssl). You still set the API keys below.
+python scripts/dev_setup.py
 ```
 
 Open `.env` and fill in at minimum:
@@ -264,14 +277,22 @@ INFO  [alembic.runtime.migration] Running upgrade 0017 -> 0018, add user_voice_p
 ## Step 8 — Create your first admin account
 
 ```bash
-# Allow unauthenticated first registration
+# Allow unauthenticated first registration (macOS / Linux)
 echo "BOOTSTRAP_ADMIN=1" >> .env
+```
 
-# Start the server (keep this terminal open)
+```powershell
+# Windows — from the repository root, instead of the echo above
+python scripts/dev_setup.py --bootstrap-admin
+```
+
+Start the server (keep this terminal open, venv active):
+
+```bash
 uvicorn smritikosh.api.main:app --reload --port 8080
 ```
 
-In a **new terminal**, register the admin account:
+In a **new terminal**, register the admin account. On Windows PowerShell, `curl` is an alias of `Invoke-WebRequest` — call `curl.exe`, and use `python` if `python3` is not on PATH.
 
 ```bash
 curl -s -X POST http://localhost:8080/auth/register \
@@ -280,11 +301,27 @@ curl -s -X POST http://localhost:8080/auth/register \
   | python3 -m json.tool
 ```
 
+```powershell
+curl.exe -s -X POST http://localhost:8080/auth/register `
+  -H "Content-Type: application/json" `
+  -d "{\"username\": \"admin\", \"password\": \"changeme123\", \"role\": \"admin\"}"
+```
+
 Then remove `BOOTSTRAP_ADMIN` and restart the server:
 
 ```bash
+# macOS / Linux
 sed -i '/BOOTSTRAP_ADMIN/d' .env
-# Ctrl+C the server, then:
+```
+
+```powershell
+# Windows
+python scripts/dev_setup.py --clear-bootstrap-admin
+```
+
+Ctrl+C the server, then:
+
+```bash
 uvicorn smritikosh.api.main:app --reload --port 8080
 ```
 
@@ -293,6 +330,10 @@ Verify:
 ```bash
 curl http://localhost:8080/health
 # {"status": "ok", "postgres": "ok", "neo4j": "ok"}
+```
+
+```powershell
+curl.exe http://localhost:8080/health
 ```
 
 ---
@@ -305,9 +346,19 @@ Open a **new terminal** (keep the server running).
 cd ui
 npm install
 
+# macOS / Linux
 cp .env.local.example .env.local
 sed -i "s/AUTH_SECRET=change-me-in-production/AUTH_SECRET=$(openssl rand -hex 32)/" .env.local
+```
 
+```powershell
+# Windows — from the repository root, instead of cp / sed / openssl above.
+# This also fills JWT_SECRET in .env when that value is still the default.
+python scripts/dev_setup.py
+cd ui
+```
+
+```bash
 npm run dev
 ```
 
@@ -324,18 +375,30 @@ The shell header includes a **theme toggle** (sun/moon icon) — click it to swi
 **Or via API:**
 
 ```bash
-# Get an admin token
+# macOS / Linux — get an admin token, then create a user
 TOKEN=$(curl -s -X POST http://localhost:8080/auth/token \
   -H "Content-Type: application/json" \
   -d '{"username": "admin", "password": "changeme123"}' \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
 
-# Create a user
 curl -s -X POST http://localhost:8080/auth/register \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d '{"username": "alice", "password": "alicepass", "role": "user", "app_ids": ["default"]}' \
   | python3 -m json.tool
+```
+
+```powershell
+# Windows PowerShell — curl.exe, not the curl alias
+$TOKEN = curl.exe -s -X POST http://localhost:8080/auth/token `
+  -H "Content-Type: application/json" `
+  -d "{\"username\": \"admin\", \"password\": \"changeme123\"}" `
+  | python -c "import sys,json; print(json.load(sys.stdin)['access_token'])"
+
+curl.exe -s -X POST http://localhost:8080/auth/register `
+  -H "Content-Type: application/json" `
+  -H "Authorization: Bearer $TOKEN" `
+  -d "{\"username\": \"alice\", \"password\": \"alicepass\", \"role\": \"user\", \"app_ids\": [\"default\"]}"
 ```
 
 You are now fully set up. See the [Sample project](README.md#sample-project) section in the README to test the full memory flow.
