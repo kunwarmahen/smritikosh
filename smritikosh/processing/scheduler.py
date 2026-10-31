@@ -259,8 +259,11 @@ class MemoryScheduler:
         except Exception as exc:
             JOB_USER_ERRORS.labels(job="consolidation").inc()
             logger.error(
-                "Consolidation failed",
+                "Consolidation failed for %s: %s",
+                user_id,
+                exc,
                 extra={"user_id": user_id, "error": str(exc)},
+                exc_info=True,
             )
             result = ConsolidationResult(user_id=user_id, app_id=app_id, skipped=True)
             result.skip_reason = str(exc)
@@ -286,8 +289,11 @@ class MemoryScheduler:
         except Exception as exc:
             JOB_USER_ERRORS.labels(job="pruning").inc()
             logger.error(
-                "Pruning failed",
+                "Pruning failed for %s: %s",
+                user_id,
+                exc,
                 extra={"user_id": user_id, "error": str(exc)},
+                exc_info=True,
             )
             result = PruningResult(user_id=user_id, app_id=app_id, skipped=True)
             return result
@@ -332,8 +338,11 @@ class MemoryScheduler:
         except Exception as exc:
             JOB_USER_ERRORS.labels(job="belief_mining").inc()
             logger.error(
-                "Belief mining failed",
+                "Belief mining failed for %s: %s",
+                user_id,
+                exc,
                 extra={"user_id": user_id, "error": str(exc)},
+                exc_info=True,
             )
             result = MiningResult(user_id=user_id, app_id=app_id, skipped=True)
             result.skip_reason = str(exc)
@@ -377,8 +386,11 @@ class MemoryScheduler:
         except Exception as exc:
             JOB_USER_ERRORS.labels(job="clustering").inc()
             logger.error(
-                "Clustering failed",
+                "Clustering failed for %s: %s",
+                user_id,
+                exc,
                 extra={"user_id": user_id, "error": str(exc)},
+                exc_info=True,
             )
             result = ClusterResult(user_id=user_id, app_id=app_id, skipped=True)
             result.skip_reason = str(exc)
@@ -401,7 +413,7 @@ class MemoryScheduler:
             logger.info("Fact decay job complete")
             return result
         except Exception as exc:
-            logger.error("Fact decay failed: %s", exc)
+            logger.error("Fact decay failed: %s", exc, exc_info=True)
             result = DecayResult(skipped=True)
             result.skip_reason = str(exc)
             return result
@@ -446,8 +458,11 @@ class MemoryScheduler:
         except Exception as exc:
             JOB_USER_ERRORS.labels(job="synthesis").inc()
             logger.error(
-                "Cross-system synthesis failed",
+                "Cross-system synthesis failed for %s: %s",
+                user_id,
+                exc,
                 extra={"user_id": user_id, "error": str(exc)},
+                exc_info=True,
             )
             result = SynthesisResult(user_id=user_id, app_id=app_id, skipped=True)
             result.skip_reason = str(exc)
@@ -495,8 +510,11 @@ class MemoryScheduler:
         except Exception as exc:
             JOB_USER_ERRORS.labels(job="reflection").inc()
             logger.error(
-                "Reflection failed",
+                "Reflection failed for %s: %s",
+                user_id,
+                exc,
                 extra={"user_id": user_id, "error": str(exc)},
+                exc_info=True,
             )
             result = ReflectionResult(user_id=user_id, app_id=app_id, skipped=True)
             result.skip_reason = str(exc)
@@ -543,8 +561,11 @@ class MemoryScheduler:
         except Exception as exc:
             JOB_USER_ERRORS.labels(job="lifeos").inc()
             logger.error(
-                "Life OS nudge failed",
+                "Life OS nudge failed for %s: %s",
+                user_id,
+                exc,
                 extra={"user_id": user_id, "error": str(exc)},
+                exc_info=True,
             )
             result = NudgeResult(user_id=user_id, app_id=app_id, skipped=True)
             result.skip_reason = str(exc)

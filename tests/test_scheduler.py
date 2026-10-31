@@ -172,6 +172,25 @@ class TestRunConsolidationNow:
         assert result.skipped is True
         assert "DB error" in result.skip_reason
 
+    async def test_error_is_in_the_log_line(self, scheduler, mock_consolidator, caplog):
+        # A plain log format drops `extra`, so the reason must be in the message.
+        mock_consolidator.run.side_effect = RuntimeError("DB error")
+        with (
+            patch("smritikosh.processing.scheduler.db_session") as mock_db,
+            patch("smritikosh.processing.scheduler.neo4j_session") as mock_neo,
+        ):
+            mock_db.return_value.__aenter__ = AsyncMock(return_value=AsyncMock())
+            mock_db.return_value.__aexit__ = AsyncMock(return_value=False)
+            mock_neo.return_value.__aenter__ = AsyncMock(return_value=AsyncMock())
+            mock_neo.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            await scheduler.run_consolidation_now(user_id="u1", app_id="default")
+
+        record = next(r for r in caplog.records if "Consolidation failed" in r.getMessage())
+        assert "u1" in record.getMessage()
+        assert "DB error" in record.getMessage()
+        assert record.exc_info is not None
+
 
 # ── run_pruning_now ───────────────────────────────────────────────────────────
 
