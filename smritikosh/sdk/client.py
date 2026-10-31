@@ -508,7 +508,10 @@ class SmritikoshClient:
             :class:`DeleteEventResult` with ``deleted=True`` if the event existed.
         """
         data = await self._delete(f"/memory/event/{event_id}")
-        return DeleteEventResult(deleted=data["deleted"], event_id=data["event_id"])
+        return DeleteEventResult(
+            deleted=data["deleted"], event_id=data["event_id"],
+            facts_forgotten=data.get("facts_forgotten", 0),
+        )
 
     async def delete_user_memory(
         self,

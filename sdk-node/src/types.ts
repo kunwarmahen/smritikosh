@@ -129,6 +129,8 @@ export interface DeleteEventOptions {
 export interface DeleteEventResult {
   deleted: boolean;
   eventId: string;
+  /** Facts removed because this event was their only source. */
+  factsForgotten: number;
 }
 
 // ── deleteUserMemory ──────────────────────────────────────────────────────────

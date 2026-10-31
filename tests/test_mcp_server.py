@@ -346,10 +346,12 @@ async def test_forget_deletes_own_memory(mcp_state):
         return_value=Response(200, json=EVENT_DETAIL)
     )
     deleted = respx.delete(f"{BASE_URL}/memory/event/evt-003").mock(
-        return_value=Response(200, json={"deleted": True, "event_id": "evt-003"})
+        return_value=Response(200, json={"deleted": True, "event_id": "evt-003",
+                                         "facts_forgotten": 1})
     )
 
-    assert await forget(memory_id="evt-003") == {"forgotten": True, "id": "evt-003"}
+    assert await forget(memory_id="evt-003") == {
+        "forgotten": True, "id": "evt-003", "facts_forgotten": 1}
     assert deleted.called
 
 

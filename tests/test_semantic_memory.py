@@ -289,6 +289,29 @@ class TestUpsertFact:
 # ── get_facts() ───────────────────────────────────────────────────────────────
 
 
+class TestUnlinkEvent:
+    async def test_returns_how_many_facts_were_removed(self):
+        session = make_mock_session()
+        summary = AsyncMock()
+        summary.counters.relationships_deleted = 2
+        session.run.return_value.consume = AsyncMock(return_value=summary)
+        sm = SemanticMemory()
+
+        removed = await sm.unlink_event(session, user_id="u1", event_id="e1")
+
+        assert removed == 2
+        kwargs = session.run.call_args[1]
+        assert kwargs == {"user_id": "u1", "app_id": "default", "event_id": "e1"}
+
+    async def test_only_a_fact_with_no_source_left_is_removed(self):
+        session = make_mock_session()
+        session.run.return_value.consume = AsyncMock(return_value=AsyncMock())
+        await SemanticMemory().unlink_event(session, user_id="u1", event_id="e1")
+
+        cypher = session.run.call_args[0][0]
+        assert "size(r.source_event_ids) = 0" in cypher
+
+
 class TestGetFacts:
     @pytest.mark.asyncio
     async def test_returns_list_of_fact_records(self):
@@ -539,3 +562,64 @@ class TestSemanticMemoryDB:
 
         assert before is False
         assert after is True
+
+    async def test_unlink_event_forgets_a_fact_it_alone_backed(self):
+        async with self.driver.session() as session:
+            await self.semantic.upsert_fact(
+                session, user_id="test_u9", category="location", key="city",
+                value="test-unlink-only", source_event_ids=["e-gone"],
+            )
+            removed = await self.semantic.unlink_event(
+                session, user_id="test_u9", event_id="e-gone"
+            )
+            facts = await self.semantic.get_facts(session, "test_u9")
+            orphans = await (await session.run(
+                "MATCH (f:Fact {value: 'test-unlink-only'}) RETURN count(f) AS n"
+            )).single()
+
+        assert removed == 1
+        assert facts == []
+        assert orphans["n"] == 0
+
+    async def test_unlink_event_keeps_a_fact_another_event_backs(self):
+        async with self.driver.session() as session:
+            await self.semantic.upsert_fact(
+                session, user_id="test_u10", category="preference", key="editor",
+                value="test-unlink-shared", source_event_ids=["e-gone", "e-kept"],
+            )
+            removed = await self.semantic.unlink_event(
+                session, user_id="test_u10", event_id="e-gone"
+            )
+            facts = await self.semantic.get_facts(session, "test_u10")
+
+        assert removed == 0
+        assert [f.value for f in facts] == ["test-unlink-shared"]
+        assert facts[0].source_event_ids == ["e-kept"]
+
+    async def test_unlink_event_leaves_other_users_and_sourceless_facts(self):
+        async with self.driver.session() as session:
+            # Same fact node, two users: only test_u11's link rested on e-gone.
+            await self.semantic.upsert_fact(
+                session, user_id="test_u11", category="interest", key="hobby",
+                value="test-unlink-both", source_event_ids=["e-gone"],
+            )
+            await self.semantic.upsert_fact(
+                session, user_id="test_u12", category="interest", key="hobby",
+                value="test-unlink-both", source_event_ids=["e-gone"],
+            )
+            await self.semantic.upsert_fact(
+                session, user_id="test_u11", category="role", key="current",
+                value="test-unlink-nosource",
+            )
+            removed = await self.semantic.unlink_event(
+                session, user_id="test_u11", event_id="e-gone"
+            )
+            u11 = await self.semantic.get_facts(session, "test_u11")
+            u12 = await self.semantic.get_facts(session, "test_u12")
+            await session.run(
+                "MATCH (f:Fact) WHERE f.value STARTS WITH 'test-unlink' DETACH DELETE f"
+            )
+
+        assert removed == 1
+        assert [f.value for f in u11] == ["test-unlink-nosource"]
+        assert [f.value for f in u12] == ["test-unlink-both"]

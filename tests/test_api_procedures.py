@@ -25,6 +25,7 @@ from smritikosh.db.neo4j import get_neo4j_session
 from smritikosh.db.postgres import get_session
 from smritikosh.memory.episodic import EpisodicMemory
 from smritikosh.memory.procedural import ProceduralMemory
+from smritikosh.memory.semantic import SemanticMemory
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -84,15 +85,21 @@ def mock_episodic():
     return AsyncMock(spec=EpisodicMemory)
 
 
+@pytest.fixture
+def mock_semantic():
+    return AsyncMock(spec=SemanticMemory)
+
+
 _ADMIN_PAYLOAD = {"sub": "admin", "role": "admin", "app_ids": ["default"]}
 
 
 @pytest.fixture(autouse=True)
-def override_deps(mock_pg, mock_neo, mock_procedural, mock_episodic):
+def override_deps(mock_pg, mock_neo, mock_procedural, mock_episodic, mock_semantic):
     app.dependency_overrides[get_session] = lambda: mock_pg
     app.dependency_overrides[get_neo4j_session] = lambda: mock_neo
     app.dependency_overrides[deps.get_procedural] = lambda: mock_procedural
     app.dependency_overrides[deps.get_episodic] = lambda: mock_episodic
+    app.dependency_overrides[deps.get_semantic] = lambda: mock_semantic
     app.dependency_overrides[get_current_user] = lambda: _ADMIN_PAYLOAD
     app.dependency_overrides[require_admin] = lambda: _ADMIN_PAYLOAD
     yield
@@ -312,6 +319,48 @@ class TestDeleteEvent:
         mock_episodic.delete = AsyncMock(return_value=True)
         response = await client.delete(f"/memory/event/{VALID_UUID}")
         assert response.json()["event_id"] == VALID_UUID
+
+    @staticmethod
+    def _found(mock_pg):
+        event = MagicMock(user_id="u1", app_id="default")
+        mock_pg.execute.return_value.scalar_one_or_none.return_value = event
+
+    @pytest.mark.asyncio
+    async def test_forgetting_an_event_forgets_the_facts_it_alone_backed(
+        self, client, mock_pg, mock_episodic, mock_semantic,
+    ):
+        self._found(mock_pg)
+        mock_episodic.delete = AsyncMock(return_value=True)
+        mock_semantic.unlink_event = AsyncMock(return_value=2)
+
+        response = await client.delete(f"/memory/event/{VALID_UUID}")
+
+        assert response.json()["facts_forgotten"] == 2
+        mock_semantic.unlink_event.assert_awaited_once()
+        kwargs = mock_semantic.unlink_event.call_args.kwargs
+        assert kwargs == {"user_id": "u1", "event_id": VALID_UUID, "app_id": "default"}
+
+    @pytest.mark.asyncio
+    async def test_neo4j_down_still_deletes_the_event(
+        self, client, mock_pg, mock_episodic, mock_semantic,
+    ):
+        self._found(mock_pg)
+        mock_episodic.delete = AsyncMock(return_value=True)
+        mock_semantic.unlink_event = AsyncMock(side_effect=RuntimeError("neo4j down"))
+
+        response = await client.delete(f"/memory/event/{VALID_UUID}")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "deleted": True, "event_id": VALID_UUID, "facts_forgotten": 0,
+        }
+
+    @pytest.mark.asyncio
+    async def test_no_such_event_touches_no_facts(self, client, mock_episodic, mock_semantic):
+        mock_episodic.delete = AsyncMock(return_value=False)
+        response = await client.delete(f"/memory/event/{VALID_UUID}")
+        assert response.json()["facts_forgotten"] == 0
+        mock_semantic.unlink_event.assert_not_called()
 
 
 # ── DELETE /memory/user/{user_id} ─────────────────────────────────────────────

@@ -271,12 +271,16 @@ async def forget(
 ) -> dict[str, Any]:
     """Delete one memory by id — a fact that stopped being true.
 
+    The facts Smritikosh drew from it go too, unless another memory still
+    backs them.
+
     Args:
         memory_id: The id from ``remember``, ``recall`` or ``list_memories``.
         user_id:   Override the default user (admin API keys only).
 
     Returns ``forgotten``: true if it was the user's and is now gone; false if
-    there was no such memory for this user.
+    there was no such memory for this user. ``facts_forgotten`` counts the
+    drawn facts removed with it.
     """
     state = _require_state()
     owner = user_id or state.config.user_id
@@ -291,7 +295,8 @@ async def forget(
     if event.user_id != owner:
         return {"forgotten": False, "id": memory_id}
     result = await state.client.delete_event(event_id=memory_id)
-    return {"forgotten": result.deleted, "id": memory_id}
+    return {"forgotten": result.deleted, "id": memory_id,
+            "facts_forgotten": result.facts_forgotten}
 
 
 @mcp.tool()

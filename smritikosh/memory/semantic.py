@@ -280,6 +280,50 @@ class SemanticMemory:
         record = await result.single()
         return bool(record and record["deleted_count"] > 0)
 
+    async def unlink_event(
+        self,
+        session: AsyncSession,
+        *,
+        user_id: str,
+        event_id: str,
+        app_id: str = "default",
+    ) -> int:
+        """
+        Take a forgotten event out of the facts drawn from it.
+
+        The event id leaves every source_event_ids list of this user's facts.
+        A fact left with no source at all goes too — the only thing it rested
+        on is gone, so keeping it would remember what the user asked to forget.
+        A fact another event still backs stays. A Fact node no one links to
+        any more is removed with its last relationship.
+
+        Facts written with no source ids (a direct POST /memory/fact, or a
+        distilled fact whose sources could not be verified) are never touched:
+        nothing says which event they came from.
+
+        Returns how many of the user's facts were removed.
+        """
+        result = await session.run(
+            """
+            MATCH (u:User {user_id: $user_id, app_id: $app_id})-[r]->(f:Fact)
+            WHERE $event_id IN coalesce(r.source_event_ids, [])
+            SET r.source_event_ids = [x IN r.source_event_ids WHERE x <> $event_id]
+            WITH r, f
+            WHERE size(r.source_event_ids) = 0
+            DELETE r
+            WITH DISTINCT f
+            OPTIONAL MATCH (f)--(other)
+            WITH f, count(other) AS links
+            WHERE links = 0
+            DELETE f
+            """,
+            user_id=user_id,
+            app_id=app_id,
+            event_id=event_id,
+        )
+        summary = await result.consume()
+        return summary.counters.relationships_deleted
+
     # ── Read ───────────────────────────────────────────────────────────────
 
     async def get_facts(

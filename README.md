@@ -2221,6 +2221,23 @@ To turn extraction off for every request on a server, set `ENCODE_EXTRACT=false`
 
 ---
 
+### `DELETE /memory/event/{event_id}`
+
+Forget one memory, and the facts that rested on it. Consolidation distils facts from events into the knowledge graph, and each fact keeps the ids of the events it came from. Deleting an event takes its id out of those lists; a fact left with no source is removed with it, so a statement the user asked to forget does not live on in the graph or on the dashboard. A fact another event still backs stays. Facts written with no source ids (`POST /memory/fact`) are never touched.
+
+```bash
+curl -X DELETE http://localhost:8080/memory/event/a3f1c2d4-... \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```json
+{"deleted": true, "event_id": "a3f1c2d4-...", "facts_forgotten": 1}
+```
+
+`deleted` is `false` when there was no such event. When Neo4j is down the event is still deleted and `facts_forgotten` is `0`. `DELETE /memory/user/{user_id}` removes events only; the user's facts stay.
+
+---
+
 ### `POST /memory/fact`
 
 Directly store a structured fact — bypasses LLM extraction entirely.
@@ -3971,7 +3988,7 @@ async with SmritikoshClient(base_url="http://localhost:8080") as client:
 | `get_recent(user_id, *, app_id, limit)` | List recent events → `list[RecentEvent]` |
 | `submit_feedback(event_id, user_id, feedback_type, *, app_id, comment)` | Rate a recalled event → `FeedbackRecord` |
 | `get_identity(user_id, *, app_id)` | Fetch synthesized identity model → `IdentityProfile` |
-| `delete_event(event_id)` | Delete a single episodic event |
+| `delete_event(event_id)` | Delete a single episodic event and the facts only it backed → `DeleteEventResult` (`facts_forgotten`) |
 | `delete_user_memory(user_id, *, app_id)` | Delete all events for a user |
 | `store_procedure(user_id, trigger, instruction, *, ...)` | Create a procedural memory rule |
 | `list_procedures(user_id, *, app_id, active_only)` | List a user's procedures |

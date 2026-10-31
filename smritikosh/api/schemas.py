@@ -572,6 +572,7 @@ class DeleteUserProceduresResponse(BaseModel):
 class DeleteEventResponse(BaseModel):
     deleted: bool
     event_id: str
+    facts_forgotten: int = 0   # facts removed because this event was their only source
 
 
 # ── DELETE /memory/user/{user_id} ─────────────────────────────────────────────

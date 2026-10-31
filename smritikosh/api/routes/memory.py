@@ -266,14 +266,23 @@ async def mark_used(
 async def delete_event(
     event_id: str,
     episodic: Annotated[EpisodicMemory, Depends(get_episodic)],
+    semantic: Annotated[SemanticMemory, Depends(get_semantic)],
     pg: Annotated[AsyncSession, Depends(get_session)],
+    neo: Annotated[NeoSession, Depends(get_neo4j_session)],
     current_user: Annotated[dict, Depends(get_current_user)],
 ) -> DeleteEventResponse:
     """
-    Delete a specific memory event by ID.
+    Delete a specific memory event by ID, and the facts that rested on it.
 
     Returns ``deleted=true`` if the event existed and was removed,
     ``deleted=false`` if no event with that ID was found.
+
+    Forgetting reaches the facts consolidation drew from the event: the id
+    leaves each fact's sources, and a fact with no source left is removed
+    (``facts_forgotten``). Without this a forgotten statement lived on in
+    Neo4j and on the dashboard. A fact another event still backs stays.
+    When Neo4j is down the event is still deleted and ``facts_forgotten``
+    is 0 -- the facts wait, like every other Neo4j write in degraded mode.
     """
     try:
         eid = uuid.UUID(event_id)
@@ -287,7 +296,20 @@ async def delete_event(
         assert_self_or_admin(current_user, event.user_id)
 
     deleted = await episodic.delete(pg, eid)
-    return DeleteEventResponse(deleted=deleted, event_id=event_id)
+    facts_forgotten = 0
+    if deleted and event is not None:
+        try:
+            facts_forgotten = await semantic.unlink_event(
+                neo, user_id=event.user_id, event_id=str(eid), app_id=event.app_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Event deleted, but its facts were not unlinked: %s", exc,
+                extra={"user_id": event.user_id, "event_id": event_id},
+            )
+    return DeleteEventResponse(
+        deleted=deleted, event_id=event_id, facts_forgotten=facts_forgotten,
+    )
 
 
 @router.delete("/user/{user_id}", response_model=DeleteUserMemoryResponse)

@@ -154,6 +154,7 @@ class DeleteEventResult:
     """Returned by SmritikoshClient.delete_event()."""
     deleted: bool
     event_id: str
+    facts_forgotten: int = 0
 
 
 @dataclass

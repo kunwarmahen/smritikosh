@@ -284,6 +284,7 @@ export class SmritikoshClient {
     return {
       deleted: raw["deleted"] as boolean,
       eventId: raw["event_id"] as string,
+      factsForgotten: (raw["facts_forgotten"] as number | undefined) ?? 0,
     };
   }
 
