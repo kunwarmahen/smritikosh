@@ -64,6 +64,7 @@ def mock_episodic():
 def mock_semantic():
     semantic = AsyncMock()
     semantic.upsert_fact = AsyncMock(return_value=MagicMock())
+    semantic.set_fact = AsyncMock(return_value=(MagicMock(), []))
     return semantic
 
 
@@ -233,8 +234,68 @@ class TestConsolidatorSuccess:
         result = await consolidator.run(pg, neo, user_id="u1", app_id="default")
 
         # LLM returns 2 facts → 2 upsert calls
-        assert mock_semantic.upsert_fact.call_count == 2
+        assert mock_semantic.set_fact.call_count == 2
         assert result.facts_distilled == 2
+
+    async def test_someone_elses_fact_is_keyed_by_their_name(
+            self, consolidator, mock_llm, mock_episodic, mock_semantic):
+        mock_llm.extract_structured.return_value = {"summary": "s", "facts": [
+            {"category": "identity", "key": "dob", "value": "2011-01-25",
+             "confidence": 0.9, "subject": "Akansha"},
+            {"category": "identity", "key": "dob", "value": "1976-06-04",
+             "confidence": 0.9, "subject": ""},
+        ]}
+        mock_episodic.get_unconsolidated.return_value = make_events(5)
+
+        await consolidator.run(AsyncMock(), AsyncMock(), user_id="u1", app_id="default")
+
+        keys = [c.kwargs["key"] for c in mock_semantic.set_fact.call_args_list]
+        assert keys == ["akansha.dob", "dob"]
+
+    async def test_facts_about_the_extractor_itself_are_dropped(
+            self, consolidator, mock_llm, mock_episodic, mock_semantic):
+        mock_llm.extract_structured.return_value = {"summary": "s", "facts": [
+            {"category": "identity", "key": "full_name_contradiction",
+             "value": "Stated name is Mahendr", "confidence": 0.2},
+            {"category": "event", "key": "data_contradiction_warning",
+             "value": "System warning", "confidence": 0.9},
+            {"category": "tool", "key": "editor", "value": "Neovim", "confidence": 0.9},
+        ]}
+        mock_episodic.get_unconsolidated.return_value = make_events(5)
+
+        result = await consolidator.run(AsyncMock(), AsyncMock(), user_id="u1", app_id="default")
+
+        assert [c.kwargs["key"] for c in mock_semantic.set_fact.call_args_list] == ["editor"]
+        assert result.facts_distilled == 1
+
+    async def test_every_known_key_is_shown_not_only_twenty(
+            self, consolidator, mock_llm, mock_episodic, mock_semantic):
+        from smritikosh.memory.semantic import FactRecord, UserProfile
+        known = [FactRecord(category="tool", key=f"k{i}", value="v", confidence=0.9,
+                            frequency_count=1, first_seen_at="", last_seen_at="")
+                 for i in range(99)]
+        mock_semantic.get_user_profile = AsyncMock(
+            return_value=UserProfile(user_id="u1", app_id="default", facts=known))
+        mock_episodic.get_unconsolidated.return_value = make_events(5)
+
+        await consolidator.run(AsyncMock(), AsyncMock(), user_id="u1", app_id="default")
+
+        prompt = mock_llm.extract_structured.call_args.kwargs["prompt"]
+        assert "tool/k98: v" in prompt
+
+    async def test_the_systems_own_findings_are_never_read_as_facts(
+            self, consolidator, mock_llm, mock_episodic, mock_semantic):
+        events = make_events(7)               # 2 the system's, 5 the user's
+        for e in events[:2]:
+            e.source_type = "agent_reflection"
+        mock_episodic.get_unconsolidated.return_value = events
+
+        await consolidator.run(AsyncMock(), AsyncMock(), user_id="u1", app_id="default")
+
+        first = mock_episodic.mark_consolidated.call_args_list[0]
+        assert first.args[1] == [events[0].id, events[1].id]   # marked done, unread
+        prompt = mock_llm.extract_structured.call_args.kwargs["prompt"]
+        assert prompt.count("\n1. ") == 1 and "5. " in prompt and "6. " not in prompt
 
     async def test_result_counts(self, consolidator, mock_episodic):
         events = make_events(5)
@@ -298,7 +359,7 @@ class TestConsolidatorLLMFailure:
 
         assert result.facts_distilled == 0
         assert result.events_consolidated == 5
-        mock_semantic.upsert_fact.assert_not_called()
+        mock_semantic.set_fact.assert_not_called()
 
     async def test_missing_summary_key(self, consolidator, mock_episodic, mock_llm):
         mock_episodic.get_unconsolidated.return_value = make_events(5)

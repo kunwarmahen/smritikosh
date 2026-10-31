@@ -141,6 +141,7 @@ class RecentEventItem(BaseModel):
     cluster_label: Optional[str] = None
     source_type: str = "api_explicit"
     last_used_at: Optional[str] = None
+    metadata: dict = {}     # what the client stored with it (topic, slot, …)
 
     model_config = {"from_attributes": True}
 
@@ -700,6 +701,8 @@ class SearchRequest(BaseModel):
     limit: int = Field(10, ge=1, le=50, description="Maximum results to return")
     from_date: Optional[datetime] = Field(None, description="Only include events on or after this datetime")
     to_date: Optional[datetime] = Field(None, description="Only include events on or before this datetime")
+    own_only: bool = Field(False, description="Leave out what Smritikosh's own agents wrote "
+                                              "(reflections, verdicts): only what was stored for the user")
 
 
 class SearchResultItem(BaseModel):

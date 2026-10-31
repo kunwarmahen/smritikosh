@@ -1220,7 +1220,8 @@ smritikosh/
 │   └── adapter.py           # LLMAdapter: complete(), embed(), extract_structured()
 ├── memory/
 │   ├── episodic.py          # EpisodicMemory: store, search, hybrid_search
-│   ├── semantic.py          # SemanticMemory: upsert_fact, get_user_profile
+│   ├── semantic.py          # SemanticMemory: upsert_fact, set_fact (one value per key), unlink_event, decay
+│   ├── labels.py            # A statement filed with a topic: its fact, its lifetime
 │   ├── narrative.py         # NarrativeMemory: memory link chains
 │   ├── identity.py          # IdentityBuilder: dimensions + beliefs + summary
 │   ├── procedural.py        # ProceduralMemory: store, search_by_query (3-strategy fuzzy match)
@@ -2168,7 +2169,9 @@ curl -X POST http://localhost:8080/memory/used \
 | `user_id` | string | **Required.** Whose memories (self or admin) |
 | `event_ids` | list[string] | **Required.** 1–100 event ids. Ids that are not UUIDs, or not this user's, are skipped and not counted in `marked` |
 
-`GET /memory/{user_id}` takes `order=created` (default, newest written first) or `order=active` (most recently used or written first), and each event carries `last_used_at` (null until used).
+`GET /memory/{user_id}` takes `order=created` (default, newest written first) or `order=active` (most recently used or written first), and each event carries `last_used_at` (null until used) and the `metadata` it was stored with.
+
+Both `GET /memory/{user_id}` and `POST /memory/search` take `own_only` (default `false`): `true` leaves out what Smritikosh's own agents wrote (reflections, decisions, council verdicts, meeting prep) and returns only what was stored for the user. The MCP server's `list_memories` and `recall` always ask for it.
 
 ---
 
@@ -2218,6 +2221,26 @@ curl -X POST http://localhost:8080/memory/event \
 ```
 
 To turn extraction off for every request on a server, set `ENCODE_EXTRACT=false`.
+
+**A statement that says where it goes.** Stored with `extract: false` and a `topic` in its `metadata`, a statement files itself in the knowledge graph as one fact, worded as the client wrote it: no LLM rewords it and invents a key. The topic picks the category; `key` (and `about`, for someone else's fact) pick the key; the event is its source and is marked consolidated. Its fact goes when the event goes (forget, replace, lifetime).
+
+| `topic` | category | | `topic` | category |
+|---|---|---|---|---|
+| `home` | location | | `account` | finance |
+| `work` | role | | `tool` | tool |
+| `family` | relationship | | `preference` | preference |
+| `contact` | identity | | `habit` | habit |
+| `health` | health | | `project` | project |
+| `diet` | diet | | `other` | (left for consolidation) |
+
+```bash
+curl -X POST http://localhost:8080/memory/event \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"user_id": "alice", "content": "Ravi'"'"'s email is ravi@example.org.", "extract": false,
+       "metadata": {"topic": "contact", "about": "Ravi", "key": "email", "lifetime_days": null}}'
+```
+
+That files `identity/ravi.email`. `lifetime_days` (optional) is how long it lasts unused; see Synaptic pruning. `facts_extracted` is `1` once filed; with Neo4j down it is `0` and consolidation reads the statement later.
 
 ---
 
@@ -3276,6 +3299,7 @@ Every memory now carries a `source_type` tracking how it entered the system:
 | `webhook_ingest` | 0.70 | Structured transcript via `/ingest/transcript` |
 | `media_image` | 0.70 | Extracted from uploaded image (receipt/screenshot/whiteboard) |
 | `cross_system` | 0.65 | Synthesized from cross-integration signals |
+| `agent_labelled` | 1.00 | A fact filed from a statement a client stored with a `topic` |
 
 ### `remember()` tool — LLM-curated memory (Phase 5)
 
@@ -4523,17 +4547,21 @@ Finds users with ≥ 5 unconsolidated events from the last 24 hours and compress
 10 raw events  →  1 consolidated event  +  N distilled Neo4j facts
 ```
 
-The LLM extracts a summary and structured facts (`category`, `key`, `value`, `confidence`). Raw events are marked `consolidated=True` in Postgres; facts are upserted into Neo4j (incrementing `frequency_count` on each re-encounter).
+The LLM extracts a summary and structured facts (`category`, `key`, `value`, `confidence`, `subject`). Raw events are marked `consolidated=True` in Postgres; facts are written to Neo4j.
+
+What keeps the facts worth having:
+
+- **The same thing keeps the same key.** The LLM is shown every fact the user already has (up to 150) with its key, and told to reuse it.
+- **One value per key.** A new value replaces the old one under the same `category`/`key` instead of sitting beside it. A rewording (two thirds of the words shared) keeps the old value's source events; a real change does not.
+- **Whose fact.** `subject` names the person when it isn't the user, and their name goes into the key (`naina.email`), so a relative's date of birth never lands on the user's own.
+- **Only about the user's life.** No facts about the conversation or the system (warnings, "contradictions"), no one-off booking codes; an empty list is a fine answer.
+- **Skipped:** statements a client filed with a topic (they file themselves, see `POST /memory/event`) and events Smritikosh's own agents wrote (`agent_reflection`, `agent_decision`, `agent_council`, `agent_meeting_prep`), which are marked done unread.
 
 ### Synaptic pruning (every 24 hours)
 
-Scores consolidated events older than 7 days:
+Deletes a consolidated event only when all three hold: importance below `0.2`, recalled fewer than 2 times, and older than 90 days (thresholds tighten for users with over 1,000 events and loosen under 50). Age counts from an event's last activity: the later of `created_at` and `last_used_at` (`POST /memory/used`), so a memory a client still uses is never pruned for being old.
 
-```
-prune_score = importance_score × exp(−age_days / 30)
-```
-
-Events scoring below `0.15` are deleted. High-importance or recently-accessed memories are preserved. Age counts from an event's last activity: the later of `created_at` and `last_used_at` (`POST /memory/used`), so a memory a client still uses is never pruned for being old.
+**A labelled statement follows its client's lifetime instead.** One stored with a `topic` (see `POST /memory/event`) is never judged by importance. If it carries `lifetime_days`, it is deleted once that many days pass since it was written or last used, and the fact it filed goes with it; with none, it stays until the client forgets or replaces it.
 
 After each pruning run, **fact garbage collection** removes Neo4j facts for that user whose `last_seen_at` timestamp falls within the same age window as the deleted events. These facts were only reinforced by the pruned events and will never be re-confirmed by future consolidation — removing them immediately avoids waiting for the weekly confidence-decay cycle.
 
@@ -4548,7 +4576,14 @@ Each cluster is labelled by the LLM (`cluster_label`) and stored on the event ro
 
 ### Belief mining (every 12 hours)
 
-Reads consolidated events (minimum 3) and semantic facts, then prompts the LLM to infer higher-order beliefs and values. Results are upserted into `user_beliefs` — `evidence_count` increments each time the same belief is independently inferred, reinforcing confidence over time.
+Reads consolidated events (minimum 3; never Smritikosh's own agents' findings) and semantic facts, then asks the LLM what beliefs and values several memories show. Few and earned:
+
+- **No quota.** At most 5 per run, and none is a good answer.
+- **Evidence or nothing.** Each belief cites the memories that show it, by number; fewer than 3 distinct ones and it is dropped. Only the cited memories are stored as its evidence.
+- **Confidence from evidence**, not from the model: 0.70 for 3 memories, 0.80 for 4, 0.90 for 5 or more.
+- **Duplicates by meaning.** A belief that means the same as one already held (embedding similarity ≥ 0.88) reinforces it instead of becoming a new row; one that means the same as a retracted belief is dropped.
+
+`tidy_beliefs()` (`smritikosh.processing.belief_miner`) folds near-duplicates already stored into one each.
 
 ### Semantic fact decay (every week)
 
@@ -4560,7 +4595,15 @@ new_confidence = confidence × exp(−ln2 × age_days / half_life_days)
 
 `age_days` is the time since the later of the fact's last pass (`decayed_at`, stamped by each run) and its `last_seen_at`, counted in whole days with `duration.inDays`. Weekly passes therefore add up to the half-life: a fact unseen for 63 days sits at 2^(−63/60) ≈ 0.48, however many passes it took to get there.
 
-The default half-life is **60 days** (`FACT_DECAY_HALF_LIFE_DAYS`). Facts whose confidence drops below `0.1` (`FACT_DECAY_FLOOR`) are deleted. Orphaned `Fact` nodes with no remaining user relationship are also cleaned up in a third pass.
+The half-life depends on what the fact is about. The base is **60 days** (`FACT_DECAY_HALF_LIFE_DAYS`):
+
+| Kind of fact | Half-life |
+|---|---|
+| identity, location, relationship, education, health, diet, religion, pet | 6 × base (360 days) |
+| project, goal, event | base (60 days) |
+| everything else | 2 × base (120 days) |
+
+Facts whose confidence drops below `0.1` (`FACT_DECAY_FLOOR`) are deleted. Orphaned `Fact` nodes with no remaining user relationship are also cleaned up in a third pass. Never decayed: facts the user typed in the dashboard (`ui_manual`) and facts filed from a labelled statement (`agent_labelled`), which live exactly as long as their memory.
 
 ### Cross-system synthesis (daily at 01:00 UTC)
 
@@ -4737,6 +4780,23 @@ The dashboard shows:
 **Disable metrics:** set `ENABLE_METRICS=false` in your environment — the `/metrics` endpoint will return 404.
 
 ---
+
+## Rebuilding facts and beliefs
+
+Facts and beliefs are derived from a user's memories. When the rules that derive them change, `scripts/rebuild_facts_beliefs.py` makes one user's again from their memories (which it never deletes or rewords).
+
+```bash
+# Dry run: the old facts and beliefs, and what a rebuild would make. Writes nothing.
+uv run python scripts/rebuild_facts_beliefs.py --user alice
+
+# Also file memories that have no topic yet (an LLM picks one per memory), shown first
+uv run python scripts/rebuild_facts_beliefs.py --user alice --label
+
+# Do it: back up, clear, file the labelled ones, consolidate the rest, mine beliefs
+uv run python scripts/rebuild_facts_beliefs.py --user alice --label --apply
+```
+
+`--apply` first writes the user's current facts and beliefs to `rebuild-backup-<user>-<time>.json` in the current folder. Retracted beliefs are kept: they are what stops a wrong belief coming back. The dry run asks the LLM exactly as a rebuild would, so on a local model it takes some minutes. Nothing else needs rebuilding: `/context` is assembled from memories, facts and beliefs on every request.
 
 ## Data reset script
 

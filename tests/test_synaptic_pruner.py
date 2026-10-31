@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from smritikosh.db.models import Event
 from smritikosh.processing.synaptic_pruner import (
     SynapticPruner,
     PruningResult,
@@ -55,7 +56,9 @@ def mock_episodic():
 
 @pytest.fixture
 def pruner(mock_episodic):
-    return SynapticPruner(episodic=mock_episodic)
+    p = SynapticPruner(episodic=mock_episodic)
+    p._get_lifetime_candidates = AsyncMock(return_value=[])   # no labelled events
+    return p
 
 
 # ── compute_prune_decision ────────────────────────────────────────────────────
@@ -303,6 +306,7 @@ class TestCustomThreshold:
             episodic=mock_episodic,
             importance_threshold=0.8,  # importance=0.5 < 0.8 → pruned
         )
+        aggressive._get_lifetime_candidates = AsyncMock(return_value=[])
         events = [make_event(importance=0.5, age_days=100, recall_count=0)]
         session = AsyncMock()
         count_p, cands_p = _patch_prune(aggressive, events)
@@ -316,6 +320,7 @@ class TestCustomThreshold:
             episodic=mock_episodic,
             importance_threshold=0.01,  # importance=0.5 >= 0.01 → kept
         )
+        conservative._get_lifetime_candidates = AsyncMock(return_value=[])
         events = [make_event(importance=0.5, age_days=100, recall_count=0)]
         session = AsyncMock()
         count_p, cands_p = _patch_prune(conservative, events)
@@ -329,6 +334,7 @@ class TestCustomThreshold:
             episodic=mock_episodic,
             min_recall_count=10,  # recall=5 < 10 → pruned
         )
+        aggressive._get_lifetime_candidates = AsyncMock(return_value=[])
         events = [make_event(importance=0.1, age_days=100, recall_count=5)]
         session = AsyncMock()
         count_p, cands_p = _patch_prune(aggressive, events)
@@ -399,3 +405,49 @@ class TestComputeAdaptiveThresholds:
         normal_thresholds = compute_adaptive_thresholds(500)
         assert pruner._should_prune(event, now, high_thresholds) is True
         assert pruner._should_prune(event, now, normal_thresholds) is False
+
+
+# ── Labelled events: the client's lifetime, not importance ───────────────────
+
+def _labelled(days_old: int, lifetime: int | None, used_days_ago: int | None = None):
+    now = datetime.now(timezone.utc)
+    meta = {"topic": "project"}
+    if lifetime is not None:
+        meta["lifetime_days"] = lifetime
+    return Event(
+        id=uuid.uuid4(), user_id="u1", app_id="default", raw_text="Working on Q3.",
+        importance_score=0.9, recall_count=0, consolidated=True,
+        created_at=now - timedelta(days=days_old),
+        last_used_at=(None if used_days_ago is None else now - timedelta(days=used_days_ago)),
+        event_metadata=meta,
+    )
+
+
+class TestLapse:
+    async def test_a_labelled_event_past_its_lifetime_goes_with_its_facts(self, mock_episodic):
+        semantic = AsyncMock()
+        pruner = SynapticPruner(episodic=mock_episodic, semantic=semantic)
+        old = _labelled(61, 60)
+        pruner._get_lifetime_candidates = AsyncMock(return_value=[old])
+        mock_episodic.delete = AsyncMock(return_value=True)
+        neo = AsyncMock()
+
+        gone = await pruner._lapse(AsyncMock(), "u1", "default", neo)
+
+        assert gone == 1
+        mock_episodic.delete.assert_awaited_once()
+        semantic.unlink_event.assert_awaited_once_with(
+            neo, user_id="u1", event_id=str(old.id), app_id="default")
+
+    async def test_one_used_lately_stays_however_old(self, mock_episodic):
+        pruner = SynapticPruner(episodic=mock_episodic)
+        pruner._get_lifetime_candidates = AsyncMock(
+            return_value=[_labelled(400, 60, used_days_ago=5)])
+        assert await pruner._lapse(AsyncMock(), "u1", "default") == 0
+        mock_episodic.delete.assert_not_called()
+
+    async def test_one_within_its_lifetime_stays(self, mock_episodic):
+        pruner = SynapticPruner(episodic=mock_episodic)
+        pruner._get_lifetime_candidates = AsyncMock(return_value=[_labelled(30, 60)])
+        assert await pruner._lapse(AsyncMock(), "u1", "default") == 0
+

@@ -291,6 +291,47 @@ class TestCaptureEvent:
         assert kwargs["extracted_facts"] == []
 
     @pytest.mark.asyncio
+    async def test_a_labelled_statement_files_its_own_fact(self, client, mock_hippocampus):
+        stored = make_encoded_memory(facts_count=0)
+        mock_hippocampus.encode_preextracted = AsyncMock(return_value=stored)
+        mock_hippocampus.semantic = AsyncMock()
+        mock_hippocampus.semantic.set_fact = AsyncMock(return_value=(None, []))
+        mock_hippocampus.episodic = AsyncMock()
+
+        response = await client.post("/memory/event", json={
+            "user_id": "u1", "content": "Naina's email is n@example.com.",
+            "extract": False,
+            "metadata": {"topic": "contact", "about": "Naina", "key": "email"},
+        })
+
+        assert response.status_code == 201
+        assert response.json()["facts_extracted"] == 1
+        kwargs = mock_hippocampus.semantic.set_fact.call_args.kwargs
+        assert (kwargs["category"], kwargs["key"], kwargs["value"]) == (
+            "identity", "naina.email", "Naina's email is n@example.com.")
+        assert kwargs["source_event_ids"] == [str(stored.event.id)]
+        assert kwargs["source_type"] == "agent_labelled"
+        mock_hippocampus.episodic.mark_consolidated.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_a_labelled_statement_with_neo4j_down_waits_for_consolidation(
+            self, client, mock_hippocampus):
+        mock_hippocampus.encode_preextracted = AsyncMock(
+            return_value=make_encoded_memory(facts_count=0))
+        mock_hippocampus.semantic = AsyncMock()
+        mock_hippocampus.semantic.set_fact = AsyncMock(side_effect=RuntimeError("down"))
+        mock_hippocampus.episodic = AsyncMock()
+
+        response = await client.post("/memory/event", json={
+            "user_id": "u1", "content": "Lives in Cary, NC.", "extract": False,
+            "metadata": {"topic": "home"},
+        })
+
+        assert response.status_code == 201
+        assert response.json()["facts_extracted"] == 0
+        mock_hippocampus.episodic.mark_consolidated.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_extraction_setting_off_overrides_request(
             self, client, mock_hippocampus, monkeypatch):
         from smritikosh.config import settings

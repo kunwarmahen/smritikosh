@@ -125,6 +125,7 @@ class SourceType(StrEnum):
     SDK_MIDDLEWARE      = "sdk_middleware"       # SDK wrapper intercepted transparently
     WEBHOOK_INGEST      = "webhook_ingest"       # App POSTed a transcript to /ingest/transcript
     TOOL_USE            = "tool_use"            # LLM called the remember() tool
+    AGENT_LABELLED      = "agent_labelled"      # A client filed it with a topic (memory/labels.py)
     CROSS_SYSTEM        = "cross_system"        # Synthesized from correlated cross-integration signals
     AGENT_DECISION      = "agent_decision"      # DecisionAgent recommendation logged as memory (E4)
     AGENT_REFLECTION    = "agent_reflection"    # ReflectionAgent cycle summary logged as memory (E4)
@@ -137,6 +138,17 @@ class SourceType(StrEnum):
     MEDIA_DOCUMENT      = "media_document"      # Extracted from a document
 
 
+#: Events the system wrote itself -- its agents' own findings and verdicts,
+#: stored so its context can draw on them. They are not something the
+#: user said: consolidation and belief mining never read them as facts
+#: about the user, and a client asking for the user's own memories
+#: (``own_only``) does not get them back.
+SYSTEM_SOURCE_TYPES = frozenset({
+    SourceType.AGENT_REFLECTION, SourceType.AGENT_DECISION,
+    SourceType.AGENT_COUNCIL, SourceType.AGENT_MEETING_PREP,
+})
+
+
 # Initial confidence by source type — tune over time
 SOURCE_CONFIDENCE_DEFAULTS: dict[str, float] = {
     SourceType.UI_MANUAL:            1.00,
@@ -147,6 +159,7 @@ SOURCE_CONFIDENCE_DEFAULTS: dict[str, float] = {
     SourceType.SDK_MIDDLEWARE:       0.70,
     SourceType.WEBHOOK_INGEST:       0.70,
     SourceType.TOOL_USE:             0.90,
+    SourceType.AGENT_LABELLED:       1.00,
     SourceType.CROSS_SYSTEM:         0.65,
     SourceType.AGENT_DECISION:       0.80,
     SourceType.AGENT_REFLECTION:     0.70,

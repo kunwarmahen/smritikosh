@@ -20,6 +20,25 @@ Pipeline:
                         (reinforces evidence_count on repeat inference)
 
 Run: periodically via the Scheduler (e.g. every 12 hours).
+
+What keeps beliefs few and meaningful, each one a failure seen in real
+data (554 beliefs from 87 memories, nearly all at confidence 1.00):
+
+  * NO QUOTA. The model was told to infer "3–7" beliefs every run, so
+    every run invented some. Now it may return none, and is told to.
+  * EVIDENCE OR NOTHING. Each belief cites the memories that show it (by
+    their number in the prompt). Fewer than MIN_EVIDENCE distinct ones,
+    and it is dropped; the ones cited -- not every memory in the prompt --
+    are its evidence.
+  * CONFIDENCE FROM EVIDENCE. The model's own number was stored and came
+    back 1.0. Confidence now grows with the distinct memories behind a
+    belief (``evidence_confidence``).
+  * DUPLICATES BY MEANING. A rewording was a new row, since the unique
+    key is the exact text. A new belief that means the same as one
+    already held (embedding similarity >= SAME_MEANING) reinforces that
+    one instead; one that means the same as a retracted belief is
+    dropped.
+  * ``tidy`` folds the near-duplicates already stored into one each.
 """
 
 import logging
@@ -32,7 +51,7 @@ from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from smritikosh.db.models import BeliefStatus, Event, UserBelief
+from smritikosh.db.models import SYSTEM_SOURCE_TYPES, BeliefStatus, Event, UserBelief
 from smritikosh.llm.adapter import LLMAdapter
 from smritikosh.memory.semantic import FactRecord, SemanticMemory
 
@@ -43,28 +62,42 @@ logger = logging.getLogger(__name__)
 MIN_CONSOLIDATED_EVENTS = 3    # minimum evidence needed to attempt belief mining
 MAX_EVENTS_IN_PROMPT = 20      # cap on events sent to LLM to control token use
 MAX_FACTS_IN_PROMPT = 15       # cap on facts sent to LLM
+MAX_BELIEFS_IN_PROMPT = 30     # beliefs already held, shown so they are not repeated
+MIN_EVIDENCE = 3               # distinct memories a belief must cite
+SAME_MEANING = 0.88            # cosine similarity at which two beliefs are one
 
 _BELIEF_SCHEMA = (
-    "beliefs: list of objects with: "
+    "beliefs: list of 0 to 5 objects with: "
     "statement (string, one concise sentence starting with a verb like 'believes', "
     "'values', 'assumes', 'prefers', 'thinks'), "
     "category (worldview|value|attitude|assumption), "
-    "confidence (float 0.0–1.0)"
+    f"evidence (list of ints): the numbers of at least {MIN_EVIDENCE} different "
+    "memory summaries below that each, on their own, show this belief. "
+    "An empty list of beliefs is the right answer when nothing new is clearly "
+    "shown by several memories."
 )
 _BELIEF_EXAMPLE = {
     "beliefs": [
         {
             "statement": "believes iterative development beats big-bang launches",
             "category": "value",
-            "confidence": 0.85,
-        },
-        {
-            "statement": "assumes AI will transform knowledge work within 5 years",
-            "category": "worldview",
-            "confidence": 0.9,
+            "evidence": [2, 5, 9],
         },
     ]
 }
+
+
+def evidence_confidence(distinct_memories: int) -> float:
+    """How sure a belief is, from how many distinct memories show it:
+    3 → 0.70, 4 → 0.80, 5 or more → 0.90, never 1.0 -- it is an inference."""
+    return round(min(0.9, 0.4 + 0.1 * max(0, distinct_memories)), 2)
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(y * y for y in b) ** 0.5
+    return dot / (na * nb) if na and nb else 0.0
 
 _VALID_CATEGORIES = {"worldview", "value", "attitude", "assumption"}
 
@@ -78,6 +111,8 @@ class MiningResult:
     app_id: str
     beliefs_found: int = 0
     beliefs_upserted: int = 0
+    beliefs_reinforced: int = 0    # meant the same as one already held
+    beliefs_unsupported: int = 0   # cited fewer than MIN_EVIDENCE memories
     skipped: bool = False
     skip_reason: str = ""
 
@@ -159,12 +194,11 @@ class BeliefMiner:
         rejected_beliefs = await self._get_rejected(pg_session, user_id, app_id)
         rejected_statements = {b.statement.strip().lower() for b in rejected_beliefs}
 
-        # Capture event IDs before the LLM call — these become the evidence
-        # sources stored alongside each belief for provenance and auditability.
-        event_ids = [str(e.id) for e in events]
-
         # ── 4. Extract beliefs via LLM ────────────────────────────────────
-        prompt = _build_belief_prompt(facts, events, existing_beliefs, rejected_beliefs)
+        shown = sorted(existing_beliefs, key=lambda b: (-(b.evidence_count or 0),
+                                                        -(b.confidence or 0)))
+        prompt = _build_belief_prompt(facts, events, shown[:MAX_BELIEFS_IN_PROMPT],
+                                      rejected_beliefs)
         try:
             extracted = await self.llm.extract_structured(
                 prompt=prompt,
@@ -181,24 +215,38 @@ class BeliefMiner:
             result.skip_reason = f"LLM call failed: {exc}"
             return result
 
-        belief_dicts = extracted.get("beliefs", [])
+        belief_dicts = extracted.get("beliefs", []) or []
         result.beliefs_found = len(belief_dicts)
 
-        # ── 5. Upsert valid beliefs ────────────────────────────────────────
-        # Rejected statements are guarded twice: skipped here when the LLM
-        # returns one verbatim, and again at the SQL layer (the upsert's
-        # conflict action carries WHERE status != 'rejected'), so a retracted
-        # belief can never be resurrected by re-mining (E2).
+        # ── 5. Keep the supported ones; a repeat reinforces ───────────────
+        # Rejected statements are guarded three ways: verbatim here, by
+        # meaning below, and at the SQL layer (the upsert's conflict action
+        # carries WHERE status != 'rejected'), so a retracted belief can
+        # never be resurrected by re-mining (E2).
+        meanings = _Meanings(self.llm)
         now = datetime.now(timezone.utc)
         for bd in belief_dicts:
             try:
-                if str(bd.get("statement", "")).strip().lower() in rejected_statements:
+                statement = str(bd.get("statement", "")).strip()
+                if statement.lower() in rejected_statements:
                     logger.debug(
                         "Skipping re-mined rejected belief",
-                        extra={"user_id": user_id, "statement": bd.get("statement")},
+                        extra={"user_id": user_id, "statement": statement},
                     )
                     continue
-                upserted = await _upsert_belief(pg_session, user_id, app_id, bd, now, event_ids)
+                cited = _cited(bd.get("evidence"), events)
+                if len(cited) < MIN_EVIDENCE:
+                    result.beliefs_unsupported += 1
+                    continue
+                if statement and await meanings.match(statement, rejected_beliefs):
+                    continue
+                same = await meanings.match(statement, existing_beliefs) if statement else None
+                if same is not None:
+                    await _reinforce(pg_session, same, cited, now)
+                    result.beliefs_reinforced += 1
+                    continue
+                bd = {**bd, "confidence": evidence_confidence(len(cited))}
+                upserted = await _upsert_belief(pg_session, user_id, app_id, bd, now, cited)
                 if upserted:
                     result.beliefs_upserted += 1
             except (KeyError, ValueError, TypeError) as exc:
@@ -286,17 +334,127 @@ class BeliefMiner:
 # ── Private helpers ───────────────────────────────────────────────────────────
 
 
+def _cited(evidence, events: list[Event]) -> list[str]:
+    """The distinct event ids a belief cites, from its 1-based numbers."""
+    ids: list[str] = []
+    for n in evidence or []:
+        try:
+            i = int(n)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= i <= len(events):
+            eid = str(events[i - 1].id)
+            if eid not in ids:
+                ids.append(eid)
+    return ids
+
+
+class _Meanings:
+    """Embeddings for one mining run, so each statement is embedded once.
+    An embedding that fails turns matching by meaning off for the run --
+    exact-text matching (the unique key) still holds."""
+
+    def __init__(self, llm: LLMAdapter) -> None:
+        self.llm = llm
+        self.cache: dict[str, list[float]] = {}
+        self.off = False
+
+    async def vector(self, text_: str) -> list[float] | None:
+        if self.off:
+            return None
+        if text_ not in self.cache:
+            try:
+                vec = await self.llm.embed(text_)
+            except Exception as exc:
+                logger.warning("Belief embedding failed, matching by text only: %s", exc)
+                self.off = True
+                return None
+            if not isinstance(vec, list) or not vec:
+                self.off = True
+                return None
+            self.cache[text_] = vec
+        return self.cache[text_]
+
+    async def match(self, statement: str, beliefs: list) -> object | None:
+        """The belief in ``beliefs`` that means the same, or None."""
+        target = await self.vector(statement)
+        if target is None:
+            return None
+        best, best_score = None, SAME_MEANING
+        for b in beliefs:
+            vec = await self.vector(b.statement)
+            if vec is None:
+                return None
+            score = _cosine(target, vec)
+            if score >= best_score:
+                best, best_score = b, score
+        return best
+
+
+async def _reinforce(session: AsyncSession, belief: UserBelief, cited: list[str],
+                     now: datetime) -> None:
+    """One more mining run found this belief: its evidence grows, and its
+    confidence with the distinct memories behind it."""
+    merged = list(dict.fromkeys([*(belief.evidence_event_ids or []), *cited]))[:50]
+    belief.evidence_event_ids = merged
+    belief.evidence_count = len(merged)
+    belief.confidence = evidence_confidence(len(merged))
+    belief.last_updated_at = now
+    await session.flush()
+
+
+async def tidy_beliefs(
+    session: AsyncSession, llm: LLMAdapter, *, user_id: str, app_id: str = "default",
+) -> int:
+    """Fold this user's active beliefs that mean the same into one each.
+
+    The belief with the most evidence keeps; the others' evidence joins it
+    and they are deleted. Retracted beliefs are left alone -- they are
+    what stops a belief coming back. Returns how many were folded in.
+    """
+    rows = await session.execute(
+        select(UserBelief).where(
+            UserBelief.user_id == user_id,
+            UserBelief.app_id == app_id,
+            UserBelief.status != BeliefStatus.REJECTED,
+        )
+    )
+    beliefs = sorted(rows.scalars().all(),
+                     key=lambda b: (-(b.evidence_count or 0), -(b.confidence or 0)))
+    meanings = _Meanings(llm)
+    kept: list[UserBelief] = []
+    folded = 0
+    now = datetime.now(timezone.utc)
+    for b in beliefs:
+        same = await meanings.match(b.statement, kept)
+        if meanings.off:
+            return folded
+        if same is None:
+            kept.append(b)
+            continue
+        merged = list(dict.fromkeys([*(same.evidence_event_ids or []),
+                                     *(b.evidence_event_ids or [])]))[:50]
+        same.evidence_event_ids = merged
+        same.last_updated_at = now
+        await session.delete(b)
+        folded += 1
+    await session.flush()
+    return folded
+
+
 async def _fetch_consolidated_events(
     session: AsyncSession, user_id: str, app_id: str, limit: int
 ) -> list[Event]:
-    """Fetch consolidated events that have summaries, newest first."""
+    """Fetch consolidated events, newest first. A labelled statement has no
+    summary (memory/labels.py) and is read as written; the system's own
+    findings are not evidence of what the user believes."""
     result = await session.execute(
         select(Event)
         .where(
             Event.user_id == user_id,
             Event.app_id == app_id,
             Event.consolidated.is_(True),
-            Event.summary.is_not(None),
+            Event.source_type.not_in(list(SYSTEM_SOURCE_TYPES)),
         )
         .order_by(Event.created_at.desc())
         .limit(limit)
@@ -313,8 +471,10 @@ def _build_belief_prompt(
     """Build the LLM prompt for belief inference."""
     lines = [
         "Analyze this user's known facts and recent memory summaries.\n"
-        "Infer 3–7 core beliefs, values, or worldview assumptions that "
-        "consistently appear across their experiences.\n"
+        "Infer at most 5 core beliefs, values, or worldview assumptions that "
+        f"several different memories show -- at least {MIN_EVIDENCE} each, cited "
+        "by number. A preference or fact already stated plainly is not a "
+        "belief. If nothing new is clearly shown, return no beliefs.\n"
         "Each belief must be a concise one-sentence statement starting with "
         "a verb (believes, values, assumes, prefers, thinks).\n"
     ]

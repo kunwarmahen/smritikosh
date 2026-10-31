@@ -224,6 +224,7 @@ class SmritikoshClient:
         app_id: str | None = None,
         limit: int = 10,
         order: str = "created",
+        own_only: bool = False,
     ) -> list[RecentEvent]:
         """
         Fetch the most recent memory events for a user.
@@ -234,6 +235,8 @@ class SmritikoshClient:
             limit:   Maximum events to return (1–500).
             order:   ``created`` (newest written first) or ``active`` (most
                      recently used or written first).
+            own_only: Leave out what Smritikosh's own agents wrote (their
+                     reflections and verdicts): only what was stored for the user.
 
         Returns:
             List of :class:`RecentEvent`, newest first.
@@ -244,6 +247,8 @@ class SmritikoshClient:
         }
         if order != "created":
             params["order"] = order
+        if own_only:
+            params["own_only"] = "true"
         data = await self._get(f"/memory/{user_id}", params=params)
         return [
             RecentEvent(
@@ -253,6 +258,7 @@ class SmritikoshClient:
                 consolidated=item["consolidated"],
                 created_at=item["created_at"],
                 last_used_at=item.get("last_used_at"),
+                metadata=item.get("metadata") or {},
             )
             for item in data["events"]
         ]
@@ -633,6 +639,7 @@ class SmritikoshClient:
         limit: int = 10,
         from_date: Optional[datetime] = None,
         to_date: Optional[datetime] = None,
+        own_only: bool = False,
     ) -> SearchResult:
         """
         Hybrid search over a user's episodic memory.
@@ -662,6 +669,8 @@ class SmritikoshClient:
             payload["from_date"] = from_date.isoformat()
         if to_date is not None:
             payload["to_date"] = to_date.isoformat()
+        if own_only:
+            payload["own_only"] = True
         data = await self._post("/memory/search", payload)
         return SearchResult(
             user_id=data["user_id"],

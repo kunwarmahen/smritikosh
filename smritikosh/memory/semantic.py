@@ -26,6 +26,7 @@ Design notes:
 """
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
@@ -85,6 +86,31 @@ def _rel_type(category: str) -> str:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+_WORD = re.compile(r"[a-z0-9]+")
+
+#: Facts the weekly decay never touches: said by the user on the
+#: dashboard, or filed from a labelled memory (memory/labels.py).
+NEVER_DECAYED = ("ui_manual", "agent_labelled")
+#: Kinds of fact that change rarely: a slow half-life.
+STABLE_CATEGORIES = (
+    FactCategory.IDENTITY, FactCategory.LOCATION, FactCategory.RELATIONSHIP,
+    FactCategory.EDUCATION, FactCategory.HEALTH, FactCategory.DIET,
+    FactCategory.RELIGION, FactCategory.PET,
+)
+#: Kinds of fact that are over soon: the base half-life.
+TRANSIENT_CATEGORIES = (FactCategory.PROJECT, FactCategory.GOAL, FactCategory.EVENT)
+
+
+def _same_words(a: str, b: str) -> bool:
+    """Whether two values are one fact reworded: two thirds of all their
+    words shared ("MBA from Fuqua" / "MBA from Fuqua at Duke"). Half is
+    too few -- "Lives in Cary" and "Lives in Austin" share half."""
+    wa, wb = set(_WORD.findall(a.lower())), set(_WORD.findall(b.lower()))
+    if not wa or not wb:
+        return False
+    return len(wa & wb) / len(wa | wb) >= 0.65
 
 
 # ── Data objects ───────────────────────────────────────────────────────────────
@@ -279,6 +305,70 @@ class SemanticMemory:
         )
         record = await result.single()
         return bool(record and record["deleted_count"] > 0)
+
+    async def set_fact(
+        self,
+        session: AsyncSession,
+        *,
+        user_id: str,
+        category: str,
+        key: str,
+        value: str,
+        app_id: str = "default",
+        confidence: float = 1.0,
+        source_event_ids: list[str] | None = None,
+        source_type: str = SourceType.API_EXPLICIT,
+        source_meta: dict | None = None,
+        status: str = FactStatus.ACTIVE,
+    ) -> tuple[FactRecord, list[str]]:
+        """
+        Write a fact as the ONE value of (category, key) for this user.
+
+        ``upsert_fact`` merges on the exact value, so "MBA from Fuqua" and
+        "MBA from Fuqua at Duke" became two facts, and a new city sat beside
+        the old one. Here any other value under the same key is taken off
+        first. A rewording (most words shared) hands its source ids on, so
+        forgetting either event still finds the fact; a real change does
+        not -- the old value's events no longer back the new one.
+
+        Returns the written fact and the values it replaced.
+        """
+        rel = _rel_type(category)
+        result = await session.run(
+            f"""
+            MATCH (u:User {{user_id: $user_id, app_id: $app_id}})-[r:{rel}]->(f:Fact)
+            WHERE f.category = $category AND f.key = $key AND f.value <> $value
+            RETURN f.value AS value, coalesce(r.source_event_ids, []) AS ids
+            """,
+            user_id=user_id, app_id=app_id, category=category, key=key, value=value,
+        )
+        others = await result.data()
+        carried: list[str] = []
+        for other in others:
+            if _same_words(other["value"], value):
+                carried += [i for i in other["ids"] if i not in carried]
+        if others:
+            await session.run(
+                f"""
+                MATCH (u:User {{user_id: $user_id, app_id: $app_id}})-[r:{rel}]->(f:Fact)
+                WHERE f.category = $category AND f.key = $key AND f.value <> $value
+                DELETE r
+                WITH DISTINCT f
+                OPTIONAL MATCH (f)--(other)
+                WITH f, count(other) AS links
+                WHERE links = 0
+                DELETE f
+                """,
+                user_id=user_id, app_id=app_id, category=category, key=key, value=value,
+            )
+        ids = list(source_event_ids or [])
+        ids += [i for i in carried if i not in ids]
+        fact = await self.upsert_fact(
+            session, user_id=user_id, app_id=app_id, category=category, key=key,
+            value=value, confidence=confidence, source_event_ids=ids,
+            source_type=source_type, source_meta=source_meta, status=status,
+        )
+        return fact, [o["value"] for o in others]
 
     async def unlink_event(
         self,
@@ -514,7 +604,15 @@ class SemanticMemory:
 
         Source-type rules applied:
           - ui_manual facts are NEVER decayed (user explicitly stated them).
+          - agent_labelled facts are NEVER decayed: they live exactly as long
+            as the memory they were filed from (memory/labels.py).
           - cross_system facts decay at 2× the normal rate (behavioral patterns shift fast).
+
+        The half-life depends on what the fact is about. Who someone is,
+        where they live, their family, schooling, health, diet, faith and
+        pets change rarely and are corrected when they do: 6× the base
+        (360 days by default). Projects, goals and events are over soon:
+        the base (60 days). Everything else: 2× (120 days).
 
         Four-pass execution:
           1. Decay all eligible relationships (excluding ui_manual).
@@ -532,13 +630,17 @@ class SemanticMemory:
             """
             MATCH (u:User)-[r]->(f:Fact)
             WHERE r.last_seen_at IS NOT NULL
-              AND r.source_type <> 'ui_manual'
-            WITH r,
+              AND NOT coalesce(r.source_type, '') IN $never
+            WITH r, f,
                  CASE WHEN r.decayed_at IS NOT NULL
                            AND datetime(r.decayed_at) > datetime(r.last_seen_at)
                       THEN r.decayed_at ELSE r.last_seen_at END AS since,
-                 CASE WHEN r.source_type = 'cross_system' THEN $decay_days / 2.0
-                      ELSE $decay_days END AS effective_half_life
+                 CASE WHEN f.category IN $stable THEN $decay_days * 6.0
+                      WHEN f.category IN $transient THEN $decay_days
+                      ELSE $decay_days * 2.0 END AS by_kind
+            WITH r, since,
+                 CASE WHEN r.source_type = 'cross_system' THEN by_kind / 2.0
+                      ELSE by_kind END AS effective_half_life
             WITH r, effective_half_life,
                  duration.inDays(datetime(since), datetime()).days AS age_days
             SET r.confidence = r.confidence * exp(-$ln2 * toFloat(age_days) / effective_half_life),
@@ -547,6 +649,9 @@ class SemanticMemory:
             """,
             ln2=LN2,
             decay_days=float(decay_half_life_days),
+            never=list(NEVER_DECAYED),
+            stable=[str(c) for c in STABLE_CATEGORIES],
+            transient=[str(c) for c in TRANSIENT_CATEGORIES],
         )
         rec1 = await r1.single()
         decayed_count = int(rec1["decayed_count"]) if rec1 else 0
@@ -557,11 +662,12 @@ class SemanticMemory:
             MATCH (u:User)-[r]->(f:Fact)
             WHERE r.confidence < $staleness_threshold
               AND r.status = 'active'
-              AND r.source_type <> 'ui_manual'
+              AND NOT coalesce(r.source_type, '') IN $never
             SET r.status = 'pending'
             RETURN count(r) AS pending_count
             """,
             staleness_threshold=float(staleness_pending_threshold),
+            never=list(NEVER_DECAYED),
         )
         rec2 = await r2.single()
         pending_promoted_count = int(rec2["pending_count"]) if rec2 else 0
@@ -571,10 +677,12 @@ class SemanticMemory:
             """
             MATCH (u:User)-[r]->(f:Fact)
             WHERE r.confidence < $confidence_floor
+              AND NOT coalesce(r.source_type, '') IN $never
             DELETE r
             RETURN count(*) AS deleted_count
             """,
             confidence_floor=float(confidence_floor),
+            never=list(NEVER_DECAYED),
         )
         rec3 = await r3.single()
         deleted_count = int(rec3["deleted_count"]) if rec3 else 0

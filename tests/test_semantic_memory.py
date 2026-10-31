@@ -623,3 +623,59 @@ class TestSemanticMemoryDB:
         assert removed == 1
         assert [f.value for f in u11] == ["test-unlink-nosource"]
         assert [f.value for f in u12] == ["test-unlink-both"]
+
+    async def test_set_fact_replaces_a_changed_value_and_drops_its_sources(self):
+        async with self.driver.session() as session:
+            await self.semantic.set_fact(
+                session, user_id="test_u13", category="location", key="home",
+                value="test-set Lives in Cary", source_event_ids=["e-cary"],
+            )
+            _, replaced = await self.semantic.set_fact(
+                session, user_id="test_u13", category="location", key="home",
+                value="test-set Moved to Austin, Texas", source_event_ids=["e-austin"],
+            )
+            facts = await self.semantic.get_facts(session, "test_u13")
+            await session.run("MATCH (f:Fact) WHERE f.value STARTS WITH 'test-set' DETACH DELETE f")
+
+        assert replaced == ["test-set Lives in Cary"]
+        assert [(f.value, f.source_event_ids) for f in facts] == [
+            ("test-set Moved to Austin, Texas", ["e-austin"])]
+
+    async def test_set_fact_keeps_a_rewordings_sources(self):
+        async with self.driver.session() as session:
+            await self.semantic.set_fact(
+                session, user_id="test_u14", category="education", key="mba",
+                value="test-set MBA from Fuqua School of Business at Duke",
+                source_event_ids=["e1"],
+            )
+            await self.semantic.set_fact(
+                session, user_id="test_u14", category="education", key="mba",
+                value="test-set MBA from Fuqua School of Business at Duke University",
+                source_event_ids=["e2"],
+            )
+            facts = await self.semantic.get_facts(session, "test_u14")
+            await session.run("MATCH (f:Fact) WHERE f.value STARTS WITH 'test-set' DETACH DELETE f")
+
+        assert len(facts) == 1 and sorted(facts[0].source_event_ids) == ["e1", "e2"]
+
+    async def test_decay_spares_labelled_facts_and_is_slow_for_stable_kinds(self):
+        async with self.driver.session() as session:
+            for category, key, source in (("location", "home", "agent_labelled"),
+                                          ("location", "city", "api_explicit"),
+                                          ("project", "active", "api_explicit")):
+                await self.semantic.upsert_fact(
+                    session, user_id="test_u15", category=category, key=key,
+                    value=f"test-decay {key}", source_type=source,
+                )
+            await session.run(
+                "MATCH (u:User {user_id: 'test_u15'})-[r]->() "
+                "SET r.last_seen_at = toString(datetime() - duration({days: 60})), "
+                "r.decayed_at = null")
+            await self.semantic.decay_stale_facts(session, decay_half_life_days=60.0)
+            facts = {f.key: f.confidence for f in await self.semantic.get_facts(
+                session, "test_u15", min_confidence=0.0)}
+            await session.run("MATCH (f:Fact) WHERE f.value STARTS WITH 'test-decay' DETACH DELETE f")
+
+        assert facts["home"] == 1.0                       # labelled: never decayed
+        assert 0.85 < facts["city"] < 0.92                # stable: 360-day half-life
+        assert 0.45 < facts["active"] < 0.55              # transient: 60-day half-life

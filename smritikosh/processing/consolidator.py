@@ -12,6 +12,24 @@ Result: 10 raw events → 1 consolidated event + updated knowledge graph.
 Memory shrinks and improves over time rather than growing indefinitely.
 
 Run: periodically via the Scheduler (e.g. every hour).
+
+What makes the facts worth having, each one a failure seen in real data:
+
+  * THE SAME THING KEEPS THE SAME KEY. Every fact the user already has
+    (up to MAX_KNOWN_FACTS) is shown with its key, not the first 20: with
+    20 shown of 99, the rest were invented again under new keys.
+  * ONE VALUE PER KEY. A fact is written with ``set_fact``: a new value
+    replaces the old one under the same key instead of sitting beside it.
+  * WHOSE FACT. ``subject`` names the person when it is not the user, and
+    their name goes into the key (``naina.email``): a daughter's date of
+    birth must never land on the user's own.
+  * ONLY ABOUT THE USER'S LIFE. No facts about the conversation or the
+    system (warnings, "contradictions"), dropped by the prompt and by a
+    key filter; no one-off booking codes. Nothing at all is a good answer.
+  * Statements a client filed with a topic (memory/labels.py) are already
+    consolidated when they arrive, so this never rewords them.
+  * The system's own findings (SYSTEM_SOURCE_TYPES: a reflection's
+    "contradiction warning") are marked done unread: not facts about the user.
 """
 
 import logging
@@ -22,9 +40,10 @@ from datetime import datetime, timezone
 from neo4j import AsyncSession as NeoSession
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from smritikosh.db.models import Event, RelationType
+from smritikosh.db.models import SYSTEM_SOURCE_TYPES, Event, RelationType, SourceType
 from smritikosh.llm.adapter import LLMAdapter
 from smritikosh.memory.episodic import EpisodicMemory
+from smritikosh.memory.labels import fact_key
 from smritikosh.memory.narrative import NarrativeMemory
 from smritikosh.memory.semantic import FactRecord, SemanticMemory
 
@@ -34,6 +53,10 @@ logger = logging.getLogger(__name__)
 
 MIN_EVENTS_TO_CONSOLIDATE = 5     # skip if fewer unconsolidated events exist
 BATCH_SIZE = 10                    # events processed per LLM call
+MAX_KNOWN_FACTS = 150              # already-known facts shown, to reuse their keys
+
+#: Keys that are the extractor talking about itself, not about the user.
+_META_KEY = re.compile(r"contradiction|warning|error|mismatch|system|assistant|conversation")
 
 _CONSOLIDATION_SCHEMA = (
     "summary (string): 1-2 sentence overview of the entire batch. "
@@ -64,7 +87,10 @@ _CONSOLIDATION_SCHEMA = (
     "lifestyle (overall life pattern — nomadic/minimalist/urban), "
     "event (life milestone/anniversary/upcoming appointment), "
     "tool (software/app/platform/tech stack used). "
-    "key (short snake_case label), value (concise string), confidence (0.0–1.0), "
+    "key (short snake_case label, the SAME key as an already-known fact about "
+    "the same thing), value (concise string), confidence (0.0–1.0), "
+    "subject (string): whose fact it is when it is NOT the user's own -- the "
+    "person's first name, e.g. 'Naina'; empty for the user's own. "
     "source_indices (list of 0-based ints): ONLY the indices of interactions where "
     "this fact is explicitly stated or unmistakably implied in that specific text. "
     "Do NOT include an index just because the interaction is in the same batch. "
@@ -74,7 +100,12 @@ _CONSOLIDATION_SCHEMA = (
     "from_index (0-based int matching the interaction number), "
     "to_index (0-based int), "
     "relation_type (caused|preceded|related|contradicts). "
-    "Only include clear, durable facts and unambiguous causal or temporal relationships."
+    "Only include clear, durable facts and unambiguous causal or temporal relationships. "
+    "Never facts about the conversation, the assistant, the system, warnings, data "
+    "problems or contradictions. Never one-off codes, booking or order references, "
+    "or reservations. Never passwords, tokens, card numbers or ID numbers; which "
+    "bank or brokerage they use, and its account numbers, are fine. An empty facts "
+    "list is a good answer when nothing durable was said."
 )
 
 _CONSOLIDATION_EXAMPLE = {
@@ -83,11 +114,13 @@ _CONSOLIDATION_EXAMPLE = {
         "User introduced smritikosh, an AI memory startup.",
         "User mentioned a preference for green UI colours.",
         "User mentioned they are vegetarian.",
+        "User said their sister Meera lives in Pune.",
     ],
     "facts": [
-        {"category": "project",    "key": "active",      "value": "smritikosh", "confidence": 0.95, "source_indices": [0]},
-        {"category": "preference", "key": "ui_color",    "value": "green",      "confidence": 0.9,  "source_indices": [1]},
-        {"category": "diet",       "key": "restriction", "value": "vegetarian", "confidence": 0.95, "source_indices": [2]},
+        {"category": "project",    "key": "active",      "value": "smritikosh", "confidence": 0.95, "source_indices": [0], "subject": ""},
+        {"category": "preference", "key": "ui_color",    "value": "green",      "confidence": 0.9,  "source_indices": [1], "subject": ""},
+        {"category": "diet",       "key": "restriction", "value": "vegetarian", "confidence": 0.95, "source_indices": [2], "subject": ""},
+        {"category": "location",   "key": "city",        "value": "Pune",       "confidence": 0.9,  "source_indices": [3], "subject": "Meera"},
     ],
     "links": [
         {"from_index": 0, "to_index": 1, "relation_type": "preceded"},
@@ -172,6 +205,17 @@ class Consolidator:
         )
         result.events_processed = len(events)
 
+        # The system's own findings are not facts about the user: they are
+        # marked done and never read (a reflection's "contradiction warning"
+        # became a fact once).
+        own = [e for e in events if e.source_type not in SYSTEM_SOURCE_TYPES]
+        system = [e for e in events if e.source_type in SYSTEM_SOURCE_TYPES]
+        if system:
+            await self.episodic.mark_consolidated(
+                pg_session, [e.id for e in system], user_id=user_id, app_id=app_id)
+            result.events_consolidated += len(system)
+        events = own
+
         # ── 2. Guard ──────────────────────────────────────────────────────
         if len(events) < self.min_events:
             result.skipped = True
@@ -246,7 +290,10 @@ class Consolidator:
         profile = await self.semantic.get_user_profile(
             neo_session, user_id, app_id, min_confidence=0.5
         )
-        existing_facts = (profile.facts if profile else [])[:20]
+        # Every key the user has, so the same thing keeps the same key: with
+        # only the first 20 shown, the other 79 were invented again
+        # (naina_email beside naina_personal_email).
+        existing_facts = (profile.facts if profile else [])[:MAX_KNOWN_FACTS]
 
         prompt = _build_consolidation_prompt(batch, existing_facts)
 
@@ -321,15 +368,21 @@ class Consolidator:
                     fd.get("key", ""), fd.get("value", ""), raw_indices, batch
                 )
                 fact_source_ids = [batch_event_ids[i] for i in verified_indices]
-                await self.semantic.upsert_fact(
+                key = fact_key(fd["key"], fd.get("subject"))
+                if not key or _META_KEY.search(key):
+                    continue
+                # One value per (category, key): a new city replaces the old,
+                # a rewording keeps its sources (SemanticMemory.set_fact).
+                await self.semantic.set_fact(
                     neo_session,
                     user_id=user_id,
                     app_id=app_id,
                     category=fd["category"],
-                    key=fd["key"],
+                    key=key,
                     value=fd["value"],
                     confidence=float(fd.get("confidence", 0.8)),
                     source_event_ids=fact_source_ids,
+                    source_type=SourceType.PASSIVE_DISTILLATION,
                 )
                 facts_stored += 1
             except (KeyError, ValueError) as exc:
@@ -452,7 +505,7 @@ def _build_consolidation_prompt(
             "Only create a new key when the concept is genuinely not covered below:"
         )
         for f in existing_facts:
-            lines.append(f"  - {f.category}/{f.key}: {f.value}")
+            lines.append(f"  - {f.category}/{f.key}: {f.value[:60]}")
 
     lines.append(
         f"\nReturn JSON with: summary (1-2 sentence overview of all {len(batch)} interactions), "

@@ -198,6 +198,7 @@ class TestConsolidateStage:
         episodic.mark_consolidated = AsyncMock()
         episodic.update_embedding = AsyncMock()
         semantic.upsert_fact = AsyncMock(return_value=_make_fact_record())
+        semantic.set_fact = AsyncMock(return_value=(_make_fact_record(), []))
         narrative.create_link = AsyncMock(return_value=MagicMock())
 
         consolidator = Consolidator(
@@ -232,7 +233,7 @@ class TestConsolidateStage:
         consolidator, _, semantic, pg, neo, _ = self._make_deps()
         result = await consolidator.run(pg, neo, user_id=USER_ID, app_id=APP_ID)
         assert result.facts_distilled > 0
-        semantic.upsert_fact.assert_called()
+        semantic.set_fact.assert_called()
 
     @pytest.mark.asyncio
     async def test_consolidation_re_embeds_summary(self):

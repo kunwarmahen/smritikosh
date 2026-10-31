@@ -44,7 +44,7 @@ from sqlalchemy import delete as sql_delete, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from smritikosh.config import settings as _settings
-from smritikosh.db.models import Event, SourceType
+from smritikosh.db.models import SYSTEM_SOURCE_TYPES, Event, SourceType
 
 
 @dataclass
@@ -322,6 +322,7 @@ class EpisodicMemory:
         from_date: Optional[datetime] = None,
         to_date: Optional[datetime] = None,
         order: str = "created",
+        own_only: bool = False,
     ) -> list[Event]:
         """Return the most recent events for a user, newest first.
 
@@ -333,8 +334,11 @@ class EpisodicMemory:
             app_ids:   If provided, restrict to events in these app namespaces.
             from_date: If provided, only return events created on or after this datetime.
             to_date:   If provided, only return events created on or before this datetime.
+            own_only:  Leave out what the system wrote itself (SYSTEM_SOURCE_TYPES).
         """
         q = select(Event).where(Event.user_id == user_id)
+        if own_only:
+            q = q.where(Event.source_type.not_in(list(SYSTEM_SOURCE_TYPES)))
         if app_ids is not None:
             q = q.where(Event.app_id.in_(app_ids))
         if order == "active":
@@ -430,6 +434,7 @@ class EpisodicMemory:
         weights_override: "HybridWeights | None" = None,
         from_date: Optional[datetime] = None,
         to_date: Optional[datetime] = None,
+        own_only: bool = False,
     ) -> list[SearchResult]:
         """
         Two-phase hybrid retrieval: ANN candidate fetch → full hybrid re-rank.
@@ -489,6 +494,9 @@ class EpisodicMemory:
         if to_date is not None:
             date_filter += "\n                    AND created_at <= :to_date"
             params["to_date"] = to_date
+        if own_only:
+            date_filter += "\n                    AND NOT (source_type = ANY(:system_sources))"
+            params["system_sources"] = [str(t) for t in SYSTEM_SOURCE_TYPES]
 
         # Two-phase query:
         # Inner: pure cosine ORDER BY → HNSW index fires, returns candidates pool

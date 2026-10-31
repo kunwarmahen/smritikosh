@@ -5,7 +5,7 @@ These mirror the API response schemas but live in the SDK layer so callers
 don't need to depend on the server-side `smritikosh.api.schemas` module.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -27,6 +27,7 @@ class RecentEvent:
     consolidated: bool
     created_at: str
     last_used_at: str | None = None
+    metadata: dict = field(default_factory=dict)
 
 
 @dataclass

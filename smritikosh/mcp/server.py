@@ -216,9 +216,15 @@ async def remember(
     keeping and phrased it as one self-contained sentence
     (e.g. "Lives near RDU (Raleigh-Durham airport)").
 
+    A statement filed with a ``topic`` in its metadata goes straight into
+    the knowledge graph as a fact, under that topic's category, and lives
+    as long as the memory: ``about`` (whose fact), ``key`` (which one) and
+    ``lifetime_days`` (how long it lasts unused) ride along too.
+
     Args:
         statement: The fact, as one standalone sentence.
-        metadata:  Optional extra context, e.g. {"kind": "preference"}.
+        metadata:  Optional extra context, e.g. {"topic": "home"} or
+                   {"topic": "contact", "about": "Naina", "key": "email"}.
         user_id:   Override the default user (admin API keys only).
 
     Returns the stored memory's ``id`` and the ``statement``.
@@ -248,18 +254,20 @@ async def list_memories(
         limit:   Maximum memories to return (1-500, default 50).
         user_id: Override the default user (admin API keys only).
 
-    Returns ``memories``: each with ``id``, ``statement``, ``created_at`` and
-    ``last_used_at`` (null when never used).
+    Returns ``memories``: each with ``id``, ``statement``, ``created_at``,
+    ``last_used_at`` (null when never used) and the ``metadata`` it was
+    stored with (its ``topic`` and ``slot``, when it was labelled).
     """
     state = _require_state()
     events = await state.client.get_recent(
         user_id=user_id or state.config.user_id,
         limit=max(1, min(limit, 500)),
         order="active",
+        own_only=True,   # the user's memories, not Smritikosh's own reflections
     )
     return {"memories": [
         {"id": e.event_id, "statement": e.raw_text, "created_at": e.created_at,
-         "last_used_at": e.last_used_at}
+         "last_used_at": e.last_used_at, "metadata": e.metadata}
         for e in events
     ]}
 
@@ -350,6 +358,7 @@ async def recall(
         user_id=user_id or state.config.user_id,
         query=query,
         limit=limit,
+        own_only=True,   # the user's memories, not Smritikosh's own reflections
     )
     return asdict(result)
 

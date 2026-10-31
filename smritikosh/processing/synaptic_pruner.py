@@ -14,6 +14,12 @@ Age counts from the event's last activity: the later of created_at and
 last_used_at. A memory a client said an answer drew on (POST /memory/used)
 is not old, whatever year it was written.
 
+A labelled event (memory/labels.py) is never judged by importance: the
+client that filed it said how long it lasts. It goes once its
+``lifetime_days`` have passed since it was written or last used, and the
+fact it filed in the graph goes with it. One with no lifetime stays
+until the client forgets or replaces it.
+
 Design decisions:
   - Only consolidated events are pruned — raw unconsolidated events are
     preserved until the Consolidator has processed them.
@@ -68,6 +74,7 @@ class PruningResult:
     events_evaluated: int = 0
     events_pruned: int = 0
     facts_purged: int = 0
+    events_lapsed: int = 0      # labelled events past their lifetime
     skipped: bool = False
     thresholds: PruningThresholds | None = field(default=None)
 
@@ -162,6 +169,7 @@ class SynapticPruner:
         testing (e.g. min_age_days=0 to prune fresh events immediately).
         """
         result = PruningResult(user_id=user_id, app_id=app_id)
+        result.events_lapsed = await self._lapse(session, user_id, app_id, neo_session)
 
         # Compute adaptive thresholds (or use caller-supplied overrides)
         event_count = await self._count_user_events(session, user_id, app_id)
@@ -345,10 +353,69 @@ class SynapticPruner:
                 ) < cutoff_sql,
                 Event.importance_score < thresholds.importance_threshold,
                 Event.recall_count < thresholds.min_recall_count,
+                ~Event.event_metadata.has_key("topic"),   # the client's lifetime rules
             )
             .order_by(Event.importance_score.asc())  # lowest importance first
         )
         return list(result.scalars().all())
+
+    async def _lapse(
+        self,
+        session: AsyncSession,
+        user_id: str,
+        app_id: str,
+        neo_session=None,
+    ) -> int:
+        """Delete this user's labelled events unused past their lifetime,
+        and the facts they filed. Returns how many went."""
+        from smritikosh.memory.labels import lifetime_days
+
+        now = datetime.now(timezone.utc)
+        gone = 0
+        for event in await self._get_lifetime_candidates(session, user_id, app_id):
+            days = lifetime_days(event.event_metadata)
+            if days is None:
+                continue
+            since = max(t for t in (event.created_at, event.last_used_at) if t is not None)
+            if since.tzinfo is None:
+                since = since.replace(tzinfo=timezone.utc)
+            if (now - since).total_seconds() / 86400.0 <= days:
+                continue
+            if not await self.episodic.delete(session, event.id):
+                continue
+            gone += 1
+            if self.semantic and neo_session is not None:
+                try:
+                    await self.semantic.unlink_event(
+                        neo_session, user_id=user_id, event_id=str(event.id), app_id=app_id,
+                    )
+                except Exception as exc:
+                    logger.warning("Lapsed event's facts not unlinked: %s", exc,
+                                   extra={"user_id": user_id, "event_id": str(event.id)})
+            if self.audit:
+                from smritikosh.audit.logger import AuditEvent, EventType
+                await self.audit.emit(AuditEvent(
+                    event_type=EventType.MEMORY_PRUNED,
+                    user_id=user_id,
+                    app_id=app_id,
+                    event_id=str(event.id),
+                    payload={"reason": "lifetime", "lifetime_days": days,
+                             "raw_text_preview": (event.raw_text or "")[:200]},
+                ))
+        return gone
+
+    async def _get_lifetime_candidates(
+        self, session: AsyncSession, user_id: str, app_id: str,
+    ) -> list[Event]:
+        """This user's events that carry a client's ``lifetime_days``."""
+        rows = await session.execute(
+            select(Event).where(
+                Event.user_id == user_id,
+                Event.app_id == app_id,
+                Event.event_metadata.has_key("lifetime_days"),
+            )
+        )
+        return list(rows.scalars().all())
 
     def _should_prune(self, event: Event, now: datetime, thresholds: PruningThresholds) -> bool:
         """

@@ -73,8 +73,8 @@ def make_mock_llm(beliefs: list[dict] | None = None) -> AsyncMock:
     llm = AsyncMock()
     llm.extract_structured = AsyncMock(return_value={
         "beliefs": beliefs if beliefs is not None else [
-            {"statement": "believes in iterative development", "category": "value", "confidence": 0.85},
-            {"statement": "assumes AI will transform work", "category": "worldview", "confidence": 0.9},
+            {"statement": "believes in iterative development", "category": "value", "evidence": [1, 2, 3]},
+            {"statement": "assumes AI will transform work", "category": "worldview", "evidence": [1, 2, 3]},
         ]
     })
     return llm
@@ -228,7 +228,7 @@ class TestBeliefMinerSuccess:
         events = [make_event() for _ in range(3)]
         session = make_mock_session(events)
         llm = make_mock_llm(beliefs=[
-            {"statement": "values speed", "category": "TOTALLY_INVALID", "confidence": 0.8},
+            {"statement": "values speed", "category": "TOTALLY_INVALID", "evidence": [1, 2, 3]},
         ])
         miner = BeliefMiner(llm=llm, semantic=make_mock_semantic())
 
@@ -242,8 +242,8 @@ class TestBeliefMinerSuccess:
         events = [make_event() for _ in range(3)]
         session = make_mock_session(events)
         llm = make_mock_llm(beliefs=[
-            {"statement": "", "category": "value", "confidence": 0.8},
-            {"statement": "values speed", "category": "value", "confidence": 0.8},
+            {"statement": "", "category": "value", "evidence": [1, 2, 3]},
+            {"statement": "values speed", "category": "value", "evidence": [1, 2, 3]},
         ])
         miner = BeliefMiner(llm=llm, semantic=make_mock_semantic())
 
@@ -252,18 +252,36 @@ class TestBeliefMinerSuccess:
         assert result.beliefs_upserted == 1   # empty statement skipped
 
     @pytest.mark.asyncio
-    async def test_confidence_clamped_to_range(self):
-        """Confidence values outside [0,1] from LLM should be clamped."""
+    async def test_confidence_comes_from_evidence_not_the_model(self):
+        """The model said 1.5 (and used to say 1.0 for everything); three
+        cited memories make 0.70."""
         events = [make_event() for _ in range(3)]
         session = make_mock_session(events)
         llm = make_mock_llm(beliefs=[
-            {"statement": "values boldness", "category": "value", "confidence": 1.5},
+            {"statement": "values boldness", "category": "value", "confidence": 1.5,
+             "evidence": [1, 2, 3]},
         ])
         miner = BeliefMiner(llm=llm, semantic=make_mock_semantic())
 
         result = await miner.mine(session, AsyncMock(), user_id="u1")
 
-        assert result.beliefs_upserted == 1   # clamped, not rejected
+        assert result.beliefs_upserted == 1
+        insert = session.execute.call_args_list[-1].args[0]
+        assert insert.compile().params["confidence"] == 0.7
+
+    @pytest.mark.asyncio
+    async def test_a_belief_shown_by_too_few_memories_is_dropped(self):
+        events = [make_event() for _ in range(5)]
+        session = make_mock_session(events)
+        llm = make_mock_llm(beliefs=[
+            {"statement": "values speed", "category": "value", "evidence": [1, 1, 2]},
+            {"statement": "values quiet", "category": "value"},
+        ])
+        miner = BeliefMiner(llm=llm, semantic=make_mock_semantic())
+
+        result = await miner.mine(session, AsyncMock(), user_id="u1")
+
+        assert result.beliefs_upserted == 0 and result.beliefs_unsupported == 2
 
 
 # ── BeliefMiner.mine — LLM failure ────────────────────────────────────────────
@@ -496,26 +514,21 @@ class TestBeliefEvidenceTracking:
         assert compiled_params["evidence_event_ids"] == []
 
     @pytest.mark.asyncio
-    async def test_mine_extracts_ids_from_all_fetched_events(self):
-        """All event IDs from the fetch window are passed as evidence, not just one."""
-        event_ids_expected = []
-        events = []
-        for _ in range(3):
-            e = make_event()
-            events.append(e)
-            event_ids_expected.append(str(e.id))
-
+    async def test_evidence_is_the_memories_cited_not_every_one_shown(self):
+        """Every event in the prompt used to be stored as every belief's
+        evidence; now only the ones the belief cites are."""
+        events = [make_event() for _ in range(5)]
         session = make_mock_session(events)
-        miner = BeliefMiner(llm=make_mock_llm(), semantic=make_mock_semantic())
+        llm = make_mock_llm(beliefs=[
+            {"statement": "values speed", "category": "value", "evidence": [2, 4, 5, 99]},
+        ])
+        miner = BeliefMiner(llm=llm, semantic=make_mock_semantic())
 
         await miner.mine(session, AsyncMock(), user_id="u1")
 
-        # All 3 event IDs should appear in each upsert call's evidence_event_ids
-        upsert_execute_calls = session.execute.call_args_list[3:]  # skip the 3 SELECTs
-        for call in upsert_execute_calls:
-            insert_stmt = call.args[0]
-            compiled_params = insert_stmt.compile().params
-            assert compiled_params["evidence_event_ids"] == event_ids_expected
+        insert = session.execute.call_args_list[-1].args[0]
+        assert insert.compile().params["evidence_event_ids"] == [
+            str(events[1].id), str(events[3].id), str(events[4].id)]
 
 
 # ── DB integration tests ──────────────────────────────────────────────────────
@@ -678,3 +691,97 @@ class TestRejectedBeliefs:
         compiled = str(stmt.compile(compile_kwargs={"literal_binds": False}))
         assert "ON CONFLICT" in compiled
         assert "user_beliefs.status" in compiled
+
+
+# ── Same meaning: a rewording reinforces, a retracted one stays gone ─────────
+
+
+def _llm_with_vectors(beliefs: list[dict], vectors: dict[str, list[float]]) -> AsyncMock:
+    llm = make_mock_llm(beliefs=beliefs)
+    llm.embed = AsyncMock(side_effect=lambda text: vectors[text])
+    return llm
+
+
+def make_active_belief(statement: str, evidence: list[str] | None = None) -> UserBelief:
+    return UserBelief(
+        id=uuid.uuid4(), user_id="u1", app_id="default", statement=statement,
+        category="value", confidence=0.7, evidence_count=len(evidence or []),
+        evidence_event_ids=list(evidence or []), status="active",
+        first_inferred_at=datetime.now(timezone.utc),
+        last_updated_at=datetime.now(timezone.utc),
+    )
+
+
+class TestSameMeaning:
+    @pytest.mark.asyncio
+    async def test_a_rewording_reinforces_the_belief_already_held(self):
+        events = [make_event() for _ in range(4)]
+        held = make_active_belief("values seeing data as charts", [str(events[0].id)])
+        session = make_mock_session(events, existing_beliefs=[held])
+        llm = _llm_with_vectors(
+            [{"statement": "prefers financial data as visual charts", "category": "value",
+              "evidence": [2, 3, 4]}],
+            {"prefers financial data as visual charts": [1.0, 0.1],
+             "values seeing data as charts": [0.99, 0.12]})
+        miner = BeliefMiner(llm=llm, semantic=make_mock_semantic())
+
+        result = await miner.mine(session, AsyncMock(), user_id="u1")
+
+        assert result.beliefs_upserted == 0 and result.beliefs_reinforced == 1
+        assert held.evidence_count == 4 and held.confidence == 0.8
+
+    @pytest.mark.asyncio
+    async def test_a_different_belief_is_new(self):
+        events = [make_event() for _ in range(3)]
+        held = make_active_belief("values seeing data as charts")
+        session = make_mock_session(events, existing_beliefs=[held])
+        llm = _llm_with_vectors(
+            [{"statement": "values privacy", "category": "value", "evidence": [1, 2, 3]}],
+            {"values privacy": [0.0, 1.0], "values seeing data as charts": [1.0, 0.0]})
+        miner = BeliefMiner(llm=llm, semantic=make_mock_semantic())
+
+        result = await miner.mine(session, AsyncMock(), user_id="u1")
+
+        assert result.beliefs_upserted == 1 and result.beliefs_reinforced == 0
+
+    @pytest.mark.asyncio
+    async def test_a_rewording_of_a_retracted_belief_stays_gone(self):
+        events = [make_event() for _ in range(3)]
+        rejected = [make_rejected_belief("assumes remote work is always better")]
+        session = make_mock_session(events, rejected_beliefs=rejected)
+        llm = _llm_with_vectors(
+            [{"statement": "believes working remotely is best", "category": "value",
+              "evidence": [1, 2, 3]}],
+            {"believes working remotely is best": [1.0, 0.0],
+             "assumes remote work is always better": [0.97, 0.05]})
+        miner = BeliefMiner(llm=llm, semantic=make_mock_semantic())
+
+        result = await miner.mine(session, AsyncMock(), user_id="u1")
+
+        assert result.beliefs_upserted == 0
+
+
+class TestTidy:
+    @pytest.mark.asyncio
+    async def test_near_duplicates_fold_into_the_one_with_most_evidence(self):
+        from smritikosh.processing.belief_miner import tidy_beliefs
+
+        strong = make_active_belief("values charts over tables", ["e1", "e2", "e3"])
+        weak = make_active_belief("prefers charts to tables", ["e4"])
+        other = make_active_belief("values privacy", ["e5"])
+        session = AsyncMock()
+        rows = MagicMock()
+        rows.scalars.return_value.all.return_value = [weak, other, strong]
+        session.execute = AsyncMock(return_value=rows)
+        session.delete = AsyncMock()
+        llm = AsyncMock()
+        vectors = {"values charts over tables": [1.0, 0.0], "prefers charts to tables": [0.98, 0.1],
+                   "values privacy": [0.0, 1.0]}
+        llm.embed = AsyncMock(side_effect=lambda text: vectors[text])
+
+        folded = await tidy_beliefs(session, llm, user_id="u1")
+
+        assert folded == 1
+        session.delete.assert_awaited_once_with(weak)
+        assert strong.evidence_event_ids == ["e1", "e2", "e3", "e4"]
+

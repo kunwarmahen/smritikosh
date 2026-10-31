@@ -50,6 +50,7 @@ from smritikosh.db.neo4j import get_neo4j_session
 from smritikosh.db.postgres import get_session
 from smritikosh.memory.episodic import EpisodicMemory
 from smritikosh.memory.hippocampus import Hippocampus
+from smritikosh.memory.labels import AGENT_LABELLED, labelled_fact
 from smritikosh.memory.semantic import SemanticMemory
 from smritikosh.api.deps import get_semantic
 
@@ -116,13 +117,42 @@ async def capture_event(
         logger.exception("Hippocampus encode failed", extra={"user_id": body.user_id})
         raise HTTPException(status_code=500, detail=f"Memory encoding failed: {exc}") from exc
 
+    facts = len(result.facts)
+    fact = labelled_fact(body.metadata, body.content) if not extract else None
+    if fact is not None:
+        facts += await _file_labelled(hippocampus, pg, neo, body, result.event, fact)
+
     return EventResponse(
         event_id=str(result.event.id),
         user_id=body.user_id,
         importance_score=result.importance_score,
-        facts_extracted=len(result.facts),
+        facts_extracted=facts,
         extraction_failed=result.extraction_failed,
     )
+
+
+async def _file_labelled(hippocampus, pg, neo, body, event, fact: dict) -> int:
+    """A labelled statement files itself in the graph and counts as
+    consolidated (memory/labels.py). Neo4j down: the event stays
+    unconsolidated and consolidation reads it later, as any other."""
+    try:
+        await hippocampus.semantic.set_fact(
+            neo, user_id=body.user_id, app_id=body.app_id,
+            category=fact["category"], key=fact["key"], value=fact["value"],
+            confidence=fact["confidence"], source_event_ids=[str(event.id)],
+            source_type=AGENT_LABELLED,
+        )
+        # its own anchor: search ranks consolidated non-anchors down, and a
+        # labelled statement is nobody's leftover
+        await hippocampus.episodic.mark_consolidated(
+            pg, [event.id], user_id=body.user_id, app_id=body.app_id,
+            anchor_event_id=event.id,
+        )
+        return 1
+    except Exception as exc:
+        logger.warning("Labelled statement not filed in the graph: %s", exc,
+                       extra={"user_id": body.user_id, "event_id": str(event.id)})
+        return 0
 
 
 @router.post("/fact", response_model=FactResponse, status_code=201)
@@ -384,6 +414,7 @@ async def search_memory(
         top_k=body.limit,
         from_date=body.from_date,
         to_date=body.to_date,
+        own_only=body.own_only,
     )
 
     items = [
@@ -594,6 +625,8 @@ async def get_recent_events(
     order: Annotated[str, Query(pattern="^(created|active)$",
                                 description="created: newest written first; "
                                             "active: most recently used or written first")] = "created",
+    own_only: Annotated[bool, Query(description="Leave out what Smritikosh's own agents "
+                                                "wrote (reflections, verdicts)")] = False,
     episodic: Annotated[EpisodicMemory, Depends(get_episodic)] = None,
     pg: Annotated[AsyncSession, Depends(get_session)] = None,
     current_user: Annotated[dict, Depends(get_current_user)] = None,
@@ -601,7 +634,8 @@ async def get_recent_events(
     """Return the most recent memory events for a user, newest first."""
     assert_self_or_admin(current_user, user_id)
     resolved_app_ids = app_ids or current_user.get("app_ids")
-    events = await episodic.get_recent(pg, user_id, resolved_app_ids, limit=limit, order=order)
+    events = await episodic.get_recent(pg, user_id, resolved_app_ids, limit=limit, order=order,
+                                       own_only=own_only)
 
     return RecentEventsResponse(
         user_id=user_id,
@@ -616,6 +650,7 @@ async def get_recent_events(
                 cluster_id=e.cluster_id,
                 cluster_label=e.cluster_label,
                 last_used_at=e.last_used_at.isoformat() if e.last_used_at else None,
+                metadata=e.event_metadata or {},
             )
             for e in events
         ],

@@ -204,7 +204,9 @@ async def test_recall(mcp_state):
     assert result["results"][0]["hybrid_score"] == 0.82
 
     payload = json.loads(route.calls.last.request.content)
-    assert payload == {"user_id": "alice", "query": "editor", "app_ids": ["default"], "limit": 5}
+    # only the user's own memories, never Smritikosh's reflections about them
+    assert payload == {"user_id": "alice", "query": "editor", "app_ids": ["default"], "limit": 5,
+                       "own_only": True}
 
 
 # ── get_context ───────────────────────────────────────────────────────────────
@@ -277,7 +279,7 @@ async def test_list_memories(mcp_state):
 
     assert result == {"memories": [{"id": "evt-002", "statement": "Uses uv, not pip.",
                                     "created_at": "2026-09-29T10:00:00+00:00",
-                                    "last_used_at": None}]}
+                                    "last_used_at": None, "metadata": {}}]}
     params = route.calls.last.request.url.params
     assert params["limit"] == "20"
     assert params.get_list("app_ids") == ["default"]
