@@ -1,3 +1,4 @@
+import { MemoryViewCard } from "@/components/admin/MemoryViewCard";
 import { UserTable } from "@/components/admin/UserTable";
 
 export default function AdminUsersPage() {
@@ -10,6 +11,9 @@ export default function AdminUsersPage() {
         </p>
       </div>
       <UserTable />
+      <div className="max-w-xl mt-6">
+        <MemoryViewCard userId="*" />
+      </div>
     </div>
   );
 }

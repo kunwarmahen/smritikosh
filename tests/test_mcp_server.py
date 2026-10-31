@@ -142,7 +142,7 @@ async def test_tools_fail_without_lifespan():
 async def test_tools_registered():
     tools = {t.name for t in await mcp.list_tools()}
     assert tools == {"store_memory", "remember", "recall", "get_context",
-                     "list_memories", "forget", "used"}
+                     "list_memories", "forget", "used", "profile"}
 
 
 # ── store_memory ──────────────────────────────────────────────────────────────

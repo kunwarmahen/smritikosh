@@ -5,6 +5,8 @@ POST /admin/consolidate    Run memory consolidation for one user or all active u
 POST /admin/prune          Run synaptic pruning for one user or all users.
 POST /admin/cluster        Run memory clustering for one user or all users.
 POST /admin/mine-beliefs   Run belief mining for one user or all users.
+GET  /admin/memory-view/{user_id}   What a prompt is given about them ("*": everyone)
+PUT  /admin/memory-view/{user_id}   Set it: facts, beliefs, memories, keep_by
 
 These endpoints expose the same logic that the MemoryScheduler runs automatically,
 useful for debugging, testing, or forcing an immediate maintenance cycle.
@@ -37,6 +39,7 @@ from smritikosh.api.schemas import (
 from smritikosh.auth.deps import require_admin
 from smritikosh.config import settings
 from smritikosh.db.models import AppUser, LlmUsage, UserQuota
+from smritikosh.api.schemas import MemoryViewUpdate
 from smritikosh.db.postgres import get_session
 from smritikosh.processing.reconsolidation import ReconsolidationEngine
 from smritikosh.processing.scheduler import MemoryScheduler
@@ -870,3 +873,47 @@ async def rotate_connector_keys(
         return {"queued": True, "job_id": job.job_id}
     result = await _rotate_connector_tokens()
     return {"queued": False, **result}
+
+
+# ── Memory view: what a prompt is given, what keeps a memory ──────────────────
+
+
+@router.get("/memory-view/{user_id}", summary="What a prompt is given about a user")
+async def get_memory_view(
+    user_id: str,
+    pg: Annotated[AsyncSession, Depends(get_session)],
+    _admin: Annotated[dict, Depends(require_admin)],
+    app_id: Annotated[str, Query()] = "default",
+) -> dict:
+    """
+    The view that applies (``effective``), where each field of it comes
+    from (``source``: user, everyone or default) and what this row sets
+    itself (``overrides``, null where it inherits). ``*`` is everyone's.
+    """
+    from smritikosh.memory import views
+
+    view, source = await views.effective(pg, user_id, app_id)
+    return {"user_id": user_id, "app_id": app_id, "effective": view.as_dict(),
+            "source": source, "overrides": await views.overrides(pg, user_id, app_id)}
+
+
+@router.put("/memory-view/{user_id}", summary="Set what a prompt is given about a user")
+async def put_memory_view(
+    user_id: str,
+    body: MemoryViewUpdate,
+    pg: Annotated[AsyncSession, Depends(get_session)],
+    _admin: Annotated[dict, Depends(require_admin)],
+) -> dict:
+    """
+    Set ``user_id``'s switches (``*``: everyone's default). Every field is
+    written: null goes back to inheriting. Takes effect on the next
+    profile a client asks for.
+    """
+    from smritikosh.memory import views
+
+    await views.set_view(pg, user_id, body.app_id, show_facts=body.show_facts,
+                         show_beliefs=body.show_beliefs, show_memories=body.show_memories,
+                         keep_by=body.keep_by)
+    logger.info("Memory view updated", extra={"user_id": user_id, "app_id": body.app_id})
+    return await get_memory_view(user_id, pg, _admin, body.app_id)
+

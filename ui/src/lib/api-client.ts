@@ -17,6 +17,22 @@ const API_URL =
     ? (process.env.SMRITIKOSH_API_URL ?? "http://localhost:8080")
     : "/api/backend";
 
+/** What an admin set for one user ("*": everyone); null inherits. */
+export type MemoryViewOverrides = {
+  show_facts: boolean | null;
+  show_beliefs: boolean | null;
+  show_memories: boolean | null;
+  keep_by: "used" | "shown" | null;
+};
+
+export type MemoryView = {
+  user_id: string;
+  effective: { show_facts: boolean; show_beliefs: boolean; show_memories: boolean;
+               keep_by: "used" | "shown" };
+  source: Record<keyof MemoryViewOverrides, "user" | "everyone" | "default">;
+  overrides: MemoryViewOverrides;
+};
+
 class ApiError extends Error {
   constructor(
     public status: number,
@@ -243,6 +259,11 @@ export function createApiClient(token?: string) {
 
     adminPatchUser: (username: string, body: { is_active?: boolean; role?: string; app_ids?: string[] }) =>
       request(`/admin/users/${username}`, opts({ method: "PATCH", body: JSON.stringify(body) })),
+    adminGetMemoryView: (userId: string) =>
+      request(`/admin/memory-view/${encodeURIComponent(userId)}`, opts()),
+    adminPutMemoryView: (userId: string, body: MemoryViewOverrides) =>
+      request(`/admin/memory-view/${encodeURIComponent(userId)}`,
+              opts({ method: "PUT", body: JSON.stringify(body) })),
 
     // ── Admin — jobs ──────────────────────────────────────────────────────
     adminConsolidate: (userId: string, appId = "default") =>

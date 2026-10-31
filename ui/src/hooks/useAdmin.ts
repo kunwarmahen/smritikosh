@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSession } from "next-auth/react";
-import { createApiClient } from "@/lib/api-client";
+import { createApiClient, type MemoryView, type MemoryViewOverrides } from "@/lib/api-client";
 import type { AdminUser, AdminUsersResponse, EmbeddingHealthStatus, HealthStatus, ReEmbedResult } from "@/types";
 
 export function useAdminUsers(params?: { limit?: number; offset?: number; role?: string }) {
@@ -39,6 +39,30 @@ export function useAdminPatchUser() {
       qc.invalidateQueries({ queryKey: ["admin-users"] });
       qc.invalidateQueries({ queryKey: ["admin-user", username] });
     },
+  });
+}
+
+export function useMemoryView(userId: string) {
+  const { data: session } = useSession();
+  const token = session?.accessToken;
+
+  return useQuery<MemoryView>({
+    queryKey: ["memory-view", userId],
+    queryFn: () => createApiClient(token).adminGetMemoryView(userId) as Promise<MemoryView>,
+    enabled: !!token,
+  });
+}
+
+export function useSetMemoryView() {
+  const { data: session } = useSession();
+  const qc = useQueryClient();
+  const token = session?.accessToken;
+
+  return useMutation({
+    mutationFn: ({ userId, body }: { userId: string; body: MemoryViewOverrides }) =>
+      createApiClient(token).adminPutMemoryView(userId, body),
+    // everyone's default changes what every user inherits
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["memory-view"] }),
   });
 }
 

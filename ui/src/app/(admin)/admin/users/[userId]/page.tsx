@@ -12,6 +12,7 @@ import { useMutation } from "@tanstack/react-query";
 import { useSession } from "next-auth/react";
 import { createApiClient } from "@/lib/api-client";
 import { useAdminUser, useAdminPatchUser } from "@/hooks/useAdmin";
+import { MemoryViewCard } from "@/components/admin/MemoryViewCard";
 
 export default function AdminUserDetailPage({
   params,
@@ -144,6 +145,8 @@ export default function AdminUserDetailPage({
             </div>
           </div>
 
+          <MemoryViewCard userId={username} />
+
           {/* Audit link */}
           <div className="card">
             <p className="section-heading mb-3">Data</p>
@@ -164,7 +167,7 @@ export default function AdminUserDetailPage({
                 <div>
                   <p className="text-sm text-zinc-700 dark:text-zinc-300">Delete all memories</p>
                   <p className="text-xs text-zinc-600 mt-0.5">
-                    Permanently removes every episodic event. Neo4j facts are not affected.
+                    Permanently removes every memory, and the facts drawn from them.
                   </p>
                 </div>
                 <button

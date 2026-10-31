@@ -252,15 +252,29 @@ class TestPruneLogic:
         assert result.events_pruned == 0
         mock_episodic.delete.assert_not_called()
 
-    async def test_keeps_recalled_event(self, pruner, mock_episodic):
+    async def test_keeps_recalled_event_when_the_view_keeps_by_shown(self, pruner,
+                                                                    mock_episodic):
         recalled_event = make_event(importance=0.05, age_days=100, recall_count=3)
         session = AsyncMock()
         count_p, cands_p = _patch_prune(pruner, [recalled_event])
-        with count_p, cands_p:
+        with count_p, cands_p, patch.object(pruner, "_recalls_protect",
+                                            AsyncMock(return_value=True)):
             result = await pruner.prune(session, user_id="u1", app_id="default")
 
         assert result.events_pruned == 0
         mock_episodic.delete.assert_not_called()
+
+    async def test_being_shown_keeps_nothing_when_the_view_keeps_by_used(self, pruner,
+                                                                        mock_episodic):
+        """Shown is counted, not trusted: only a use keeps a memory."""
+        recalled_event = make_event(importance=0.05, age_days=100, recall_count=3)
+        session = AsyncMock()
+        count_p, cands_p = _patch_prune(pruner, [recalled_event])
+        with count_p, cands_p, patch.object(pruner, "_recalls_protect",
+                                            AsyncMock(return_value=False)):
+            result = await pruner.prune(session, user_id="u1", app_id="default")
+
+        assert result.events_pruned == 1
 
     async def test_mixed_events(self, pruner, mock_episodic):
         events = [

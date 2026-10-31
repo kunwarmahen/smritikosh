@@ -4,7 +4,10 @@ Memory routes — capture and retrieve episodic events.
 POST /memory/event      Encode a raw interaction into memory (Hippocampus.encode),
                         or store a finished statement as-is (extract=false)
 POST /memory/search     Hybrid search — returns raw scored events
-POST /memory/used       Say an answer drew on these events (they stop ageing)
+POST /memory/used       Say an answer drew on these events (they stop ageing),
+                        or on a profile's facts and beliefs
+POST /memory/profile    Facts, beliefs and memories for a prompt, as the
+                        user's memory view allows
 GET  /memory/{user_id}  Return recent events for a user (?order=active: most
                         recently used or written first)
 """
@@ -35,6 +38,7 @@ from smritikosh.api.schemas import (
     FactResponse,
     MarkUsedRequest,
     MarkUsedResponse,
+    ProfileRequest,
     MemoryEventDetail,
     MemoryLinkItem,
     MemoryLinksResponse,
@@ -272,7 +276,9 @@ async def store_fact(
 async def mark_used(
     body: MarkUsedRequest,
     episodic: Annotated[EpisodicMemory, Depends(get_episodic)],
+    semantic: Annotated[SemanticMemory, Depends(get_semantic)],
     pg: Annotated[AsyncSession, Depends(get_session)],
+    neo: Annotated[NeoSession, Depends(get_neo4j_session)],
     current_user: Annotated[dict, Depends(get_current_user)],
 ) -> MarkUsedResponse:
     """
@@ -282,17 +288,51 @@ async def mark_used(
     search, ``?order=active`` and the pruner's age count from the latest
     use, so a statement leaned on every week does not sink with the date
     it was written. Ids that are not UUIDs, or not this user's, are
-    skipped: ``marked`` counts the ones that were.
+    skipped: ``marked`` counts the ones that were. A profile's
+    ``fact:<category>/<key>`` marks the fact (its weekly decay counts from
+    now) and the memories it rests on; ``belief:<id>`` records the time.
     """
     assert_self_or_admin(current_user, body.user_id)
-    ids = []
-    for raw in body.event_ids:
-        try:
-            ids.append(uuid.UUID(raw))
-        except ValueError:
-            continue
-    marked = await episodic.mark_used(pg, body.user_id, ids)
+    from smritikosh.memory import profile
+
+    marked = await profile.mark_used(pg, neo, episodic=episodic, semantic=semantic,
+                                     user_id=body.user_id,
+                                     app_id=(current_user.get("app_ids") or ["default"])[0],
+                                     ids=body.event_ids)
     return MarkUsedResponse(user_id=body.user_id, marked=marked)
+
+
+@router.post("/profile")
+async def memory_profile(
+    body: ProfileRequest,
+    episodic: Annotated[EpisodicMemory, Depends(get_episodic)],
+    semantic: Annotated[SemanticMemory, Depends(get_semantic)],
+    llm: Annotated[LLMAdapter, Depends(get_llm)],
+    pg: Annotated[AsyncSession, Depends(get_session)],
+    neo: Annotated[NeoSession, Depends(get_neo4j_session)],
+    current_user: Annotated[dict, Depends(get_current_user)],
+) -> dict:
+    """
+    What a client's prompt is given about the user: ``facts`` (core ones
+    and the ones relevant to ``query``), ``beliefs`` (guesses, most
+    confident first) and ``memories`` (those no fact covers), as the
+    user's memory view allows -- ``view`` says which, and what keeps a
+    memory (``keep_by``). A fact's ``id`` is ``fact:<category>/<key>``,
+    a belief's ``belief:<id>``; hand either back to POST /memory/used.
+    """
+    assert_self_or_admin(current_user, body.user_id)
+    from smritikosh.memory import profile
+
+    embedding = None
+    if body.query.strip():
+        try:
+            embedding = await llm.embed(body.query)
+        except Exception as exc:
+            logger.warning("Profile without relevance (query not embedded): %s", exc)
+    return await profile.build(pg, neo, episodic=episodic, semantic=semantic,
+                               user_id=body.user_id, app_id=body.app_id,
+                               app_ids=body.app_ids or current_user.get("app_ids"),
+                               query=body.query, embedding=embedding)
 
 
 @router.delete("/event/{event_id}", response_model=DeleteEventResponse)
@@ -435,6 +475,10 @@ async def search_memory(
         to_date=body.to_date,
         own_only=body.own_only,
     )
+
+    # how often a memory is shown, for the dashboard; whether that keeps
+    # it is the user's memory view (memory/views.py), not this count
+    await episodic.increment_recall(pg, [r.event.id for r in results])
 
     items = [
         SearchResultItem(

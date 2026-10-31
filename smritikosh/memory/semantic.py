@@ -429,6 +429,40 @@ class SemanticMemory:
         summary = await result.consume()
         return summary.counters.relationships_deleted
 
+    async def touch_facts(
+        self,
+        session: AsyncSession,
+        *,
+        user_id: str,
+        keys: list[tuple[str, str]],
+        app_id: str = "default",
+    ) -> list[str]:
+        """
+        A client's word that an answer leaned on these facts, given as
+        (category, key): last_seen_at = now, so the weekly decay counts
+        from today. Returns the source event ids of the facts touched --
+        the memories they rest on, which the caller marks used too.
+        """
+        if not keys:
+            return []
+        result = await session.run(
+            """
+            UNWIND $keys AS k
+            MATCH (u:User {user_id: $user_id, app_id: $app_id})-[r]->(f:Fact)
+            WHERE f.category = k[0] AND f.key = k[1]
+            SET r.last_seen_at = $now
+            RETURN coalesce(r.source_event_ids, []) AS ids
+            """,
+            user_id=user_id,
+            app_id=app_id,
+            keys=[[c, k] for c, k in keys],
+            now=_now_iso(),
+        )
+        ids: list[str] = []
+        for record in await result.data():
+            ids.extend(str(i) for i in record["ids"])
+        return list(dict.fromkeys(ids))
+
     # ── Read ───────────────────────────────────────────────────────────────
 
     async def get_facts(

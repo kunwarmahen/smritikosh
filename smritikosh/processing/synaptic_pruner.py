@@ -14,6 +14,13 @@ Age counts from the event's last activity: the later of created_at and
 last_used_at. A memory a client said an answer drew on (POST /memory/used)
 is not old, whatever year it was written.
 
+A RECALL PROTECTS ONLY WHERE THE ADMIN SAID SO. ``recall_count`` counts
+how often a memory was shown (a search, a client's profile). Under the
+user's memory view keep_by "used" (the default, memory/views.py) being
+shown keeps nothing, and the recall condition drops out: age counts
+from the last USE, and that is what keeps a memory. Under "shown" it
+stands as written above.
+
 A labelled event (memory/labels.py) is never judged by importance: the
 client that filed it said how long it lasts. It goes once its
 ``lifetime_days`` have passed since it was written or last used, and the
@@ -37,7 +44,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from smritikosh.db.models import Event
@@ -63,6 +70,8 @@ class PruningThresholds:
     importance_threshold: float
     min_recall_count: int
     min_age_days: int
+    #: False under keep_by "used": being shown does not keep a memory.
+    recalls_protect: bool = True
 
 
 # ── Result type ───────────────────────────────────────────────────────────────
@@ -182,6 +191,7 @@ class SynapticPruner:
                 base_min_recall=self.min_recall_count,
                 base_min_age=self.min_age_days,
             )
+        thresholds.recalls_protect = await self._recalls_protect(session, user_id, app_id)
         result.thresholds = thresholds
 
         if event_count != DEFAULT_MIN_RECALL_COUNT:  # log only when tier changed
@@ -315,6 +325,18 @@ class SynapticPruner:
 
     # ── Helpers ────────────────────────────────────────────────────────────
 
+    async def _recalls_protect(self, session: AsyncSession, user_id: str,
+                               app_id: str) -> bool:
+        """Whether this user's view keeps by "shown" (memory/views.py)."""
+        from smritikosh.memory import views
+
+        try:
+            view, _ = await views.effective(session, user_id, app_id)
+        except Exception as exc:      # no table yet: as before
+            logger.debug("Memory view unread, recalls protect: %s", exc)
+            return True
+        return view.keep_by == "shown"
+
     async def _count_user_events(
         self, session: AsyncSession, user_id: str, app_id: str
     ) -> int:
@@ -352,7 +374,8 @@ class SynapticPruner:
                     func.coalesce(Event.last_used_at, Event.created_at),
                 ) < cutoff_sql,
                 Event.importance_score < thresholds.importance_threshold,
-                Event.recall_count < thresholds.min_recall_count,
+                (Event.recall_count < thresholds.min_recall_count)
+                if thresholds.recalls_protect else true(),
                 ~Event.event_metadata.has_key("topic"),   # the client's lifetime rules
             )
             .order_by(Event.importance_score.asc())  # lowest importance first
@@ -438,7 +461,8 @@ class SynapticPruner:
         age_days = (now - created).total_seconds() / 86400.0
         return (
             (event.importance_score or 0.0) < thresholds.importance_threshold
-            and (event.recall_count or 0) < thresholds.min_recall_count
+            and (not thresholds.recalls_protect
+                 or (event.recall_count or 0) < thresholds.min_recall_count)
             and age_days > thresholds.min_age_days
         )
 

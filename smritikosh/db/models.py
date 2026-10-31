@@ -578,9 +578,53 @@ class UserBelief(Base):
     last_updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now
     )
+    #: When a client last said an answer leaned on this belief (or showed
+    #: it, when the user's memory view keeps by "shown"). None: never.
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
 
     def __repr__(self) -> str:
         return f"<UserBelief {self.category}: {self.statement[:60]!r} status={self.status}>"
+
+
+class MemoryView(Base):
+    """
+    What an agent's prompt is given about a user, and what keeps a memory.
+
+    Set by an admin in the dashboard (PUT /admin/memory-view/{user_id}).
+    One row per (user_id, app_id); user_id ``"*"`` is everyone's default.
+    A NULL field means "no override": the user's row falls back to the
+    ``"*"`` row, and that to the built-in default (memory/views.py).
+
+    show_facts / show_beliefs / show_memories decide what ``profile``
+    hands a client for its prompt. keep_by decides what keeps a memory
+    from ageing: ``used`` (only an answer that leaned on it) or ``shown``
+    (being put in a prompt counts too).
+    """
+
+    __tablename__ = "memory_views"
+    __table_args__ = (
+        UniqueConstraint("user_id", "app_id", name="uq_memory_view"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=_uuid
+    )
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    app_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    show_facts: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=None)
+    show_beliefs: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=None)
+    show_memories: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=None)
+    keep_by: Mapped[Optional[str]] = mapped_column(String(16), nullable=True, default=None)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+    def __repr__(self) -> str:
+        return (f"<MemoryView user={self.user_id} facts={self.show_facts} "
+                f"beliefs={self.show_beliefs} memories={self.show_memories} "
+                f"keep_by={self.keep_by}>")
 
 
 class AppUser(Base):

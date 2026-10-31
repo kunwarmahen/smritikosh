@@ -192,7 +192,7 @@ Your application
       ├── withMemory() (Node.js)      ← wraps OpenAI / Anthropic client (middleware parity)
       └── smritikosh-mcp (MCP server) smritikosh.mcp   ← store_memory / remember / recall /
                 │                                        get_context / list_memories / forget /
-                │                                        used
+                │                                        used / profile
                 │
                 ▼  REST API (FastAPI)
         ┌───────────────────────────────────────┐
@@ -1213,7 +1213,7 @@ smritikosh/
 │   └── calendar.py          # CalendarConnector: RFC 5545 iCal stdlib parser
 ├── db/
 │   ├── models.py            # SQLAlchemy 2.0 ORM: Event, UserFact, MemoryLink,
-│   │                        #   MemoryFeedback, UserBelief, UserProcedure, AppUser
+│   │                        #   MemoryFeedback, UserBelief, UserProcedure, AppUser, MemoryView
 │   ├── postgres.py          # Async engine, session helpers
 │   └── neo4j.py             # Driver singleton, session helpers, schema init
 ├── llm/
@@ -1222,6 +1222,8 @@ smritikosh/
 │   ├── episodic.py          # EpisodicMemory: store, search, hybrid_search
 │   ├── semantic.py          # SemanticMemory: upsert_fact, set_fact (one value per key), unlink_event, decay
 │   ├── labels.py            # A statement filed with a topic: its fact, its lifetime
+│   ├── views.py             # What a prompt is given about a user, and what keeps a memory (admin's switches)
+│   ├── profile.py           # POST /memory/profile: core + relevant facts, beliefs, uncovered memories
 │   ├── narrative.py         # NarrativeMemory: memory link chains
 │   ├── identity.py          # IdentityBuilder: dimensions + beliefs + summary
 │   ├── procedural.py        # ProceduralMemory: store, search_by_query (3-strategy fuzzy match)
@@ -1395,7 +1397,9 @@ alembic/
     ├── 0015_add_processed_sessions.py           # processed_sessions table (idempotency + last_turn_index)
     ├── 0016_add_fact_contradictions.py          # fact_contradictions table (QC contradiction log)
     ├── 0017_add_media_ingests.py                # media_ingests table (async processing + status)
-    └── 0018_add_user_voice_profiles.py          # user_voice_profiles table (speaker d-vector enrollment)
+    ├── 0018_add_user_voice_profiles.py          # user_voice_profiles table (speaker d-vector enrollment)
+    ├── …
+    └── 0032_add_memory_views.py                 # memory_views (what a prompt is given, per user) + user_beliefs.last_used_at
 ```
 
 ---
@@ -1871,8 +1875,8 @@ builds it and `sarathi up` starts it.
 | `/admin/health` | Admin | Live status of all backend services |
 | `/admin/jobs` | Admin | Manually trigger pipeline jobs (consolidate / prune / cluster / mine) for any user |
 | `/admin/audit` | Admin | System-wide audit log |
-| `/admin/users` | Admin | Paginated user list — create, activate/deactivate, change role |
-| `/admin/users/[userId]` | Admin | Per-user detail, role toggle, memory wipe |
+| `/admin/users` | Admin | Paginated user list — create, activate/deactivate, change role; below it, **In the agent's prompt** for everyone |
+| `/admin/users/[userId]` | Admin | Per-user detail, role toggle, **In the agent's prompt** (facts, beliefs, memories, what keeps a memory), memory wipe |
 | `/dashboard/settings/api-keys` | User | Generate and revoke long-lived API keys |
 | `/dashboard/settings/sharing` | User | Cross-app sharing grants — give one app read access to facts learned in another, per category; revoke anytime, revoked grants kept for history |
 | `/dashboard/settings/voice-enrollment` | User | Record a 30-second voice sample for speaker diarization; waveform visualiser, re-record, delete enrollment |
@@ -2164,7 +2168,7 @@ curl -X POST http://localhost:8080/memory/search \
 
 ### `POST /memory/used`
 
-Say that an answer drew on these memories. Being shown is not being used (`recall_count` counts the times `/context` showed a memory; `/memory/search` counts nothing); the client that saw the answer says which ones MATTERED. Each is stamped `last_used_at = now`, and from then on hybrid search's recency, `GET /memory/{user_id}?order=active` and the pruner's age count from that time. A memory written a year ago and leaned on every week ranks like one written yesterday.
+Say that an answer drew on these memories. Being shown is not being used (`recall_count` counts the times a memory was shown, by `/context`, `/memory/search` or a profile); the client that saw the answer says which ones MATTERED. Each is stamped `last_used_at = now`, and from then on hybrid search's recency, `GET /memory/{user_id}?order=active` and the pruner's age count from that time. A memory written a year ago and leaned on every week ranks like one written yesterday.
 
 ```bash
 curl -X POST http://localhost:8080/memory/used \
@@ -2180,11 +2184,44 @@ curl -X POST http://localhost:8080/memory/used \
 | Field | Type | Description |
 |---|---|---|
 | `user_id` | string | **Required.** Whose memories (self or admin) |
-| `event_ids` | list[string] | **Required.** 1–100 event ids. Ids that are not UUIDs, or not this user's, are skipped and not counted in `marked` |
+| `event_ids` | list[string] | **Required.** 1–100 ids: events, and a profile's `fact:<category>/<key>` and `belief:<id>`. Ids that are none of these, or not this user's, are skipped and not counted in `marked` |
+
+**A fact or belief from `POST /memory/profile` is used the same way.** `fact:location/city` stamps the fact's `last_seen_at` (its weekly decay counts from now) and marks the memories it was made from used, so the statements behind a fact a client leans on are kept with it. `belief:<id>` stamps the belief's `last_used_at`.
 
 `GET /memory/{user_id}` takes `order=created` (default, newest written first) or `order=active` (most recently used or written first), and each event carries `last_used_at` (null until used) and the `metadata` it was stored with.
 
 Both `GET /memory/{user_id}` and `POST /memory/search` take `own_only` (default `false`): `true` leaves out what Smritikosh's own agents wrote (reflections, decisions, council verdicts, meeting prep) and returns only what was stored for the user. The MCP server's `list_memories` and `recall` always ask for it.
+
+---
+
+### `POST /memory/profile`
+
+What a client's prompt is given about the user, in one call: their **facts**, their **beliefs** and the **memories** no fact covers, as the user's memory view allows (`GET /admin/memory-view/{user_id}`). A client that keeps its own statements (an agent that decides what to remember) asks for this at the start of a conversation and puts the answer in its prompt.
+
+```bash
+curl -X POST http://localhost:8080/memory/profile \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "alice", "query": "find me a flight to Denver"}'
+```
+
+```json
+{"user_id": "alice",
+ "view": {"show_facts": true, "show_beliefs": true, "show_memories": true, "keep_by": "used"},
+ "facts": [{"id": "fact:location/city", "category": "location", "key": "city",
+            "value": "Lives in Cary, NC; RDU is 12 minutes away", "core": true,
+            "sources": ["a3f1c2d4-..."]}],
+ "beliefs": [{"id": "belief:7c1e...", "statement": "prefers a chart to a table",
+              "category": "attitude", "confidence": 0.7}],
+ "memories": [{"id": "b81d...", "statement": "Started a pottery class", "created_at": "...",
+               "last_used_at": null, "metadata": {}}]}
+```
+
+- **Facts:** the **core** ones always — who they are (`identity`), what they prefer (`preference`), and where they live (`location` keys such as `city`, `timezone`, `airport`; a street address is not core) — and the ones **relevant** to `query`: a fact whose memories the query's hybrid search found. An account number or an address rides only when the question needs it. Someone else's fact (`naina.email`) is never core.
+- **Beliefs:** the user's active beliefs, most confident first (up to 8). They are patterns, not statements: a client should present them as guesses.
+- **Memories:** relevant ones first, then the most recently used or written, leaving out every memory a fact was made from (it would only say the fact again). With facts turned off, none is left out.
+
+Every memory a profile shows, and every memory behind a shown fact, gets `recall_count + 1`. Under the view's `keep_by: "shown"` they are also marked used; under `"used"` (the default) only `POST /memory/used` keeps them. Neo4j down costs the facts, an unembedded query the relevance; neither fails the call.
 
 ---
 
@@ -2641,6 +2678,28 @@ curl -X PATCH http://localhost:8080/admin/users/alice \
 ```
 
 Returns the updated user object. Returns `422` if `role` is not `"user"` or `"admin"`.
+
+---
+
+### `GET /admin/memory-view/{user_id}` and `PUT /admin/memory-view/{user_id}`
+
+What a client's prompt is given about a user (`POST /memory/profile`), and what keeps a memory from ageing. `user_id` `*` is everyone's default. The dashboard sets the same thing under **Admin → Users** (everyone, below the list) and on each user's page (**In the agent's prompt**).
+
+| Field | Values | What it decides |
+|---|---|---|
+| `show_facts` | true / false / null | Facts in the profile |
+| `show_beliefs` | true / false / null | Beliefs in the profile |
+| `show_memories` | true / false / null | Memories no fact covers |
+| `keep_by` | `"used"` / `"shown"` / null | `used`: only an answer that leaned on it keeps a memory (and a fact, and the memories behind it). `shown`: being in a prompt counts too, so nothing shown is pruned |
+
+null inherits, field by field: a user's row falls back to `*`, and `*` to the built-in default (all on, `used`). `PUT` writes every field; `GET` returns the `effective` view, where each field came from (`source`: user, everyone or default) and this row's own `overrides`.
+
+```bash
+curl -X PUT http://localhost:8080/admin/memory-view/alice \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <admin-token>" \
+  -d '{"show_facts": null, "show_beliefs": false, "show_memories": null, "keep_by": null}'
+```
 
 ---
 
@@ -4576,6 +4635,8 @@ What keeps the facts worth having:
 ### Synaptic pruning (every 24 hours)
 
 Deletes a consolidated event only when all three hold: importance below `0.2`, recalled fewer than 2 times, and older than 90 days (thresholds tighten for users with over 1,000 events and loosen under 50). Age counts from an event's last activity: the later of `created_at` and `last_used_at` (`POST /memory/used`), so a memory a client still uses is never pruned for being old.
+
+**Whether being recalled protects is the admin's call** (`keep_by` in the user's memory view). Under `"used"`, the default, the recall condition drops out: `recall_count` only says how often a memory was shown, and age since its last *use* decides. Under `"shown"` it stands as above, and a profile marks what it shows as used, so whatever is shown is kept.
 
 **A labelled statement follows its client's lifetime instead.** One stored with a `topic` (see `POST /memory/event`) is never judged by importance. If it carries `lifetime_days`, it is deleted once that many days pass since it was written or last used, and the fact it filed goes with it; with none, it stays until the client forgets or replaces it.
 

@@ -167,7 +167,25 @@ class RecentEventsResponse(BaseModel):
 class MarkUsedRequest(BaseModel):
     user_id: str = Field(..., description="Whose memories were used")
     event_ids: list[str] = Field(..., min_length=1, max_length=100,
-                                 description="Events an answer drew on")
+                                 description="Events an answer drew on; also fact:<category>/<key> "
+                                             "and belief:<id> from POST /memory/profile")
+
+
+class ProfileRequest(BaseModel):
+    user_id: str = Field(..., description="Whose profile")
+    query: str = Field("", description="The question the prompt is for: picks the relevant "
+                                       "facts and memories")
+    app_ids: list[str] | None = Field(None, description="App namespaces. Defaults to all apps "
+                                                        "in your token.")
+    app_id: str = Field("default", description="The namespace whose facts, beliefs and view apply")
+
+
+class MemoryViewUpdate(BaseModel):
+    app_id: str = Field("default")
+    show_facts: Optional[bool] = Field(None, description="null: inherit")
+    show_beliefs: Optional[bool] = Field(None, description="null: inherit")
+    show_memories: Optional[bool] = Field(None, description="null: inherit")
+    keep_by: Optional[str] = Field(None, pattern="^(used|shown)$", description="null: inherit")
 
 
 class MarkUsedResponse(BaseModel):

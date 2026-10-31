@@ -2,7 +2,7 @@
 Smritikosh MCP server.
 
 A thin Model Context Protocol wrapper over the Python SDK
-(:class:`smritikosh.sdk.client.SmritikoshClient`). Exposes seven tools:
+(:class:`smritikosh.sdk.client.SmritikoshClient`). Exposes eight tools:
 
     store_memory  — save text to episodic memory; the server's LLM extracts facts
     remember      — save one finished statement as-is: embedded, no LLM
@@ -11,6 +11,7 @@ A thin Model Context Protocol wrapper over the Python SDK
     list_memories — the user's memories, most recently used or written first
     forget        — delete one memory by id
     used          — say an answer drew on these memories, so they stop ageing
+    profile       — facts, beliefs and memories for a prompt, as an admin set
 
 ``store_memory`` is for a client that hands over raw text and lets Smritikosh
 decide what is worth keeping. ``remember`` is for a client whose own model has
@@ -319,7 +320,9 @@ async def used(
     that was shown.
 
     Args:
-        memory_ids: Ids from ``recall`` or ``list_memories`` (at most 100).
+        memory_ids: Ids from ``recall``, ``list_memories`` or ``profile`` --
+                    a fact's ``fact:…`` or a belief's ``belief:…`` too
+                    (at most 100).
         user_id:    Override the default user (admin API keys only).
 
     Returns ``marked``: how many were this user's and are now marked.
@@ -331,6 +334,32 @@ async def used(
         event_ids=ids,
     )
     return {"marked": marked}
+
+
+@mcp.tool()
+async def profile(
+    query: str = "",
+    user_id: str | None = None,
+) -> dict[str, Any]:
+    """What to put in a prompt about the user, as Smritikosh's admin set it.
+
+    Call this at the start of a conversation with its first message. It
+    returns ``facts`` (who they are, where they live, what they prefer,
+    and the facts relevant to ``query``), ``beliefs`` (patterns across
+    their memories -- guesses, with a ``confidence``) and ``memories``
+    (statements no fact covers yet). ``view`` says which of the three the
+    admin turned on, and ``keep_by`` what keeps a memory from ageing.
+
+    A fact's ``id`` is ``fact:<category>/<key>``, a belief's
+    ``belief:<id>``: when an answer leans on one, pass its id to ``used``
+    like a memory's.
+
+    Args:
+        query:   The conversation's first message, or the task.
+        user_id: Override the default user (admin API keys only).
+    """
+    state = _require_state()
+    return await state.client.profile(user_id=user_id or state.config.user_id, query=query)
 
 
 @mcp.tool()

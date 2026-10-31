@@ -270,7 +270,8 @@ class SmritikoshClient:
         event_ids: list[str],
     ) -> int:
         """
-        Say an answer drew on these memories, so they stop ageing.
+        Say an answer drew on these memories, so they stop ageing. A
+        profile's fact or belief ids may be among them.
 
         Returns how many were marked (ids that are not this user's are
         skipped by the server).
@@ -280,6 +281,21 @@ class SmritikoshClient:
         data = await self._post("/memory/used",
                                 {"user_id": user_id, "event_ids": list(event_ids)})
         return int(data.get("marked", 0))
+
+    async def profile(
+        self,
+        *,
+        user_id: str,
+        query: str = "",
+        app_id: str | None = None,
+    ) -> dict:
+        """
+        Facts, beliefs and memories for a prompt, as the user's memory view
+        allows (``view``). A fact's id is ``fact:<category>/<key>``, a
+        belief's ``belief:<id>``: hand either to :meth:`mark_used`.
+        """
+        return await self._post("/memory/profile", {
+            "user_id": user_id, "query": query, "app_id": app_id or self.app_id})
 
     async def submit_feedback(
         self,
