@@ -297,6 +297,32 @@ class TestConsolidatorSuccess:
         prompt = mock_llm.extract_structured.call_args.kwargs["prompt"]
         assert prompt.count("\n1. ") == 1 and "5. " in prompt and "6. " not in prompt
 
+    async def test_a_statement_stored_as_is_keeps_its_own_embedding(
+            self, consolidator, mock_episodic):
+        events = make_events(5)
+        events[0].source_meta = {"as_is": True}            # oldest: was the anchor
+        mock_episodic.get_unconsolidated.return_value = events
+
+        await consolidator.run(AsyncMock(), AsyncMock(), user_id="u1", app_id="default")
+
+        embedded = [c.args[1] for c in mock_episodic.update_embedding.call_args_list]
+        assert embedded == [events[1].id]                  # the first raw event instead
+        summarised = [c.args[1] for c in mock_episodic.update_summary.call_args_list]
+        assert events[0].id not in summarised
+        anchors = [c.kwargs.get("anchor_event_id") for c in mock_episodic.mark_consolidated.call_args_list]
+        assert events[0].id in anchors                     # its own anchor: never ranked down
+
+    async def test_a_batch_of_statements_only_is_never_re_embedded(
+            self, consolidator, mock_episodic):
+        events = make_events(5)
+        for e in events:
+            e.source_meta = {"as_is": True}
+        mock_episodic.get_unconsolidated.return_value = events
+
+        await consolidator.run(AsyncMock(), AsyncMock(), user_id="u1", app_id="default")
+
+        mock_episodic.update_embedding.assert_not_called()
+
     async def test_result_counts(self, consolidator, mock_episodic):
         events = make_events(5)
         mock_episodic.get_unconsolidated.return_value = events

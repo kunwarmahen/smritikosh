@@ -289,6 +289,7 @@ class TestCaptureEvent:
         kwargs = mock_hippocampus.encode_preextracted.call_args.kwargs
         assert kwargs["raw_text"] == "Lives near RDU."
         assert kwargs["extracted_facts"] == []
+        assert kwargs["source_meta"] == {"as_is": True}   # consolidation leaves it alone
 
     @pytest.mark.asyncio
     async def test_a_labelled_statement_files_its_own_fact(self, client, mock_hippocampus):

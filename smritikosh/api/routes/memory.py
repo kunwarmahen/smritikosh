@@ -112,6 +112,9 @@ async def capture_event(
                     app_id=body.app_id,
                     metadata=body.metadata,
                     source_type=body.source_type,
+                    # a finished statement: consolidation leaves its words,
+                    # summary and embedding as the client wrote them
+                    source_meta={"as_is": True},
                 )
     except Exception as exc:
         logger.exception("Hippocampus encode failed", extra={"user_id": body.user_id})

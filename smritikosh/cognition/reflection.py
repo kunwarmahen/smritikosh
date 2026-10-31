@@ -12,10 +12,16 @@ and surfacing:
     observation    — a notable pattern that fits none of the above
 
 Insights persist in the `reflections` table (dashboard/API surface, with an
-acknowledge flag so nudges don't repeat forever), and each cycle logs a
-summary of its own reasoning as an episodic event (source_type=
-agent_reflection) — future cycles see their predecessors' conclusions, per
-FUTURE.md's "logs its own reasoning" note.
+acknowledge flag so nudges don't repeat forever), and future cycles see
+their predecessors' open conclusions from there.
+
+NOT IN THE USER'S MEMORIES. Each cycle used to also store its findings as
+an episodic event (source_type=agent_reflection). That put the system's
+own thinking among what the user said: consolidation turned a "contradiction
+warning" into a fact about them, and the next cycle read its own old
+summaries back as evidence. The `reflections` table already holds every
+finding, so nothing is stored in memory, and the recent events a cycle
+reads are the user's own (own_only).
 
 Cost control: one LLM call per user per cycle, gated on a minimum number of
 recent events (REFLECTION_MIN_EVENTS) so quiet users cost nothing.
@@ -124,8 +130,9 @@ class ReflectionAgent:
         # ── 1. Recent behaviour (excluding this agent's own past summaries
         # from the guard count, so reflection can't keep itself "active") ──
         recent = await self.episodic.get_recent(
-            pg_session, user_id, [app_id], limit=MAX_EVENTS_IN_PROMPT
+            pg_session, user_id, [app_id], limit=MAX_EVENTS_IN_PROMPT, own_only=True,
         )
+        # old stores' agent_reflection events, should a store still hold any
         substantive = [e for e in recent if e.source_type != SourceType.AGENT_REFLECTION]
         if len(substantive) < self.min_events:
             result.skipped = True
@@ -216,27 +223,6 @@ class ReflectionAgent:
                 logger.warning("Skipping invalid reflection insight: %s", exc, extra={"insight": d})
         await pg_session.flush()
         result.insights_stored = len(stored)
-
-        # ── 5. Log the cycle's reasoning as memory (FUTURE.md note) ────────
-        if stored:
-            try:
-                summary = "Reflection cycle findings:\n" + "\n".join(
-                    f"- [{r.kind}/{r.severity}] {r.insight}" for r in stored
-                )
-                await self.episodic.store(
-                    pg_session,
-                    user_id=user_id,
-                    app_id=app_id,
-                    raw_text=summary,
-                    importance_score=0.5,
-                    source_type=SourceType.AGENT_REFLECTION,
-                    source_meta={
-                        "agent": "reflection",
-                        "reflection_ids": [str(r.id) for r in stored],
-                    },
-                )
-            except Exception:
-                logger.exception("Failed to log reflection cycle as episodic event")
 
         if self.audit and stored:
             from smritikosh.audit.logger import AuditEvent, EventType

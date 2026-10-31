@@ -1189,8 +1189,8 @@ class Reflection(Base):
     The reflection job periodically compares the user's stated identity
     (goals, beliefs, facts) against their recent episodic events and surfaces
     drift, contradictions, and stale beliefs. Insights persist here for the
-    dashboard/API; the cycle summary is also logged as an episodic event
-    (source_type=agent_reflection) so future cycles can learn from past ones.
+    dashboard/API, and future cycles read the open ones from here. Nothing
+    is written into the user's memories (events).
     """
 
     __tablename__ = "reflections"

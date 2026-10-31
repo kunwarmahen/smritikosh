@@ -381,7 +381,7 @@ class TestReflectionAgent:
         assert result.skipped is True
 
     @pytest.mark.asyncio
-    async def test_valid_insights_stored_and_logged(self):
+    async def test_valid_insights_stored_not_written_into_memories(self):
         recent = [make_event(f"event {i}") for i in range(3)]
         response = {
             "insights": [
@@ -405,12 +405,10 @@ class TestReflectionAgent:
         assert stored.kind == "drift"
         # invented evidence id filtered; only the real event survives
         assert stored.evidence == {"event_ids": [str(recent[0].id)]}
-        # the cycle logs its own reasoning as memory
-        agent.episodic.store.assert_awaited_once()
-        assert (
-            agent.episodic.store.await_args.kwargs["source_type"]
-            == SourceType.AGENT_REFLECTION
-        )
+        # its findings stay in the reflections table, never in the user's memories
+        agent.episodic.store.assert_not_awaited()
+        # and it reads only the user's own recent memories
+        assert agent.episodic.get_recent.await_args.kwargs["own_only"] is True
 
     @pytest.mark.asyncio
     async def test_invalid_kind_and_severity_normalised(self):

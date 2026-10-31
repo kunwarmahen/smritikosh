@@ -28,6 +28,9 @@ What makes the facts worth having, each one a failure seen in real data:
     key filter; no one-off booking codes. Nothing at all is a good answer.
   * Statements a client filed with a topic (memory/labels.py) are already
     consolidated when they arrive, so this never rewords them.
+  * A statement stored as-is (extract=false, ``source_meta.as_is``) keeps its
+    own embedding and words: never the batch anchor, never summarised over,
+    never ranked down as superseded.
   * The system's own findings (SYSTEM_SOURCE_TYPES: a reflection's
     "contradiction warning") are marked done unread: not facts about the user.
 """
@@ -321,13 +324,24 @@ class Consolidator:
         # The first (oldest) event is the batch's consolidation anchor: it will
         # carry the distilled summary embedding below, and it is exempt from
         # the E1 hybrid-search down-weight applied to superseded batch members.
+        #
+        # A statement a client stored as-is (extract=false) is nobody's raw
+        # material: it is never the anchor (its own embedding would be swapped
+        # for the batch summary's, and a search for its words would miss it),
+        # gets no summary over its words, and is its own anchor so search never
+        # ranks it down as superseded.
+        as_is = {e.id for e in batch if _as_is(e)}
+        anchor = next((e for e in batch if e.id not in as_is), None)
         event_ids = [e.id for e in batch]
         await self.episodic.mark_consolidated(
-            pg_session, event_ids, anchor_event_id=batch[0].id
+            pg_session, event_ids, anchor_event_id=anchor.id if anchor else None
         )
+        for event_id in as_is:
+            await self.episodic.mark_consolidated(
+                pg_session, [event_id], anchor_event_id=event_id)
         for i, event in enumerate(batch):
             per_summary = event_summaries[i] if i < len(event_summaries) else None
-            if per_summary:
+            if per_summary and event.id not in as_is:
                 await self.episodic.update_summary(pg_session, event.id, per_summary)
 
         # Re-embed the consolidated summary so hybrid search uses the clean,
@@ -336,22 +350,22 @@ class Consolidator:
         # canonical representative; other events retain their original embeddings
         # for result diversity in hybrid search.
         embedding_updated = False
-        if summary:
+        if summary and anchor is not None:
             try:
                 summary_embedding = await self.llm.embed(summary)
                 await self.episodic.update_embedding(
-                    pg_session, batch[0].id, summary_embedding
+                    pg_session, anchor.id, summary_embedding
                 )
                 embedding_updated = True
                 logger.debug(
                     "Summary embedding updated",
-                    extra={"user_id": user_id, "event_id": str(batch[0].id)},
+                    extra={"user_id": user_id, "event_id": str(anchor.id)},
                 )
             except Exception as exc:
                 logger.warning(
                     "Summary re-embedding failed — original embedding retained: %s",
                     exc,
-                    extra={"user_id": user_id, "event_id": str(batch[0].id)},
+                    extra={"user_id": user_id, "event_id": str(anchor.id)},
                 )
 
         # Upsert distilled facts to Neo4j — link each fact only to the specific
@@ -513,6 +527,12 @@ def _build_consolidation_prompt(
         "one per interaction in order), and facts (list of structured facts)."
     )
     return "\n".join(lines)
+
+
+def _as_is(event: Event) -> bool:
+    """Whether a client stored this as a finished statement (extract=false)."""
+    meta = getattr(event, "source_meta", None)
+    return isinstance(meta, dict) and meta.get("as_is") is True
 
 
 def _format_date(dt: datetime | None) -> str:

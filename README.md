@@ -1248,7 +1248,7 @@ smritikosh/
 │   ├── decision.py          # DecisionAgent: memory-grounded recommendations with citations
 │   ├── council.py           # CouncilAgent: 4 specialists + judge for high-stakes decisions
 │   ├── meeting_prep.py      # MeetingPrepAgent: pre-meeting briefs + debrief re-ingestion
-│   ├── reflection.py        # ReflectionAgent: identity-vs-behaviour drift detection
+│   ├── reflection.py        # ReflectionAgent: identity-vs-behaviour drift detection (findings in `reflections`, never in memories)
 │   └── lifeos.py            # LifeOSAgent: proactive nudge digests (feed + webhook, LLM-free)
 ├── worker/
 │   └── main.py              # Standalone scheduler worker (python -m smritikosh.worker.main)
@@ -4558,7 +4558,7 @@ What keeps the facts worth having:
 - **One value per key.** A new value replaces the old one under the same `category`/`key` instead of sitting beside it. A rewording (two thirds of the words shared) keeps the old value's source events; a real change does not.
 - **Whose fact.** `subject` names the person when it isn't the user, and their name goes into the key (`naina.email`), so a relative's date of birth never lands on the user's own.
 - **Only about the user's life.** No facts about the conversation or the system (warnings, "contradictions"), no one-off booking codes; an empty list is a fine answer.
-- **Skipped:** statements a client filed with a topic (they file themselves, see `POST /memory/event`) and events Smritikosh's own agents wrote (`agent_reflection`, `agent_decision`, `agent_council`, `agent_meeting_prep`), which are marked done unread.
+- **Skipped:** statements a client filed with a topic (they file themselves, see `POST /memory/event`) and events Smritikosh's own agents wrote (`agent_decision`, `agent_council`, `agent_meeting_prep`, and `agent_reflection` from older versions), which are marked done unread. The reflection agent keeps its findings in the `reflections` table and no longer writes them into memory.
 
 ### Synaptic pruning (every 24 hours)
 
