@@ -2151,7 +2151,7 @@ curl -X POST http://localhost:8080/memory/search \
 
 ### `POST /memory/used`
 
-Say that an answer drew on these memories. A search only SHOWS a memory (that is what `recall_count` counts); the client that saw the answer says which ones MATTERED. Each is stamped `last_used_at = now`, and from then on hybrid search's recency, `GET /memory/{user_id}?order=active` and the pruner's age count from that time. A memory written a year ago and leaned on every week ranks like one written yesterday.
+Say that an answer drew on these memories. Being shown is not being used (`recall_count` counts the times `/context` showed a memory; `/memory/search` counts nothing); the client that saw the answer says which ones MATTERED. Each is stamped `last_used_at = now`, and from then on hybrid search's recency, `GET /memory/{user_id}?order=active` and the pruner's age count from that time. A memory written a year ago and leaned on every week ranks like one written yesterday.
 
 ```bash
 curl -X POST http://localhost:8080/memory/used \
