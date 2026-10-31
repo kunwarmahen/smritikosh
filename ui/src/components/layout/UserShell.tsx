@@ -11,6 +11,7 @@ import {
   ScrollText,
   Zap,
   Key,
+  KeyRound,
   Mic,
   Share2,
   ShieldCheck,
@@ -40,6 +41,7 @@ const SETTINGS_NAV = [
   { href: "/dashboard/settings/api-keys",         icon: Key,    label: "API Keys" },
   { href: "/dashboard/settings/sharing",          icon: Share2, label: "Sharing" },
   { href: "/dashboard/settings/voice-enrollment", icon: Mic,    label: "Voice" },
+  { href: "/dashboard/settings/password",         icon: KeyRound, label: "Password" },
 ];
 
 const ADMIN_NAV = [

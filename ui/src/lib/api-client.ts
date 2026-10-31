@@ -67,6 +67,8 @@ export function createApiClient(token?: string) {
 
     // ── Auth ─────────────────────────────────────────────────────────────
     getMe: () => request("/auth/me", opts()),
+    changePassword: (body: { current_password: string; new_password: string }) =>
+      request<{ changed: boolean }>("/auth/password", opts({ method: "POST", body: JSON.stringify(body) })),
     register: (body: {
       username: string;
       password: string;

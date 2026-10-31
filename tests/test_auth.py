@@ -348,3 +348,49 @@ class TestGetMeRoute:
 
         resp = tc.get("/auth/me")
         assert resp.status_code == 404
+
+
+class TestChangePasswordRoute:
+    """The bias: A PASSWORD CHANGED WITHOUT KNOWING THE OLD ONE. A session
+    left open, or an API key, must not be enough to lock the owner out."""
+
+    @pytest.fixture
+    def client_as_alice(self):
+        from fastapi.testclient import TestClient
+        from fastapi import FastAPI
+        from smritikosh.api.routes.auth import router
+        from smritikosh.auth.deps import get_current_user
+        from smritikosh.db.postgres import get_session
+
+        app = FastAPI()
+        app.include_router(router)
+        user = _make_app_user()
+        mock_session = AsyncMock()
+        result_mock = MagicMock()
+        result_mock.scalar_one_or_none.return_value = user
+        mock_session.execute = AsyncMock(return_value=result_mock)
+        app.dependency_overrides[get_session] = lambda: mock_session
+        app.dependency_overrides[get_current_user] = lambda: {
+            "sub": "alice", "role": "user", "app_ids": ["default"]}
+        return TestClient(app), user
+
+    def test_the_right_current_password_changes_it(self, client_as_alice):
+        tc, user = client_as_alice
+        resp = tc.post("/auth/password", json={"current_password": "password123",
+                                               "new_password": "a-new-one-42"})
+        assert resp.status_code == 200 and resp.json() == {"changed": True}
+        assert verify_password("a-new-one-42", user.password_hash)
+
+    def test_a_wrong_current_password_changes_nothing(self, client_as_alice):
+        tc, user = client_as_alice
+        resp = tc.post("/auth/password", json={"current_password": "guess",
+                                               "new_password": "a-new-one-42"})
+        assert resp.status_code == 403
+        assert verify_password("password123", user.password_hash)
+
+    def test_a_short_or_unchanged_password_is_refused(self, client_as_alice):
+        tc, _ = client_as_alice
+        assert tc.post("/auth/password", json={"current_password": "password123",
+                                               "new_password": "short"}).status_code == 422
+        assert tc.post("/auth/password", json={"current_password": "password123",
+                                               "new_password": "password123"}).status_code == 422

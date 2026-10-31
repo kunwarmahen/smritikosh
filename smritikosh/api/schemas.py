@@ -14,6 +14,15 @@ from pydantic import BaseModel, Field
 # ── POST /auth/token  POST /auth/register  GET /auth/me ───────────────────────
 
 
+class PasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+
+class PasswordChangeResponse(BaseModel):
+    changed: bool
+
+
 class TokenRequest(BaseModel):
     username: str
     password: str

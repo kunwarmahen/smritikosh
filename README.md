@@ -2030,6 +2030,19 @@ curl http://localhost:8080/auth/me \
 
 ---
 
+
+#### `POST /auth/password`
+
+Change your own password. The current one is asked for even when signed in, so an open session or an API key alone can't lock the owner out. The new one needs 8 characters or more. API keys and existing sign-ins keep working. In the dashboard: **Settings → Password**.
+
+```bash
+curl -X POST http://localhost:8080/auth/password \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"current_password": "old-one", "new_password": "a-new-one-42"}'
+```
+
+`{"changed": true}`; `403` when the current password is wrong, `422` when the new one is too short or the same.
+
 ### `GET /health`
 
 Checks server liveness **and** database connectivity. Useful for container readiness probes.

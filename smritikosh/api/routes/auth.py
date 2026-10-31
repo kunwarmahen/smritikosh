@@ -4,6 +4,7 @@ Auth routes — login, register, and current-user info.
 POST /auth/token     Login with username + password → JWT
 POST /auth/register  Create a new user (admin only)
 GET  /auth/me        Return the currently authenticated user's profile
+POST /auth/password  Change your own password (the current one is asked for)
 """
 
 import logging
@@ -14,7 +15,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from smritikosh.api.schemas import RegisterRequest, TokenRequest, TokenResponse, UserResponse
+from smritikosh.api.schemas import (
+    PasswordChangeRequest,
+    PasswordChangeResponse,
+    RegisterRequest,
+    TokenRequest,
+    TokenResponse,
+    UserResponse,
+)
 from smritikosh.auth.deps import get_current_user, require_admin
 from smritikosh.auth.utils import create_access_token, hash_password, verify_password
 from smritikosh.db.models import AppUser, UserRole
@@ -156,3 +164,36 @@ async def get_me(
         is_active=user.is_active,
         created_at=user.created_at.isoformat(),
     )
+
+
+@router.post("/password", response_model=PasswordChangeResponse)
+async def change_password(
+    request: PasswordChangeRequest,
+    pg: Annotated[AsyncSession, Depends(get_session)],
+    current_user: Annotated[dict, Depends(get_current_user)],
+) -> PasswordChangeResponse:
+    """
+    Change your own password.
+
+    The current password is asked for even when you are signed in: a
+    session left open, or an API key, must not be enough to lock the
+    owner out. API keys and existing sign-ins keep working -- only the
+    password a sign-in needs changes. The new one needs 8 characters or
+    more.
+    """
+    result = await pg.execute(
+        select(AppUser).where(AppUser.username == current_user["sub"])
+    )
+    user: AppUser | None = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found.")
+    if not verify_password(request.current_password, user.password_hash):
+        raise HTTPException(status_code=403, detail="Your current password is not right.")
+    if request.new_password == request.current_password:
+        raise HTTPException(status_code=422, detail="The new password is the same as the current one.")
+    user.password_hash = hash_password(request.new_password)
+    user.updated_at = datetime.now(timezone.utc)
+    await pg.flush()
+    logger.info("Password changed", extra={"username": user.username})
+    return PasswordChangeResponse(changed=True)
+
