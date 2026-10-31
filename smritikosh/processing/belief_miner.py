@@ -553,7 +553,7 @@ async def _upsert_belief(
             statement=statement,
             category=category,
             confidence=confidence,
-            evidence_count=1,
+            evidence_count=max(1, len(event_ids)),   # the distinct memories cited
             evidence_event_ids=event_ids,
             first_inferred_at=now,
             last_updated_at=now,
@@ -562,7 +562,13 @@ async def _upsert_belief(
             constraint="uq_user_belief",
             set_={
                 "confidence": confidence,
-                "evidence_count": UserBelief.evidence_count + 1,
+                # the distinct memories behind it, as _reinforce counts them
+                "evidence_count": text(
+                    "LEAST(50, (SELECT count(DISTINCT val) "
+                    "FROM jsonb_array_elements_text("
+                    "  user_beliefs.evidence_event_ids || EXCLUDED.evidence_event_ids"
+                    ") val))"
+                ),
                 # Merge existing IDs with new IDs: concatenate, deduplicate,
                 # cap at 50 to prevent unbounded growth over many mining cycles.
                 "evidence_event_ids": text(

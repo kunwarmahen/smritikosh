@@ -498,6 +498,14 @@ class TestBeliefEvidenceTracking:
         assert compiled_params["evidence_event_ids"] == event_ids
 
     @pytest.mark.asyncio
+    async def test_a_new_belief_counts_the_memories_it_cites(self):
+        session = AsyncMock()
+        ids = [str(uuid.uuid4()) for _ in range(3)]
+        bd = {"statement": "values speed", "category": "value", "confidence": 0.7}
+        await _upsert_belief(session, "u1", "default", bd, datetime.now(timezone.utc), ids)
+        assert session.execute.call_args.args[0].compile().params["evidence_count"] == 3
+
+    @pytest.mark.asyncio
     async def test_upsert_belief_empty_ids_still_works(self):
         """_upsert_belief handles an empty event_ids list gracefully."""
 
