@@ -417,12 +417,22 @@ class EpisodicMemory:
         app_id: str = "default",
     ) -> int:
         """Delete all events for a user+app. Returns the number of events deleted."""
+        return len(await self.delete_all_ids_for_user(session, user_id, app_id))
+
+    async def delete_all_ids_for_user(
+        self,
+        session: AsyncSession,
+        user_id: str,
+        app_id: str = "default",
+    ) -> list[str]:
+        """Delete all events for a user+app. Returns their ids, so the facts
+        drawn from them can go too."""
         result = await session.execute(
             sql_delete(Event)
             .where(Event.user_id == user_id, Event.app_id == app_id)
             .returning(Event.id)
         )
-        return len(result.fetchall())
+        return [str(row[0]) for row in result.fetchall()]
 
     async def hybrid_search(
         self,

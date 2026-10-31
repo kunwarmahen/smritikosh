@@ -347,23 +347,39 @@ async def delete_user_memory(
     user_id: str,
     app_id: Annotated[str, Query(description="Application namespace")] = "default",
     episodic: Annotated[EpisodicMemory, Depends(get_episodic)] = None,
+    semantic: Annotated[SemanticMemory, Depends(get_semantic)] = None,
     pg: Annotated[AsyncSession, Depends(get_session)] = None,
+    neo: Annotated[NeoSession, Depends(get_neo4j_session)] = None,
     current_user: Annotated[dict, Depends(get_current_user)] = None,
 ) -> DeleteUserMemoryResponse:
     """
-    Delete all memory events for a user within an app namespace.
+    Delete all memory events for a user within an app namespace, and the
+    facts drawn from them.
 
-    Use with care — this removes all episodic events for the user.
-    Semantic facts in Neo4j are not affected by this endpoint.
+    Use with care. Every fact whose sources were all among these events goes
+    too (``facts_forgotten``), as with forgetting one event. Facts with no
+    source event -- typed in the dashboard, or POST /memory/fact -- stay.
+    When Neo4j is down the events are still deleted and ``facts_forgotten``
+    is 0.
     """
     assert_self_or_admin(current_user, user_id)
     assert_app_access(current_user, app_id)
-    count = await episodic.delete_all_for_user(pg, user_id, app_id)
+    ids = await episodic.delete_all_ids_for_user(pg, user_id, app_id)
+    facts_forgotten = 0
+    if ids:
+        try:
+            facts_forgotten = await semantic.unlink_events(
+                neo, user_id=user_id, event_ids=ids, app_id=app_id)
+        except Exception as exc:
+            logger.warning("Events deleted, but their facts were not unlinked: %s", exc,
+                           extra={"user_id": user_id, "app_id": app_id})
     logger.info(
         "Deleted all user memory",
-        extra={"user_id": user_id, "app_id": app_id, "events_deleted": count},
+        extra={"user_id": user_id, "app_id": app_id, "events_deleted": len(ids),
+               "facts_forgotten": facts_forgotten},
     )
-    return DeleteUserMemoryResponse(events_deleted=count, user_id=user_id, app_id=app_id)
+    return DeleteUserMemoryResponse(events_deleted=len(ids), user_id=user_id, app_id=app_id,
+                                    facts_forgotten=facts_forgotten)
 
 
 @router.post("/search", response_model=SearchResponse)

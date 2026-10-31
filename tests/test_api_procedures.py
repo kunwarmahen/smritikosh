@@ -368,8 +368,9 @@ class TestDeleteEvent:
 
 class TestDeleteUserMemory:
     @pytest.mark.asyncio
-    async def test_returns_count(self, client, mock_episodic):
-        mock_episodic.delete_all_for_user = AsyncMock(return_value=5)
+    async def test_returns_count(self, client, mock_episodic, mock_semantic):
+        mock_episodic.delete_all_ids_for_user = AsyncMock(return_value=[f"e{i}" for i in range(5)])
+        mock_semantic.unlink_events = AsyncMock(return_value=0)
         response = await client.delete("/memory/user/u1")
         assert response.status_code == 200
         body = response.json()
@@ -378,7 +379,25 @@ class TestDeleteUserMemory:
 
     @pytest.mark.asyncio
     async def test_app_id_forwarded(self, client, mock_episodic):
-        mock_episodic.delete_all_for_user = AsyncMock(return_value=0)
+        mock_episodic.delete_all_ids_for_user = AsyncMock(return_value=[])
         await client.delete("/memory/user/u1?app_id=myapp")
-        call_args = mock_episodic.delete_all_for_user.call_args
+        call_args = mock_episodic.delete_all_ids_for_user.call_args
         assert call_args.args[2] == "myapp" or call_args.kwargs.get("app_id") == "myapp"
+
+    @pytest.mark.asyncio
+    async def test_deleting_everything_forgets_the_facts_drawn_from_it(
+            self, client, mock_episodic, mock_semantic):
+        mock_episodic.delete_all_ids_for_user = AsyncMock(return_value=["e1", "e2"])
+        mock_semantic.unlink_events = AsyncMock(return_value=4)
+        response = await client.delete("/memory/user/u1")
+        assert response.json()["facts_forgotten"] == 4
+        assert mock_semantic.unlink_events.call_args.kwargs == {
+            "user_id": "u1", "event_ids": ["e1", "e2"], "app_id": "default"}
+
+    @pytest.mark.asyncio
+    async def test_neo4j_down_still_deletes_everything(self, client, mock_episodic, mock_semantic):
+        mock_episodic.delete_all_ids_for_user = AsyncMock(return_value=["e1"])
+        mock_semantic.unlink_events = AsyncMock(side_effect=RuntimeError("down"))
+        response = await client.delete("/memory/user/u1")
+        assert response.status_code == 200
+        assert response.json()["events_deleted"] == 1 and response.json()["facts_forgotten"] == 0

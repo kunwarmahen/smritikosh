@@ -164,6 +164,7 @@ class DeleteUserMemoryResult:
     events_deleted: int
     user_id: str
     app_id: str
+    facts_forgotten: int = 0
 
 
 @dataclass

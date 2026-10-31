@@ -393,11 +393,26 @@ class SemanticMemory:
 
         Returns how many of the user's facts were removed.
         """
+        return await self.unlink_events(
+            session, user_id=user_id, event_ids=[event_id], app_id=app_id)
+
+    async def unlink_events(
+        self,
+        session: AsyncSession,
+        *,
+        user_id: str,
+        event_ids: list[str],
+        app_id: str = "default",
+    ) -> int:
+        """``unlink_event`` for many events at once (deleting all of a user's
+        memories). Returns how many of the user's facts were removed."""
+        if not event_ids:
+            return 0
         result = await session.run(
             """
             MATCH (u:User {user_id: $user_id, app_id: $app_id})-[r]->(f:Fact)
-            WHERE $event_id IN coalesce(r.source_event_ids, [])
-            SET r.source_event_ids = [x IN r.source_event_ids WHERE x <> $event_id]
+            WHERE any(x IN coalesce(r.source_event_ids, []) WHERE x IN $event_ids)
+            SET r.source_event_ids = [x IN r.source_event_ids WHERE NOT x IN $event_ids]
             WITH r, f
             WHERE size(r.source_event_ids) = 0
             DELETE r
@@ -409,7 +424,7 @@ class SemanticMemory:
             """,
             user_id=user_id,
             app_id=app_id,
-            event_id=event_id,
+            event_ids=[str(i) for i in event_ids],
         )
         summary = await result.consume()
         return summary.counters.relationships_deleted

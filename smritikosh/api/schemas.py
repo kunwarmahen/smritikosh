@@ -583,6 +583,7 @@ class DeleteUserMemoryResponse(BaseModel):
     events_deleted: int
     user_id: str
     app_id: str
+    facts_forgotten: int = 0   # facts whose every source was among the deleted events
 
 
 # ── POST /admin/reconsolidate ─────────────────────────────────────────────────

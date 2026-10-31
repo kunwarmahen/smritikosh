@@ -301,7 +301,7 @@ class TestUnlinkEvent:
 
         assert removed == 2
         kwargs = session.run.call_args[1]
-        assert kwargs == {"user_id": "u1", "app_id": "default", "event_id": "e1"}
+        assert kwargs == {"user_id": "u1", "app_id": "default", "event_ids": ["e1"]}
 
     async def test_only_a_fact_with_no_source_left_is_removed(self):
         session = make_mock_session()
@@ -310,6 +310,11 @@ class TestUnlinkEvent:
 
         cypher = session.run.call_args[0][0]
         assert "size(r.source_event_ids) = 0" in cypher
+
+    async def test_no_events_runs_nothing(self):
+        session = make_mock_session()
+        assert await SemanticMemory().unlink_events(session, user_id="u1", event_ids=[]) == 0
+        session.run.assert_not_called()
 
 
 class TestGetFacts:
@@ -475,6 +480,10 @@ class TestSemanticMemoryDB:
         # Clean up test data
         async with self.driver.session() as session:
             await session.run("MATCH (n) WHERE n.user_id STARTS WITH 'test_' DETACH DELETE n")
+        # Each test runs on its own event loop; a driver opened on this one
+        # must not serve the next ("Future attached to a different loop").
+        from smritikosh.db.neo4j import close_neo4j
+        await close_neo4j()
 
     async def test_upsert_and_retrieve_fact(self):
         async with self.driver.session() as session:
@@ -679,3 +688,20 @@ class TestSemanticMemoryDB:
         assert facts["home"] == 1.0                       # labelled: never decayed
         assert 0.85 < facts["city"] < 0.92                # stable: 360-day half-life
         assert 0.45 < facts["active"] < 0.55              # transient: 60-day half-life
+
+    async def test_unlink_events_takes_out_every_deleted_event_at_once(self):
+        async with self.driver.session() as session:
+            await self.semantic.upsert_fact(
+                session, user_id="test_u16", category="tool", key="editor",
+                value="test-many only-deleted", source_event_ids=["e1", "e2"])
+            await self.semantic.upsert_fact(
+                session, user_id="test_u16", category="tool", key="shell",
+                value="test-many still-backed", source_event_ids=["e2", "e3"])
+            removed = await self.semantic.unlink_events(
+                session, user_id="test_u16", event_ids=["e1", "e2"])
+            facts = await self.semantic.get_facts(session, "test_u16")
+            await session.run("MATCH (f:Fact) WHERE f.value STARTS WITH 'test-many' DETACH DELETE f")
+
+        assert removed == 1
+        assert [(f.value, f.source_event_ids) for f in facts] == [("test-many still-backed", ["e3"])]
+

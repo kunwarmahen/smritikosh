@@ -2257,7 +2257,7 @@ curl -X DELETE http://localhost:8080/memory/event/a3f1c2d4-... \
 {"deleted": true, "event_id": "a3f1c2d4-...", "facts_forgotten": 1}
 ```
 
-`deleted` is `false` when there was no such event. When Neo4j is down the event is still deleted and `facts_forgotten` is `0`. `DELETE /memory/user/{user_id}` removes events only; the user's facts stay.
+`deleted` is `false` when there was no such event. When Neo4j is down the event is still deleted and `facts_forgotten` is `0`. `DELETE /memory/user/{user_id}` does the same for every event of the user: their facts go too (`facts_forgotten`), except ones with no source event.
 
 ---
 
@@ -4313,7 +4313,9 @@ Tests are organised into three opt-in groups:
 |---|---|---|
 | `live` | Real API keys in `.env` (Anthropic / OpenAI / Gemini) | `pytest -m live` |
 | `ollama` | Local Ollama server (`ollama serve`) | `pytest -m ollama` |
-| `db` | Running Docker databases (`docker compose up -d`) | `pytest -m db` |
+| `db` | Throwaway databases, and `SMRITIKOSH_TEST_DATABASES=1` | `pytest -m db` |
+
+**The `db` tests drop tables and delete graph nodes.** They never run against a database that holds real memories: unless `SMRITIKOSH_TEST_DATABASES=1` is set and the database named in `POSTGRES_URL` ends in `_test`, every one of them is skipped. Point `POSTGRES_URL` and `NEO4J_URI` at throwaway containers for them, never at the ones your server uses.
 
 Examples:
 
@@ -4321,8 +4323,9 @@ Examples:
 # Only unit tests (default)
 pytest
 
-# Unit tests + DB integration tests
-pytest -m db
+# Unit tests + DB integration tests, against throwaway databases
+SMRITIKOSH_TEST_DATABASES=1 POSTGRES_URL=postgresql+asyncpg://smritikosh:smritikosh@localhost:15432/smritikosh_test \
+  NEO4J_URI=bolt://localhost:17687 pytest -m db
 
 # Everything including live LLM calls
 pytest -m "live or ollama or db"

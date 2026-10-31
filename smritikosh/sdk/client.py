@@ -541,6 +541,7 @@ class SmritikoshClient:
             events_deleted=data["events_deleted"],
             user_id=data["user_id"],
             app_id=data["app_id"],
+            facts_forgotten=data.get("facts_forgotten", 0),
         )
 
     async def reconsolidate(
