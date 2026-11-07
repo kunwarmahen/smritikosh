@@ -295,7 +295,7 @@ class SmritikoshClient:
         belief's ``belief:<id>``: hand either to :meth:`mark_used`.
         """
         return await self._post("/memory/profile", {
-            "user_id": user_id, "query": query, "app_id": app_id or self.app_id})
+            "user_id": user_id, "query": query, "app_id": app_id or self._app_id})
 
     async def submit_feedback(
         self,

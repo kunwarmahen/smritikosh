@@ -5,6 +5,7 @@ Uses respx to mock HTTP responses — no real server needed.
 Live tests against a running server are gated behind @pytest.mark.live.
 """
 
+import json
 import pytest
 import respx
 from httpx import Response
@@ -549,3 +550,24 @@ class TestGetIdentity:
         with pytest.raises(SmritikoshError) as exc_info:
             await client.get_identity(user_id="alice")
         assert exc_info.value.status_code == 500
+
+
+# ── profile() ─────────────────────────────────────────────────────────────────
+
+class TestProfile:
+    @respx.mock
+    async def test_uses_client_app_id_by_default(self, client):
+        route = respx.post(f"{BASE_URL}/memory/profile").mock(
+            return_value=Response(200, json={"facts": [], "beliefs": [], "memories": []})
+        )
+        await client.profile(user_id="alice", query="hi")
+        body = json.loads(route.calls[0].request.content)
+        assert body == {"user_id": "alice", "query": "hi", "app_id": client._app_id}
+
+    @respx.mock
+    async def test_app_id_overridden_per_call(self, client):
+        route = respx.post(f"{BASE_URL}/memory/profile").mock(
+            return_value=Response(200, json={})
+        )
+        await client.profile(user_id="alice", app_id="other")
+        assert json.loads(route.calls[0].request.content)["app_id"] == "other"
