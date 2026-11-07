@@ -217,10 +217,12 @@ async def remember(
     keeping and phrased it as one self-contained sentence
     (e.g. "Lives near RDU (Raleigh-Durham airport)").
 
-    A statement filed with a ``topic`` in its metadata goes straight into
-    the knowledge graph as a fact, under that topic's category, and lives
-    as long as the memory: ``about`` (whose fact), ``key`` (which one) and
-    ``lifetime_days`` (how long it lasts unused) ride along too.
+    The statement is kept as given. One filed with a ``topic`` in its
+    metadata also gets a fact at the next consolidation cycle, under that
+    topic's category and its ``about`` (whose fact) and ``key`` (which
+    one), worded short there; it lives as long as the memory, which
+    ``lifetime_days`` (how long it lasts unused) sets. Say the thing and
+    what it is -- not how to use it later, and not where it was seen.
 
     Args:
         statement: The fact, as one standalone sentence.

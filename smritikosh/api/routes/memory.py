@@ -54,7 +54,6 @@ from smritikosh.db.neo4j import get_neo4j_session
 from smritikosh.db.postgres import get_session
 from smritikosh.memory.episodic import EpisodicMemory
 from smritikosh.memory.hippocampus import Hippocampus
-from smritikosh.memory.labels import AGENT_LABELLED, labelled_fact
 from smritikosh.memory.semantic import SemanticMemory
 from smritikosh.api.deps import get_semantic
 
@@ -124,10 +123,10 @@ async def capture_event(
         logger.exception("Hippocampus encode failed", extra={"user_id": body.user_id})
         raise HTTPException(status_code=500, detail=f"Memory encoding failed: {exc}") from exc
 
+    # A statement filed with a topic gets its fact at the next consolidation
+    # cycle, worded short there (memory/labels.py); until then the profile
+    # hands it over as a memory.
     facts = len(result.facts)
-    fact = labelled_fact(body.metadata, body.content) if not extract else None
-    if fact is not None:
-        facts += await _file_labelled(hippocampus, pg, neo, body, result.event, fact)
 
     return EventResponse(
         event_id=str(result.event.id),
@@ -136,30 +135,6 @@ async def capture_event(
         facts_extracted=facts,
         extraction_failed=result.extraction_failed,
     )
-
-
-async def _file_labelled(hippocampus, pg, neo, body, event, fact: dict) -> int:
-    """A labelled statement files itself in the graph and counts as
-    consolidated (memory/labels.py). Neo4j down: the event stays
-    unconsolidated and consolidation reads it later, as any other."""
-    try:
-        await hippocampus.semantic.set_fact(
-            neo, user_id=body.user_id, app_id=body.app_id,
-            category=fact["category"], key=fact["key"], value=fact["value"],
-            confidence=fact["confidence"], source_event_ids=[str(event.id)],
-            source_type=AGENT_LABELLED,
-        )
-        # its own anchor: search ranks consolidated non-anchors down, and a
-        # labelled statement is nobody's leftover
-        await hippocampus.episodic.mark_consolidated(
-            pg, [event.id], user_id=body.user_id, app_id=body.app_id,
-            anchor_event_id=event.id,
-        )
-        return 1
-    except Exception as exc:
-        logger.warning("Labelled statement not filed in the graph: %s", exc,
-                       extra={"user_id": body.user_id, "event_id": str(event.id)})
-        return 0
 
 
 @router.post("/fact", response_model=FactResponse, status_code=201)

@@ -26,8 +26,14 @@ What makes the facts worth having, each one a failure seen in real data:
   * ONLY ABOUT THE USER'S LIFE. No facts about the conversation or the
     system (warnings, "contradictions"), dropped by the prompt and by a
     key filter; no one-off booking codes. Nothing at all is a good answer.
-  * Statements a client filed with a topic (memory/labels.py) are already
-    consolidated when they arrive, so this never rewords them.
+  * A STATEMENT FILED WITH A TOPIC GETS A SHORT FACT (memory/labels.py).
+    Its memory keeps the client's words; its fact is worded here, in the
+    client's slot, as the thing and its value alone -- no advice to the
+    agent, no "visible in their inbox". One model call words every such
+    statement in the cycle; when it fails they are trimmed by rule and
+    filed anyway, since the cycle marks the user done either way. They
+    are worded before the minimum-events guard: one new labelled memory
+    is enough to run.
   * A statement stored as-is (extract=false, ``source_meta.as_is``) keeps its
     own embedding and words: never the batch anchor, never summarised over,
     never ranked down as superseded.
@@ -46,7 +52,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from smritikosh.db.models import SYSTEM_SOURCE_TYPES, Event, RelationType, SourceType
 from smritikosh.llm.adapter import LLMAdapter
 from smritikosh.memory.episodic import EpisodicMemory
-from smritikosh.memory.labels import fact_key
+from smritikosh.memory.labels import (
+    AGENT_LABELLED,
+    MAX_FACT_CHARS,
+    fact_key,
+    labelled_fact,
+    trim_statement,
+)
 from smritikosh.memory.narrative import NarrativeMemory
 from smritikosh.memory.semantic import FactRecord, SemanticMemory
 
@@ -56,6 +68,9 @@ logger = logging.getLogger(__name__)
 
 MIN_EVENTS_TO_CONSOLIDATE = 5     # skip if fewer unconsolidated events exist
 BATCH_SIZE = 10                    # events processed per LLM call
+#: How many characters a labelled fact's wording may grow past the rule's
+#: trim before it counts as the model adding to it.
+REWORD_SLACK = 20
 MAX_KNOWN_FACTS = 150              # already-known facts shown, to reuse their keys
 
 #: Keys that are the extractor talking about itself, not about the user.
@@ -131,6 +146,27 @@ _CONSOLIDATION_EXAMPLE = {
 }
 
 
+_LABELLED_SCHEMA = (
+    "facts: list of objects, one per numbered statement, with: "
+    "n (int, the statement's number), "
+    "fact (string): the fact alone, as one short sentence in the third person "
+    "that names the thing and its value and reads on its own with no other "
+    "context. Keep names, numbers and places exactly; keep at most one short "
+    "detail in brackets when it identifies the thing or what it plainly means "
+    "-- '(policy number ends 4K)', '(Eastern time)'. Leave out advice on how to "
+    "use it ('so a later question should ...'), where it was seen ('visible in "
+    "their inbox', 'from their email'), and anything the statement does not "
+    "say. Never add a fact. A statement already short and plain is returned "
+    "as it is."
+)
+
+_LABELLED_EXAMPLE = {"facts": [
+    {"n": 1, "fact": "Their auto insurer is Acme Mutual (policy number ends 4K)."},
+    {"n": 2, "fact": "Lives in Lisbon, Portugal (Western European Time)."},
+    {"n": 3, "fact": "Naina's email is naina@example.com."},
+]}
+
+
 # ── Result type ───────────────────────────────────────────────────────────────
 
 @dataclass
@@ -143,6 +179,7 @@ class ConsolidationResult:
     links_created: int = 0
     batches: int = 0
     embeddings_updated: int = 0    # batches where summary was re-embedded
+    labelled_filed: int = 0        # facts filed from client-labelled statements
     skipped: bool = False          # True if fewer than MIN_EVENTS_TO_CONSOLIDATE
     skip_reason: str = ""
 
@@ -219,6 +256,33 @@ class Consolidator:
             result.events_consolidated += len(system)
         events = own
 
+        # ── 1b. Statements a client filed with a topic: a short fact each ─
+        labelled = [e for e in events if _labelled(e) is not None]
+        if labelled:
+            filed, fact_list = await self._file_labelled(
+                pg_session, neo_session, user_id, app_id, labelled)
+            result.labelled_filed = filed
+            result.facts_distilled += filed
+            result.events_consolidated += len(labelled)
+            if self.audit:
+                from smritikosh.audit.logger import AuditEvent, EventType
+                await self.audit.emit(AuditEvent(
+                    event_type=EventType.MEMORY_CONSOLIDATED,
+                    user_id=user_id,
+                    app_id=app_id,
+                    payload={
+                        "events_in_batch": len(labelled),
+                        "event_ids": [str(e.id) for e in labelled],
+                        "summary": f"{filed} labelled statement(s) filed as facts",
+                        "facts_distilled": filed,
+                        "links_created": 0,
+                        "facts": fact_list,
+                        "summary_embedding_updated": False,
+                    },
+                ))
+            done = {e.id for e in labelled}
+            events = [e for e in events if e.id not in done]
+
         # ── 2. Guard ──────────────────────────────────────────────────────
         if len(events) < self.min_events:
             result.skipped = True
@@ -275,6 +339,68 @@ class Consolidator:
             },
         )
         return result
+
+    # ── Labelled statements ────────────────────────────────────────────────
+
+    async def word_labelled(self, events: list[Event]) -> list[tuple[Event, dict]]:
+        """Each labelled event with the fact it files as, the value worded
+        short by the model -- or trimmed by rule when the model fails or
+        answers with nothing usable. Writes nothing."""
+        out: list[tuple[Event, dict]] = []
+        for start in range(0, len(events), self.batch_size * 2):
+            chunk = events[start:start + self.batch_size * 2]
+            worded: dict[int, str] = {}
+            try:
+                reply = await self.llm.extract_structured(
+                    prompt=_build_labelled_prompt(chunk),
+                    schema_description=_LABELLED_SCHEMA,
+                    example_output=_LABELLED_EXAMPLE,
+                )
+                for row in reply.get("facts", []) or []:
+                    try:
+                        worded[int(row["n"]) - 1] = str(row.get("fact") or "")
+                    except (KeyError, ValueError, TypeError):
+                        continue
+            except Exception as exc:
+                logger.warning("Wording labelled statements failed -- trimmed by "
+                               "rule instead: %s", exc)
+            for i, event in enumerate(chunk):
+                fact = _labelled(event)
+                if fact is None:
+                    continue
+                fact["value"] = _usable(worded.get(i, ""), fact["value"])
+                out.append((event, fact))
+        return out
+
+    async def _file_labelled(
+        self,
+        pg_session: AsyncSession,
+        neo_session: NeoSession,
+        user_id: str,
+        app_id: str,
+        events: list[Event],
+    ) -> tuple[int, list[dict]]:
+        """Word and file each labelled statement's fact; each event is its
+        own consolidation anchor, so search never ranks it down."""
+        filed, fact_list = 0, []
+        for event, fact in await self.word_labelled(events):
+            try:
+                await self.semantic.set_fact(
+                    neo_session, user_id=user_id, app_id=app_id,
+                    category=fact["category"], key=fact["key"], value=fact["value"],
+                    confidence=fact["confidence"], source_event_ids=[str(event.id)],
+                    source_type=AGENT_LABELLED,
+                )
+                filed += 1
+                fact_list.append({"category": fact["category"], "key": fact["key"],
+                                  "value": fact["value"]})
+            except (KeyError, ValueError) as exc:
+                logger.warning("Skipping invalid labelled fact: %s", exc,
+                               extra={"fact": fact})
+            await self.episodic.mark_consolidated(
+                pg_session, [event.id], user_id=user_id, app_id=app_id,
+                anchor_event_id=event.id)
+        return filed, fact_list
 
     # ── Batch processing ───────────────────────────────────────────────────
 
@@ -526,6 +652,34 @@ def _build_consolidation_prompt(
         f"event_summaries (list of exactly {len(batch)} concise one-sentence summaries, "
         "one per interaction in order), and facts (list of structured facts)."
     )
+    return "\n".join(lines)
+
+
+def _labelled(event: Event) -> dict | None:
+    """The fact a statement filed with a topic files as, or None."""
+    return labelled_fact(getattr(event, "event_metadata", None), event.raw_text or "")
+
+
+def _usable(worded: str, trimmed: str) -> str:
+    """The model's wording, trimmed by rule too -- unless it is empty or
+    has grown well past the rule's own trim (a model adding what the
+    statement never said), when the trim is used instead. A few words of
+    rewording ("Their auto insurer is Acme Mutual") are slack, not invention."""
+    value = trim_statement(worded)
+    if (not value or len(value) > MAX_FACT_CHARS
+            or len(value) > len(trimmed) + REWORD_SLACK):
+        return trimmed
+    return value
+
+
+def _build_labelled_prompt(events: list[Event]) -> str:
+    lines = ["Each numbered statement is a fact about a user that an assistant "
+             "chose to keep, with the slot it is filed under. Write each one's "
+             "fact, short.", ""]
+    for i, event in enumerate(events, 1):
+        fact = _labelled(event) or {}
+        lines.append(f"{i}. [{fact.get('category')}/{fact.get('key')}] "
+                     f"{(event.raw_text or '')[:500]}")
     return "\n".join(lines)
 
 

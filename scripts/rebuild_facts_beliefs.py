@@ -17,8 +17,9 @@ facts and beliefs are printed side by side.
 
 --label first files the user's memories that have no topic: the LLM
 picks one from the fixed list (home, work, family, …), with whose fact
-it is and which thing it names. A labelled memory files its own fact
-with no LLM rewording, and lasts as its topic says (a project 60 days
+it is and which thing it names. A labelled memory's fact keeps its
+slot and is worded short by the consolidation LLM (the thing and its
+value, no advice, no "seen in their inbox"), and lasts as its topic says (a project 60 days
 unused, an account 365; home, family and the like until replaced or
 forgotten). Shown in the dry run; written only with --apply.
 
@@ -28,9 +29,9 @@ forgotten). Shown in the dry run; written only with --apply.
   3. delete the user's fact links in the graph (and facts left orphaned)
      and their beliefs -- except retracted ones, which are what stops a
      wrong belief coming back;
-  4. file each labelled memory's fact directly;
-  5. mark the rest unconsolidated and run consolidation until none are left;
-  6. mine beliefs once, then fold any near-duplicates.
+  4. mark every memory unconsolidated and run consolidation until none
+     are left -- the labelled ones are worded into short facts first;
+  5. mine beliefs once, then fold any near-duplicates.
 
 Nothing else needs rebuilding: /context is assembled on each request from
 memories, facts and beliefs.
@@ -60,7 +61,7 @@ from smritikosh.api.deps import get_episodic, get_llm, get_narrative, get_semant
 from smritikosh.db.models import SYSTEM_SOURCE_TYPES, BeliefStatus, Event, UserBelief  # noqa: E402
 from smritikosh.db.neo4j import neo4j_session  # noqa: E402
 from smritikosh.db.postgres import db_session  # noqa: E402
-from smritikosh.memory.labels import AGENT_LABELLED, labelled_fact  # noqa: E402
+from smritikosh.memory.labels import labelled_fact  # noqa: E402
 from smritikosh.memory.semantic import FactRecord, UserProfile  # noqa: E402
 from smritikosh.processing.belief_miner import (  # noqa: E402
     _BELIEF_EXAMPLE,
@@ -208,10 +209,13 @@ async def dry_facts(events: list[Event], labels: dict[str, dict], user: str, app
                 if str(e.id) in labels else e.event_metadata)
         fact = labelled_fact(meta, e.raw_text)
         (labelled if fact else rest).append((e, fact))
-    for _e, fact in labelled:
-        recorder.facts[(fact["category"], fact["key"])] = fact["value"]
     consolidator = Consolidator(llm=get_llm(), episodic=_NoWrites(), semantic=recorder,
                                 narrative=None)
+    for e, _fact in labelled:
+        if str(e.id) in labels:      # worded as it will be once labelled
+            e.event_metadata = labelled_metadata(e.event_metadata, labels[str(e.id)])
+    for _e, fact in await consolidator.word_labelled([e for e, _ in labelled]):
+        recorder.facts[(fact["category"], fact["key"])] = fact["value"]
     plain = [e for e, _ in rest]
     for start in range(0, len(plain), BATCH_SIZE):
         batch = plain[start:start + BATCH_SIZE]
@@ -271,27 +275,12 @@ async def apply(user: str, app: str, events, beliefs, facts, labels: dict[str, d
             "WITH DISTINCT f WHERE NOT (f)--() DELETE f", u=user, a=app)
     print("cleared the old facts and beliefs (retracted beliefs kept)")
 
-    filed = 0
-    async with db_session() as pg, neo4j_session() as neo:
-        rows = (await pg.execute(select(Event).where(
-            Event.user_id == user, Event.app_id == app))).scalars().all()
-        plain = []
-        for e in rows:
-            fact = labelled_fact(e.event_metadata, e.raw_text)
-            if fact is None:
-                plain.append(e.id)
-                continue
-            await semantic.set_fact(neo, user_id=user, app_id=app, category=fact["category"],
-                                    key=fact["key"], value=fact["value"],
-                                    confidence=fact["confidence"],
-                                    source_event_ids=[str(e.id)], source_type=AGENT_LABELLED)
-            await episodic.mark_consolidated(pg, [e.id], user_id=user, app_id=app,
-                                             anchor_event_id=e.id)
-            filed += 1
-        if plain:
-            await pg.execute(update(Event).where(Event.id.in_(plain)).values(
-                consolidated=False, consolidation_anchor=False, summary=None))
-    print(f"filed {filed} labelled memories as facts; {len(plain)} left for consolidation")
+    async with db_session() as pg:
+        await pg.execute(update(Event).where(
+            Event.user_id == user, Event.app_id == app,
+            Event.source_type.not_in(list(SYSTEM_SOURCE_TYPES))).values(
+            consolidated=False, consolidation_anchor=False, summary=None))
+    print("marked every memory for consolidation again")
 
     consolidator = Consolidator(llm=get_llm(), episodic=episodic, semantic=semantic,
                                 narrative=get_narrative(), min_events=1)
@@ -299,7 +288,8 @@ async def apply(user: str, app: str, events, beliefs, facts, labels: dict[str, d
         async with db_session() as pg, neo4j_session() as neo:
             result = await consolidator.run(pg, neo, user_id=user, app_id=app)
         print(f"  consolidation: {result.events_consolidated} memories, "
-              f"{result.facts_distilled} facts", file=sys.stderr)
+              f"{result.facts_distilled} facts ({result.labelled_filed} from labels)",
+              file=sys.stderr)
         if result.skipped or not result.events_consolidated:
             break
 
@@ -356,7 +346,7 @@ async def main() -> None:
 
     show_facts("facts now", [(f.category, f.key, f.value) for f in facts])
     new_facts, filed = await dry_facts(events, labels, args.user, args.app)
-    show_facts(f"facts after a rebuild ({filed} filed straight from labels)",
+    show_facts(f"facts after a rebuild ({filed} worded from labelled memories)",
                [(c, k, v) for (c, k), v in new_facts.items()])
     print(f"\nbeliefs now: {len(active)}; after a rebuild, one mining run would keep:")
     for statement, confidence, n in await dry_beliefs(new_facts, events):

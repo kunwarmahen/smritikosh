@@ -2272,7 +2272,7 @@ curl -X POST http://localhost:8080/memory/event \
 
 To turn extraction off for every request on a server, set `ENCODE_EXTRACT=false`.
 
-**A statement that says where it goes.** Stored with `extract: false` and a `topic` in its `metadata`, a statement files itself in the knowledge graph as one fact, worded as the client wrote it: no LLM rewords it and invents a key. The topic picks the category; `key` (and `about`, for someone else's fact) pick the key; the event is its source and is marked consolidated. Its fact goes when the event goes (forget, replace, lifetime).
+**A statement that says where it goes.** Stored with `extract: false` and a `topic` in its `metadata`, a statement is kept word for word as the memory, and gets one fact at the next consolidation cycle. The topic picks the category; `key` (and `about`, for someone else's fact) pick the key, so the slot is the client's and no LLM invents one. The value is worded short there: the thing and its value, with at most one short detail in brackets. A memory reading *"Has Acme Mutual as their auto insurer (policy ending 4K, visible in their mail inbox), so a later 'who handles my car insurance' question should default to Acme Mutual"* gets the fact *"Their auto insurer is Acme Mutual (policy number ends 4K)."*: no advice to the agent, no note of where it was seen, since a fact goes into every prompt. If the LLM call fails, a rule does the trimming (`memory/labels.py`, `trim_statement`) and the fact is filed anyway. Until the cycle runs the statement has no fact, and `/memory/profile` hands it over as a memory, so nothing is missing in between. Its fact goes when the event goes (forget, replace, lifetime).
 
 | `topic` | category | | `topic` | category |
 |---|---|---|---|---|
@@ -2290,7 +2290,7 @@ curl -X POST http://localhost:8080/memory/event \
        "metadata": {"topic": "contact", "about": "Ravi", "key": "email", "lifetime_days": null}}'
 ```
 
-That files `identity/ravi.email`. `lifetime_days` (optional) is how long it lasts unused; see Synaptic pruning. `facts_extracted` is `1` once filed; with Neo4j down it is `0` and consolidation reads the statement later.
+Its fact is `identity/ravi.email`, at the next cycle. `lifetime_days` (optional) is how long it lasts unused; see Synaptic pruning. `facts_extracted` is `0`: the fact is made by consolidation, not at store time.
 
 ---
 
@@ -4630,7 +4630,8 @@ What keeps the facts worth having:
 - **One value per key.** A new value replaces the old one under the same `category`/`key` instead of sitting beside it. A rewording (two thirds of the words shared) keeps the old value's source events; a real change does not.
 - **Whose fact.** `subject` names the person when it isn't the user, and their name goes into the key (`naina.email`), so a relative's date of birth never lands on the user's own.
 - **Only about the user's life.** No facts about the conversation or the system (warnings, "contradictions"), no one-off booking codes; an empty list is a fine answer.
-- **Skipped:** statements a client filed with a topic (they file themselves, see `POST /memory/event`) and events Smritikosh's own agents wrote (`agent_decision`, `agent_council`, `agent_meeting_prep`, and `agent_reflection` from older versions), which are marked done unread. The reflection agent keeps its findings in the `reflections` table and no longer writes them into memory.
+- **Worded, not summarised:** statements a client filed with a topic get one short fact each, in the client's slot, from one LLM call per cycle, and do not count toward the 5-event minimum (see `POST /memory/event`).
+- **Skipped:** events Smritikosh's own agents wrote (`agent_decision`, `agent_council`, `agent_meeting_prep`, and `agent_reflection` from older versions), which are marked done unread. The reflection agent keeps its findings in the `reflections` table and no longer writes them into memory.
 
 ### Synaptic pruning (every 24 hours)
 
@@ -4869,7 +4870,7 @@ uv run python scripts/rebuild_facts_beliefs.py --user alice
 # Also file memories that have no topic yet (an LLM picks one per memory), shown first
 uv run python scripts/rebuild_facts_beliefs.py --user alice --label
 
-# Do it: back up, clear, file the labelled ones, consolidate the rest, mine beliefs
+# Do it: back up, clear, consolidate every memory again (labelled ones worded short), mine beliefs
 uv run python scripts/rebuild_facts_beliefs.py --user alice --label --apply
 ```
 

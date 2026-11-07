@@ -292,11 +292,11 @@ class TestCaptureEvent:
         assert kwargs["source_meta"] == {"as_is": True}   # consolidation leaves it alone
 
     @pytest.mark.asyncio
-    async def test_a_labelled_statement_files_its_own_fact(self, client, mock_hippocampus):
+    async def test_a_labelled_statement_is_kept_as_sent_and_waits_for_its_fact(
+            self, client, mock_hippocampus):
         stored = make_encoded_memory(facts_count=0)
         mock_hippocampus.encode_preextracted = AsyncMock(return_value=stored)
         mock_hippocampus.semantic = AsyncMock()
-        mock_hippocampus.semantic.set_fact = AsyncMock(return_value=(None, []))
         mock_hippocampus.episodic = AsyncMock()
 
         response = await client.post("/memory/event", json={
@@ -306,30 +306,11 @@ class TestCaptureEvent:
         })
 
         assert response.status_code == 201
-        assert response.json()["facts_extracted"] == 1
-        kwargs = mock_hippocampus.semantic.set_fact.call_args.kwargs
-        assert (kwargs["category"], kwargs["key"], kwargs["value"]) == (
-            "identity", "naina.email", "Naina's email is n@example.com.")
-        assert kwargs["source_event_ids"] == [str(stored.event.id)]
-        assert kwargs["source_type"] == "agent_labelled"
-        mock_hippocampus.episodic.mark_consolidated.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_a_labelled_statement_with_neo4j_down_waits_for_consolidation(
-            self, client, mock_hippocampus):
-        mock_hippocampus.encode_preextracted = AsyncMock(
-            return_value=make_encoded_memory(facts_count=0))
-        mock_hippocampus.semantic = AsyncMock()
-        mock_hippocampus.semantic.set_fact = AsyncMock(side_effect=RuntimeError("down"))
-        mock_hippocampus.episodic = AsyncMock()
-
-        response = await client.post("/memory/event", json={
-            "user_id": "u1", "content": "Lives in Cary, NC.", "extract": False,
-            "metadata": {"topic": "home"},
-        })
-
-        assert response.status_code == 201
         assert response.json()["facts_extracted"] == 0
+        kwargs = mock_hippocampus.encode_preextracted.call_args.kwargs
+        assert kwargs["raw_text"] == "Naina's email is n@example.com."
+        # its fact is worded by the next consolidation cycle, not copied now
+        mock_hippocampus.semantic.set_fact.assert_not_called()
         mock_hippocampus.episodic.mark_consolidated.assert_not_called()
 
     @pytest.mark.asyncio

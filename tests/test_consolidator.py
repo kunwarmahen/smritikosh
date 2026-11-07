@@ -600,3 +600,80 @@ class TestConsolidatorLinks:
 
         mock_narrative.create_link.assert_not_called()
         assert result.links_created == 0
+
+
+# ── Labelled statements: a short fact each, in the client's slot ─────────────
+#
+# The bias: THE MEMORY KEEPS THE CLIENT'S WORDS, THE FACT IS SHORT. A
+# statement filed with a topic gets its fact here, worded by the model as
+# the thing and its value; it keeps the client's slot; a failed model call
+# still files a fact (trimmed by rule); and one labelled memory is enough
+# to run, below the minimum-events guard.
+
+AMICA = ("Has Acme Mutual as their auto insurer (policy ending 4K, visible in their mail "
+         "inbox), so a later question should default to Acme Mutual rather than asking.")
+
+
+def make_labelled(text: str = AMICA, meta: dict | None = None) -> MagicMock:
+    event = make_event(0, text)
+    event.event_metadata = meta or {"topic": "account", "key": "auto_insurer"}
+    event.source_meta = {"as_is": True}
+    event.source_type = "api_explicit"
+    return event
+
+
+class TestLabelledStatements:
+    @pytest.mark.asyncio
+    async def test_one_labelled_memory_gets_a_short_fact_in_its_own_slot(
+            self, consolidator, mock_llm, mock_episodic, mock_semantic):
+        event = make_labelled()
+        mock_episodic.get_unconsolidated.return_value = [event]
+        mock_llm.extract_structured.return_value = {"facts": [
+            {"n": 1, "fact": "Their auto insurer is Acme Mutual (policy number ends 4K)."}]}
+
+        result = await consolidator.run(AsyncMock(), AsyncMock(), user_id="u1")
+
+        kwargs = mock_semantic.set_fact.call_args.kwargs
+        assert (kwargs["category"], kwargs["key"]) == ("finance", "auto_insurer")
+        assert kwargs["value"] == "Their auto insurer is Acme Mutual (policy number ends 4K)."
+        assert kwargs["source_event_ids"] == [str(event.id)]
+        assert kwargs["source_type"] == "agent_labelled"
+        assert kwargs["confidence"] == 1.0
+        assert result.labelled_filed == 1
+        assert event.raw_text == AMICA           # the memory itself is untouched
+        mock_episodic.mark_consolidated.assert_awaited_once()
+        assert mock_episodic.mark_consolidated.call_args.kwargs["anchor_event_id"] == event.id
+
+    @pytest.mark.asyncio
+    async def test_a_failed_model_call_still_files_the_fact_trimmed_by_rule(
+            self, consolidator, mock_llm, mock_episodic, mock_semantic):
+        mock_episodic.get_unconsolidated.return_value = [make_labelled()]
+        mock_llm.extract_structured.side_effect = RuntimeError("ollama is down")
+
+        await consolidator.run(AsyncMock(), AsyncMock(), user_id="u1")
+
+        assert mock_semantic.set_fact.call_args.kwargs["value"] == \
+            "Has Acme Mutual as their auto insurer (policy ending 4K)."
+
+    @pytest.mark.asyncio
+    async def test_a_wording_longer_than_the_statement_is_not_used(
+            self, consolidator, mock_llm, mock_episodic, mock_semantic):
+        mock_episodic.get_unconsolidated.return_value = [
+            make_labelled("Lives in Chennai.", {"topic": "home"})]
+        mock_llm.extract_structured.return_value = {"facts": [
+            {"n": 1, "fact": "Lives in Chennai, India, and likes the beach there."}]}
+
+        await consolidator.run(AsyncMock(), AsyncMock(), user_id="u1")
+
+        assert mock_semantic.set_fact.call_args.kwargs["value"] == "Lives in Chennai."
+
+    @pytest.mark.asyncio
+    async def test_plain_memories_still_wait_for_the_minimum(
+            self, consolidator, mock_llm, mock_episodic, mock_semantic):
+        mock_episodic.get_unconsolidated.return_value = [make_labelled(), make_event(1)]
+        mock_llm.extract_structured.return_value = {"facts": []}
+
+        result = await consolidator.run(AsyncMock(), AsyncMock(), user_id="u1")
+
+        assert result.skipped                      # one plain memory: below the guard
+        assert mock_llm.extract_structured.await_count == 1   # the labelled wording only
