@@ -272,6 +272,17 @@ function Legend() {
 }
 
 // ── Source memories panel ─────────────────────────────────────────────────────
+/** The whole fact as the 3D hover tooltip -- escaped, since the library
+ *  renders it as HTML and a fact is the user's own text. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function nodeLabel3D(raw: any): string {
+  const node = raw as GraphNode;
+  if (node.node_type !== "fact" || !node.label) return "";
+  const safe = node.label.replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string);
+  return `<div style="max-width:320px;white-space:normal;font-size:12px;line-height:1.4">${safe}</div>`;
+}
+
 function normalizeText(text: string): string {
   return text.trim().toLowerCase().replace(/\s+/g, " ");
 }
@@ -314,7 +325,7 @@ function SourceMemoriesPanel({ fact, onClose }: { fact: SelectedFact; onClose: (
             <span className="inline-block w-2 h-2 rounded-sm flex-shrink-0" style={{ background: style.border }} />
             <span className="text-xs text-zinc-500 capitalize">{fact.category}</span>
           </div>
-          <p className="text-sm font-semibold text-zinc-100 truncate">{fact.label}</p>
+          <p className="text-sm font-semibold text-zinc-100 break-words whitespace-pre-wrap select-text">{fact.label}</p>
           <div className="flex items-center gap-3 mt-1.5">
             {fact.confidence != null && (
               <span className="text-xs text-zinc-500">{(fact.confidence * 100).toFixed(0)}% confidence</span>
@@ -400,6 +411,8 @@ export function IdentityFactGraph({ onClose }: { onClose?: () => void }) {
 
   // ── 2-D coordinate hit-test (avoids shadow-canvas linkedProp bug) ───────────
   const [cursor2D, setCursor2D] = useState<"default" | "pointer">("default");
+  // The whole fact on hover: the node itself only has room for ~20 characters.
+  const [hover2D, setHover2D] = useState<string>("");
 
   const hitTestNode2D = useCallback(
     (gx: number, gy: number, k: number): GraphNode | null => {
@@ -459,6 +472,7 @@ export function IdentityFactGraph({ onClose }: { onClose?: () => void }) {
       const k: number = (fg as any).zoom?.() ?? 1;
       const node = hitTestNode2D(coords.x, coords.y, k);
       setCursor2D(node?.node_type === "fact" ? "pointer" : "default");
+      setHover2D(node?.node_type === "fact" ? (node.label ?? "") : "");
     },
     [hitTestNode2D],
   );
@@ -820,10 +834,12 @@ export function IdentityFactGraph({ onClose }: { onClose?: () => void }) {
           nodeThreeObject={nodeThreeObject}
           nodeThreeObjectExtend={false}
           onNodeClick={handleNodeClick3D}
+          nodeLabel={nodeLabel3D}
         />
       ) : (
         <div
           style={{ width: "100%", height: "100%", cursor: cursor2D }}
+          title={hover2D || undefined}
           onClick={handle2DClick}
           onMouseMove={handle2DMouseMove}
         >

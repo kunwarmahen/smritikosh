@@ -31,6 +31,7 @@ export interface ForceGraph3DWrapperProps {
   nodeThreeObject?: AnyFn;
   nodeThreeObjectExtend?: boolean;
   onNodeClick?: AnyFn;
+  nodeLabel?: AnyFn | string;
 }
 
 export interface ForceGraph3DHandle {
@@ -129,6 +130,7 @@ export const ForceGraph3DWrapper = forwardRef<
     if (p.nodeThreeObject !== prev.nodeThreeObject && p.nodeThreeObject !== undefined) fg.nodeThreeObject(p.nodeThreeObject);
     if (p.nodeThreeObjectExtend !== prev.nodeThreeObjectExtend && p.nodeThreeObjectExtend !== undefined) fg.nodeThreeObjectExtend(p.nodeThreeObjectExtend);
     if (p.onNodeClick !== prev.onNodeClick && p.onNodeClick !== undefined) fg.onNodeClick(p.onNodeClick);
+    if (p.nodeLabel !== prev.nodeLabel && p.nodeLabel !== undefined) fg.nodeLabel(p.nodeLabel);
 
     prevPropsRef.current = { ...p };
   });
@@ -151,4 +153,5 @@ function applyAll(fg: any, props: ForceGraph3DWrapperProps) {
   if (props.nodeThreeObject !== undefined) fg.nodeThreeObject(props.nodeThreeObject);
   if (props.nodeThreeObjectExtend !== undefined) fg.nodeThreeObjectExtend(props.nodeThreeObjectExtend);
   if (props.onNodeClick !== undefined) fg.onNodeClick(props.onNodeClick);
+  if (props.nodeLabel !== undefined) fg.nodeLabel(props.nodeLabel);
 }

@@ -1904,7 +1904,8 @@ The Identity page includes an interactive **3D force-directed graph** (powered b
 - The logged-in user appears as the central orb
 - Facts are grouped radially by category — 23 categories spanning identity, location, role, skill, education, project, goal, interest, hobby, habit, preference, personality, relationship, pet, health, diet, belief, value, religion, finance, lifestyle, event, and tool
 - Each category has its own colour; a legend is shown in the bottom-left corner
-- Clicking a fact node opens a side panel showing the **contributing memories** — the specific events that caused that fact to be extracted
+- A node shows only the first 20 or so characters of its fact; hovering over it shows the whole fact (2D and 3D)
+- Clicking a fact node opens a side panel with the **whole fact** at the top and the **contributing memories** below it: the specific events that caused that fact to be extracted
 - The sidebar is collapsed by default; click the expand handle to open it
 
 ### Source badges
