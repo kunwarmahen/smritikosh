@@ -1280,7 +1280,7 @@ sdk-node/                    # TypeScript / Node.js SDK
 │   │                        #   interception, remember() tool, auto-inject (F1)
 │   ├── types.ts             # Branded types, request/response shapes
 │   ├── errors.ts            # SmritikoshError
-│   ├── client.test.ts       # 41 Vitest tests (all methods, error paths)
+│   ├── client.test.ts       # 45 Vitest tests (all methods, error paths)
 │   └── middleware.test.ts   # 44 Vitest tests (buffering, remember(), auto-inject)
 ├── README.md
 ├── package.json
@@ -4284,6 +4284,10 @@ if (!ctx.isEmpty()) {
 // Browse recent events
 const events = await client.getRecent({ userId: 'alice', limit: 5 });
 
+// A profile for the prompt, then say which parts the answer leaned on
+const profile = await client.profile({ userId: 'alice', query: 'a flight to Denver' });
+await client.markUsed({ userId: 'alice', eventIds: [profile.facts[0].id] });
+
 // Submit feedback
 await client.submitFeedback({
   eventId: events[0].eventId,
@@ -4326,6 +4330,8 @@ try {
 | `search(params)` | Hybrid search → `SearchResult` with scored items |
 | `getRecent(params)` | List recent events → `RecentEvent[]` |
 | `submitFeedback(params)` | Rate a recalled event → `FeedbackRecord` |
+| `profile(params)` | Facts, beliefs and memories for a prompt, as the user's memory view allows → `MemoryProfile` (`POST /memory/profile`) |
+| `markUsed(params)` | Say an answer drew on these memories, facts (`fact:<category>/<key>`) or beliefs (`belief:<id>`), so they stop ageing → how many were marked (`POST /memory/used`) |
 | `deleteEvent(params)` | Delete a single episodic event |
 | `deleteUserMemory(params)` | Delete all events for a user |
 | `storeProcedure(params)` | Create a procedural memory rule |
@@ -4347,7 +4353,7 @@ try {
 
 ```bash
 cd sdk-node
-npm test          # vitest run — 41 tests, ~300ms
+npm test          # vitest run — 89 tests, ~450ms
 npm run test:watch
 ```
 
@@ -4460,7 +4466,8 @@ pytest tests/test_amygdala.py::TestAmygdala::test_scores_decision_text -v
 
 | File | Tests | What it covers |
 |---|---|---|
-| `src/client.test.ts` | 41 | All client methods, snake↔camelCase mapping, error handling, baseUrl normalisation |
+| `src/client.test.ts` | 45 | All client methods, snake↔camelCase mapping, error handling, baseUrl normalisation |
+| `src/middleware.test.ts` | 44 | `withMemory()`: interception, `remember()`, windowed flushes, auto-inject |
 
 ---
 

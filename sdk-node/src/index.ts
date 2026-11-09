@@ -26,6 +26,14 @@ export type {
   FeedbackType,
   SubmitFeedbackOptions,
   FeedbackRecord,
+  // markUsed / profile
+  MarkUsedOptions,
+  ProfileOptions,
+  MemoryProfile,
+  MemoryView,
+  ProfileFact,
+  ProfileBelief,
+  ProfileMemory,
   // getIdentity
   GetIdentityOptions,
   BeliefItem,

@@ -18,6 +18,9 @@ import type {
   RecentEvent,
   // submitFeedback
   SubmitFeedbackOptions,
+  MarkUsedOptions,
+  ProfileOptions,
+  MemoryProfile,
   FeedbackRecord,
   // getIdentity
   GetIdentityOptions,
@@ -253,6 +256,68 @@ export class SmritikoshClient {
       feedbackId: raw["feedback_id"] as string,
       eventId: raw["event_id"] as string,
       newImportanceScore: raw["new_importance_score"] as number,
+    };
+  }
+
+  // ── markUsed / profile ─────────────────────────────────────────────────────
+
+  /**
+   * Say an answer drew on these memories, so they stop ageing. Being shown
+   * is not being used: the client that saw the answer says which ones
+   * mattered. A profile's fact and belief ids may be among them. Returns
+   * how many were marked (ids not this user's are skipped by the server).
+   */
+  async markUsed(options: MarkUsedOptions): Promise<number> {
+    if (!options.eventIds.length) return 0;
+    const raw = await this.post<Record<string, unknown>>("/memory/used", {
+      user_id: options.userId,
+      event_ids: [...options.eventIds],
+    });
+    return Number(raw["marked"] ?? 0);
+  }
+
+  /**
+   * Facts, beliefs and memories for a prompt, as the user's memory view
+   * allows. A fact's id is `fact:<category>/<key>`, a belief's
+   * `belief:<id>`: hand either to {@link markUsed}.
+   */
+  async profile(options: ProfileOptions): Promise<MemoryProfile> {
+    const raw = await this.post<Record<string, unknown>>("/memory/profile", {
+      user_id: options.userId,
+      query: options.query ?? "",
+      app_id: options.appId ?? this.appId ?? "default",
+    });
+    const view = (raw["view"] ?? {}) as Record<string, unknown>;
+    const list = (key: string) => ((raw[key] ?? []) as Record<string, unknown>[]);
+    return {
+      userId: raw["user_id"] as string,
+      view: {
+        showFacts: Boolean(view["show_facts"]),
+        showBeliefs: Boolean(view["show_beliefs"]),
+        showMemories: Boolean(view["show_memories"]),
+        keepBy: String(view["keep_by"] ?? ""),
+      },
+      facts: list("facts").map((f) => ({
+        id: f["id"] as string,
+        category: f["category"] as string,
+        key: f["key"] as string,
+        value: f["value"] as string,
+        core: Boolean(f["core"]),
+        sources: (f["sources"] ?? []) as string[],
+      })),
+      beliefs: list("beliefs").map((b) => ({
+        id: b["id"] as string,
+        statement: b["statement"] as string,
+        category: b["category"] as string,
+        confidence: Number(b["confidence"] ?? 0),
+      })),
+      memories: list("memories").map((m) => ({
+        id: m["id"] as string,
+        statement: m["statement"] as string,
+        createdAt: (m["created_at"] ?? "") as string,
+        lastUsedAt: (m["last_used_at"] ?? null) as string | null,
+        metadata: (m["metadata"] ?? {}) as Record<string, unknown>,
+      })),
     };
   }
 

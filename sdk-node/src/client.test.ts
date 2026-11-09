@@ -282,6 +282,66 @@ describe("submitFeedback", () => {
 
 // ── deleteEvent ───────────────────────────────────────────────────────────────
 
+describe("markUsed", () => {
+  it("posts the ids to /memory/used and returns how many were marked", async () => {
+    const fetchMock = mockFetch({ user_id: "alice", marked: 2 });
+    vi.stubGlobal("fetch", fetchMock);
+    const marked = await makeClient().markUsed({
+      userId: "alice",
+      eventIds: ["a3f1c2d4", "fact:location/city"],
+    });
+    expect(capturedMethod(fetchMock)).toBe("POST");
+    expect(capturedUrl(fetchMock)).toBe(`${BASE}/memory/used`);
+    expect(capturedBody(fetchMock)).toEqual({
+      user_id: "alice",
+      event_ids: ["a3f1c2d4", "fact:location/city"],
+    });
+    expect(marked).toBe(2);
+  });
+
+  it("asks nothing for an empty list", async () => {
+    const fetchMock = mockFetch({});
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await makeClient().markUsed({ userId: "alice", eventIds: [] })).toBe(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("profile", () => {
+  const raw = {
+    user_id: "alice",
+    view: { show_facts: true, show_beliefs: false, show_memories: true, keep_by: "used" },
+    facts: [{ id: "fact:location/city", category: "location", key: "city",
+              value: "Lives in Cary", core: true, sources: ["e1"] }],
+    beliefs: [{ id: "belief:7c1e", statement: "prefers charts", category: "style",
+                confidence: 0.81 }],
+    memories: [{ id: "e2", statement: "flew to Denver", created_at: "2026-11-01T10:00:00",
+                 last_used_at: null, metadata: { source: "chat" } }],
+  };
+
+  it("posts to /memory/profile with the client's appId", async () => {
+    const fetchMock = mockFetch(raw);
+    vi.stubGlobal("fetch", fetchMock);
+    await makeClient().profile({ userId: "alice", query: "a flight" });
+    expect(capturedUrl(fetchMock)).toBe(`${BASE}/memory/profile`);
+    expect(capturedBody(fetchMock)).toEqual({
+      user_id: "alice", query: "a flight", app_id: APP_ID,
+    });
+  });
+
+  it("maps it to camelCase, with ids ready for markUsed", async () => {
+    vi.stubGlobal("fetch", mockFetch(raw));
+    const got = await makeClient().profile({ userId: "alice" });
+    expect(got.view).toEqual({ showFacts: true, showBeliefs: false, showMemories: true,
+                               keepBy: "used" });
+    expect(got.facts[0]).toMatchObject({ id: "fact:location/city", core: true,
+                                         sources: ["e1"] });
+    expect(got.beliefs[0]!.confidence).toBe(0.81);
+    expect(got.memories[0]).toMatchObject({ id: "e2", createdAt: "2026-11-01T10:00:00",
+                                            lastUsedAt: null });
+  });
+});
+
 describe("deleteEvent", () => {
   it("sends DELETE to /memory/event/{id}", async () => {
     const fetch = mockFetch({ deleted: true, event_id: "evt-1" });

@@ -81,6 +81,62 @@ export interface SubmitFeedbackOptions {
   comment?: string;
 }
 
+export interface MarkUsedOptions {
+  userId: string;
+  /** Events an answer drew on; also a profile's `fact:<category>/<key>` and `belief:<id>`. 1–100. */
+  eventIds: string[];
+}
+
+export interface ProfileOptions {
+  userId: string;
+  /** The question the prompt is for: picks the relevant facts and memories. */
+  query?: string;
+  /** The namespace whose facts, beliefs and memory view apply. */
+  appId?: string;
+}
+
+export interface MemoryView {
+  showFacts: boolean;
+  showBeliefs: boolean;
+  showMemories: boolean;
+  /** What keeps a memory from ageing: "used" (markUsed) or "shown". */
+  keepBy: string;
+}
+
+export interface ProfileFact {
+  /** `fact:<category>/<key>`: hand it to markUsed when an answer leans on it. */
+  id: string;
+  category: string;
+  key: string;
+  value: string;
+  core: boolean;
+  sources: string[];
+}
+
+export interface ProfileBelief {
+  /** `belief:<id>` */
+  id: string;
+  statement: string;
+  category: string;
+  confidence: number;
+}
+
+export interface ProfileMemory {
+  id: string;
+  statement: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface MemoryProfile {
+  userId: string;
+  view: MemoryView;
+  facts: ProfileFact[];
+  beliefs: ProfileBelief[];
+  memories: ProfileMemory[];
+}
+
 export interface FeedbackRecord {
   feedbackId: string;
   eventId: string;

@@ -162,6 +162,16 @@ if (!ctx.isEmpty()) {
 }
 ```
 
+A client that keeps its own statements asks for a profile at the start
+of a conversation, and says afterwards which parts the answer leaned on,
+so they stop ageing (being shown is not being used):
+
+```typescript
+const profile = await client.profile({ userId: "alice", query: "a flight to Denver" });
+// … put profile.facts / beliefs / memories in the prompt, answer …
+await client.markUsed({ userId: "alice", eventIds: ["fact:location/city"] });
+```
+
 Error handling:
 
 ```typescript
