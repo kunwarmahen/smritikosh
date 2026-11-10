@@ -90,6 +90,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{args.benchmark}: {len(users)} users, {total_turns} turns, {total_q} questions")
     print(f"server={config.base_url} app_id={config.app_id} chunk_turns={config.chunk_turns}\n")
 
+    from smritikosh.platform import install_selector_event_loop
+
+    install_selector_event_loop()
     report = asyncio.run(
         run_benchmark(
             users,

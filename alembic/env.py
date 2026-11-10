@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from smritikosh.config import settings
 from smritikosh.db.models import Base
+from smritikosh.platform import install_selector_event_loop
 
 # Alembic config object
 config = context.config
@@ -68,6 +69,7 @@ async def run_async_migrations() -> None:
 
 
 def run_migrations_online() -> None:
+    install_selector_event_loop()
     asyncio.run(run_async_migrations())
 
 

@@ -207,4 +207,7 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
+    from smritikosh.platform import install_selector_event_loop
+
+    install_selector_event_loop()
     asyncio.run(main())
