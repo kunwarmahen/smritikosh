@@ -378,6 +378,59 @@ async def test_forget_unknown_id(mcp_state):
     assert await forget(memory_id="nope") == {"forgotten": False, "id": "nope"}
 
 
+
+# A profile's fact or belief, turned down by the same verb. The bias: a
+# person who says "forget that" about something the prompt was told must
+# not be answered "no such memory" because it was a fact, not a memory --
+# and what was turned down must not come back at the next consolidation,
+# so it is rejected, never deleted.
+
+@respx.mock
+async def test_forget_turns_down_a_profile_fact_for_good(mcp_state):
+    patched = respx.patch(
+        f"{BASE_URL}/facts/alice/location/city/status").mock(
+        return_value=Response(200, json={"category": "location", "key": "city"}))
+    assert await forget(memory_id="fact:location/city") == {
+        "forgotten": True, "id": "fact:location/city", "kind": "fact"}
+    sent = patched.calls.last.request
+    assert json.loads(sent.content) == {"status": "rejected"}
+    assert sent.url.params["app_id"] == "default"
+
+
+@respx.mock
+async def test_a_fact_key_with_a_slash_is_kept_whole(mcp_state):
+    patched = respx.patch(
+        f"{BASE_URL}/facts/alice/preference/airline%2Fseat/status").mock(
+        return_value=Response(200, json={}))
+    assert (await forget(memory_id="fact:preference/airline/seat"))["forgotten"]
+    assert patched.called
+
+
+@respx.mock
+async def test_forget_retracts_a_belief(mcp_state):
+    deleted = respx.delete(f"{BASE_URL}/beliefs/alice/b-1").mock(
+        return_value=Response(200, json={"belief_id": "b-1", "status": "rejected"}))
+    assert await forget(memory_id="belief:b-1") == {
+        "forgotten": True, "id": "belief:b-1", "kind": "belief"}
+    assert deleted.called
+
+
+@respx.mock
+async def test_a_fact_or_belief_that_is_not_theirs_is_not_forgotten(mcp_state):
+    respx.patch(f"{BASE_URL}/facts/alice/location/city/status").mock(
+        return_value=Response(404, json={"detail": "Fact not found"}))
+    respx.delete(f"{BASE_URL}/beliefs/alice/b-9").mock(
+        return_value=Response(404, json={"detail": "Belief not found."}))
+    assert await forget(memory_id="fact:location/city") == {
+        "forgotten": False, "id": "fact:location/city"}
+    assert await forget(memory_id="belief:b-9") == {"forgotten": False, "id": "belief:b-9"}
+
+
+async def test_a_fact_id_with_no_key_names_nothing(mcp_state):
+    assert await forget(memory_id="fact:location") == {
+        "forgotten": False, "id": "fact:location"}
+    assert await forget(memory_id="belief:") == {"forgotten": False, "id": "belief:"}
+
 # ── Logging ─────────────────────────────────────────────────────────────────
 
 

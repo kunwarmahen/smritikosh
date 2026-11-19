@@ -289,12 +289,19 @@ async def forget(
         memory_id: The id from ``remember``, ``recall`` or ``list_memories``.
         user_id:   Override the default user (admin API keys only).
 
+    A ``profile`` fact's id (``fact:<category>/<key>``) or belief's
+    (``belief:<id>``) works too: the fact or belief is turned down for good
+    -- consolidation and belief mining never bring it back -- while the
+    memories it came from stay.
+
     Returns ``forgotten``: true if it was the user's and is now gone; false if
     there was no such memory for this user. ``facts_forgotten`` counts the
     drawn facts removed with it.
     """
     state = _require_state()
     owner = user_id or state.config.user_id
+    if memory_id.startswith(("fact:", "belief:")):
+        return await _turn_down(state, owner, memory_id)
     try:
         event = await state.client.get_event(event_id=memory_id)
     except SmritikoshError as exc:
@@ -308,6 +315,32 @@ async def forget(
     result = await state.client.delete_event(event_id=memory_id)
     return {"forgotten": result.deleted, "id": memory_id,
             "facts_forgotten": result.facts_forgotten}
+
+
+async def _turn_down(state: "MCPState", owner: str, memory_id: str) -> dict[str, Any]:
+    """``forget`` on a profile fact or belief: rejected, never deleted, so
+    the next consolidation or mining finds it already turned down. The
+    server checks the key may act for ``owner``; an id that names nothing
+    of theirs is ``forgotten: false``, the same as an unknown memory."""
+    kind, _, rest = memory_id.partition(":")
+    try:
+        if kind == "fact":
+            category, _, key = rest.partition("/")
+            if not category or not key:
+                return {"forgotten": False, "id": memory_id}
+            await state.client.set_fact_status(
+                user_id=owner, category=category, key=key, status="rejected",
+                app_id=state.config.app_id)
+        else:
+            if not rest:
+                return {"forgotten": False, "id": memory_id}
+            await state.client.retract_belief(user_id=owner, belief_id=rest,
+                                              app_id=state.config.app_id)
+    except SmritikoshError as exc:
+        if exc.status_code in (403, 404, 422):
+            return {"forgotten": False, "id": memory_id}
+        raise
+    return {"forgotten": True, "id": memory_id, "kind": kind}
 
 
 @mcp.tool()

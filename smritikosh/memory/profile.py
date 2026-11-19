@@ -131,6 +131,8 @@ async def build(pg: AsyncSession, neo, *, episodic, semantic, user_id: str,
             facts.append({"id": fact_id(f.category, f.key), "category": f.category,
                           "key": f.key, "value": f.value,
                           "core": is_core(f.category, f.key),
+                          "confidence": round(f.confidence or 0.0, 2),
+                          "seen": int(f.frequency_count or 0),
                           "sources": list(f.source_event_ids)})
 
     beliefs: list[dict] = []

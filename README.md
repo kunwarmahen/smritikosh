@@ -2211,7 +2211,7 @@ curl -X POST http://localhost:8080/memory/profile \
  "view": {"show_facts": true, "show_beliefs": true, "show_memories": true, "keep_by": "used"},
  "facts": [{"id": "fact:location/city", "category": "location", "key": "city",
             "value": "Lives in Cary, NC; RDU is 12 minutes away", "core": true,
-            "sources": ["a3f1c2d4-..."]}],
+            "confidence": 0.85, "seen": 3, "sources": ["a3f1c2d4-..."]}],
  "beliefs": [{"id": "belief:7c1e...", "statement": "prefers a chart to a table",
               "category": "attitude", "confidence": 0.7}],
  "memories": [{"id": "b81d...", "statement": "Started a pottery class", "created_at": "...",
@@ -2219,6 +2219,7 @@ curl -X POST http://localhost:8080/memory/profile \
 ```
 
 - **Facts:** the **core** ones always — who they are (`identity`), what they prefer (`preference`), and where they live (`location` keys such as `city`, `timezone`, `airport`; a street address is not core) — and the ones **relevant** to `query`: a fact whose memories the query's hybrid search found. An account number or an address rides only when the question needs it. Someone else's fact (`naina.email`) is never core.
+  Each says how sure the graph is (`confidence`) and how many times memories said it (`seen`), so a client can show a person why it believes it.
 - **Beliefs:** the user's active beliefs, most confident first (up to 8). They are patterns, not statements: a client should present them as guesses.
 - **Memories:** relevant ones first, then the most recently used or written, leaving out every memory a fact was made from (it would only say the fact again). With facts turned off, none is left out.
 

@@ -105,6 +105,12 @@ class TestTheProfile:
         got, _, _ = await build(views.View(), facts, found=[ira])
         assert [f["id"] for f in got["facts"]] == ["fact:location/city", "fact:finance/ira"]
 
+    async def test_a_fact_says_how_sure_and_how_often_seen_so_a_person_can_judge_it(self):
+        home = event("Lives in Cary")
+        got, _, _ = await build(views.View(), [fact("location", "city", "Lives in Cary",
+                                                    str(home.id))])
+        assert got["facts"][0]["confidence"] == 0.9 and got["facts"][0]["seen"] == 1
+
     async def test_a_memory_a_fact_covers_is_not_said_twice(self):
         home, new = event("Lives in Cary"), event("Started a pottery class")
         facts = [fact("location", "city", "Lives in Cary", str(home.id))]

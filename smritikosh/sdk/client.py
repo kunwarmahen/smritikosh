@@ -535,6 +535,47 @@ class SmritikoshClient:
             facts_forgotten=data.get("facts_forgotten", 0),
         )
 
+    async def set_fact_status(
+        self,
+        *,
+        user_id: str,
+        category: str,
+        key: str,
+        status: str,
+        app_id: str | None = None,
+    ) -> dict:
+        """
+        Mark one fact ``active`` or ``rejected``. A rejected fact stays
+        rejected when consolidation draws it again (its status is set
+        only when the fact is new), so it never comes back into a prompt.
+
+        Raises :class:`SmritikoshError` (404) when the user has no such fact.
+        """
+        from urllib.parse import quote
+        client = self._ensure_open()
+        response = await client.patch(
+            f"/facts/{quote(user_id, safe='')}/{quote(category, safe='')}/"
+            f"{quote(key, safe='')}/status",
+            params={"app_id": app_id or self._app_id}, json={"status": status})
+        return self._raise_or_json(response)
+
+    async def retract_belief(
+        self,
+        *,
+        user_id: str,
+        belief_id: str,
+        app_id: str | None = None,
+    ) -> dict:
+        """
+        Retract one belief: kept as rejected, so mining never infers it again.
+
+        Raises :class:`SmritikoshError` (404/422) when there is no such belief.
+        """
+        from urllib.parse import quote
+        return await self._delete(
+            f"/beliefs/{quote(user_id, safe='')}/{quote(belief_id, safe='')}",
+            params={"app_id": app_id or self._app_id})
+
     async def delete_user_memory(
         self,
         *,
